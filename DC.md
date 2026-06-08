@@ -1,0 +1,225 @@
+# DC.md — Decision Log: Claude Fleet Portal
+
+> Every non-trivial decision taken while executing `PRD-Claude-Fleet-Portal.md` is recorded here,
+> with rationale, the PRD clause it serves, alternatives considered, and any deviation called out.
+> Format: `D-NNN` decisions, append-only (amendments noted, not rewritten).
+>
+> Author/operator: Youssef El Jayad · Started: 2026-06-08 · Claude Code 2.1.168 · Opus 4.8
+
+---
+
+## 0. Memory check (per goal: "read it if u need to request any memory")
+
+- **personal-rag MCP**: searched for prior context on this project ("Claude Fleet Portal agent monitoring dashboard PRD"). Index has only **3 chunks**, all from `~/rag-sys-perso/welcome.md` (the RAG welcome doc). **No prior project memory exists** to import. Proceeding from the PRD alone.
+- **`~/.claude/projects/.../memory/`**: no pre-existing memories relevant to this build surfaced in session context.
+- **Decision**: build from the PRD as the single source of truth; will `save_text` a project summary to personal-rag at the end so future sessions have continuity.
+
+---
+
+## 1. Verified ground-truth facts (resolve PRD §11/§14 open questions)
+
+These were captured live from the installed Claude Code (`2.1.168`, ≥ 2.1.154 ✓), **replacing the PRD's guesses**. Evidence: ran `claude -p "..." --output-format stream-json --verbose --include-partial-messages` and `claude --help`.
+
+### F-1 — Real `stream-json` event schema (resolves §14 Q2)
+Newline-delimited JSON; one object per line. Observed `type`s:
+- `system` / `subtype`: `init` (carries `session_id`, `cwd`, `model`, `tools[]`, `mcp_servers[]`, `agents[]`, `skills[]`, `permissionMode`, `claude_code_version`, `fast_mode_state`, `memory_paths`), `status`, `hook_started`, `hook_response`, `hook_progress`.
+- `stream_event` → `event.type` ∈ `message_start`, `content_block_start`, `content_block_delta` (`delta.text_delta.text` = **token deltas**), `content_block_stop`, `message_delta` (carries `usage` + `stop_reason`), `message_stop`. Each has `ttft_ms` on message_start.
+- `assistant` — full assistant message (`message.content[]`, `message.usage`).
+- `user` — user/tool-result messages (when present).
+- `result` — terminal: `subtype` (`success`/error), `is_error`, `duration_ms`, `duration_api_ms`, `num_turns`, `result` (final text), **`total_cost_usd`**, `usage` (input/output/cache tokens), `modelUsage` (keyed by model id e.g. `claude-opus-4-8[1m]`), `permission_denials[]`, `terminal_reason`.
+- `rate_limit_event` — `rate_limit_info` (status, resetsAt, rateLimitType).
+
+### F-2 — **`parent_tool_use_id` is the hierarchy key** (resolves §14 Q2, §9.1 `parentId`)
+Every `stream_event` / `assistant` / `user` event carries `parent_tool_use_id` (null for root). A subagent/workflow-spawned agent's events carry the `tool_use_id` of the spawning `Task` call. **This — not the PRD's invented `parentId` — is how the tree is built.** `session_id` is on *every* event.
+
+### F-3 — Real task-list schema (resolves §7.4 Agent Teams surface)
+`~/.claude/tasks/{id}/` contains numbered `N.json` files + a `.lock`. Each task:
+```json
+{ "id":"1", "subject":"...", "description":"...", "activeForm":"...",
+  "status":"completed|pending|in_progress", "blocks":[], "blockedBy":[] }
+```
+`blocks`/`blockedBy` = dependency edges. No explicit `owner`/mailbox file observed in sampled dirs → model `owner` as optional; treat any non-`N.json` files as potential mailbox (defensive).
+
+### F-4 — Real CLI flag surface (resolves §14 Q3, §9.2)
+Confirmed flags: `-p/--print`, `--output-format {text,json,stream-json}`, `--input-format {text,stream-json}`, `--verbose`, `--include-partial-messages`, `--include-hook-events`, `--model`, **`--effort {low,medium,high,xhigh,max}`**, **`--max-budget-usd <amt>`**, `--permission-mode {acceptEdits,auto,bypassPermissions,default,dontAsk,plan}`, `--dangerously-skip-permissions`, `--allowedTools`/`--disallowedTools`, `--add-dir`, `--resume [id]`, **`--session-id <uuid>`**, `--fork-session`, `--no-session-persistence`, `--agents <json>`, `--append-system-prompt`, `--replay-user-messages`, `--json-schema`.
+
+### F-5 — Cost reality
+One trivial Opus 4.8 `-p` call cost **$0.18 USD** (12.4k input + 19.3k cache-creation tokens). Confirms the PRD's cost-guardrail urgency and motivates the free **mock-claude** test harness (D-009) to avoid burning real tokens during development.
+
+### F-7 — **Confirmed** tree-build mechanism from a REAL subagent trace (`/tmp/subagent_capture.txt`, $0.32)
+Ran a `-p` prompt that dispatched a subagent. Observed:
+- Spawn tool is named **`Agent`** in CC 2.1.168 (PRD/older docs say `Task`). Root assistant emits `tool_use name=Agent id=toolu_01Atwvm…`.
+- **All child events carry `parent_tool_use_id = <Agent tool_use id>`**: the subagent's injected `user` prompt, its inner `Bash` `tool_use`, and its `tool_result` — all chain to the spawning id. ✓ (proves F-2 links child→parent, not just "exists").
+- **Subagent completion** = a `tool_result` block (inside a `user` event) at parent level whose `tool_use_id == <Agent id>`.
+- Soft lifecycle hints: `system/{task_started,task_progress,task_notification}` and `system/thinking_tokens` (extended thinking).
+- **Routing rule (version-proof):** *any `tool_use` id that later appears as a `parent_tool_use_id` is a subtree root.* Do NOT hardcode the tool name — label as subagent if name ∈ {Agent, Task}, but route purely by id. Nesting chains automatically (a subagent's own Agent call becomes the next parent id) → arbitrary depth, matching the ≤16-concurrent/1000-total model.
+- Both captures saved as test fixtures (D-009).
+
+### F-8 — **`--json-schema` output lands in `result.structured_output` (object), NOT `result.result`** (advisor catch)
+Verified live ($0.40): `claude -p --json-schema '<plan schema>'` returns the schema-conforming data as an **already-parsed object** on the `result` event's **`structured_output`** field. `result.result` is a PROSE summary ("The structured plan has been delivered…"). The model also emits a `StructuredOutput` tool_use in the stream. **My initial campaign engine did `JSON.parse(run.resultText)` → would have failed on EVERY real campaign (marked failed, 0 tasks), while all mock tests stayed green.** Fixed: parser captures `structured_output`; Run gains `structuredOutput`; engine reads `run.structuredOutput ?? JSON.parse(resultText)` (fallback for mock). Same class of bug as `parentId`-vs-`parent_tool_use_id` and the 3s-stall — caught by exercising the REAL path, not the mock.
+
+### F-9 — Interactive runs must send the prompt via STDIN, not the `-p` positional (real-claude verified; was a hang)
+A user-launched interactive run sat at `status: "starting"` forever (no `init`, no events; the `claude` process alive but sleeping). Reproduced: `claude -p "<prompt>" --input-format stream-json` with stdin held open emits only `hook_started` then blocks — **in stream-json INPUT mode the positional `-p` prompt is ignored; claude waits for a user message on stdin.** Fix verified: send the prompt as a stream-json user message on stdin (no positional) → `init`→`running`→`result`→`awaiting-input`, and follow-up `send input` works. The mock never caught this (it replays regardless of stdin) — same "verify vs real claude" lesson as F-2, the 3s-stall, and F-8.
+
+### F-6 — No dedicated Dynamic-Workflows on/off flag
+`claude --help` exposes **no `--workflows` flag**. Workflow orchestration is driven by effort (`xhigh`/`max`) for substantive tasks (the "ultracode" concept = `xhigh` + auto-orchestration). The PRD's "Dynamic Workflows allow/deny toggle" (§7.2) has no direct CLI equivalent → modeled honestly (D-007).
+
+---
+
+## 2. Decision log
+
+### D-001 — Resolve "execute the PRD" autonomously; document, don't interrogate
+The goal says *"do ur best and note every decision"*. Interpreting this as a mandate to make defensible product/architecture decisions independently and log them here, rather than blocking on `AskUserQuestion` for each. Will only ask the user if genuinely blocked. **Serves:** the goal directive.
+
+### D-002 — Verify platform facts against installed Claude Code before coding
+The PRD (§11, §14, §9.2) repeatedly flags that the stream-json schema and flags are undocumented/evolving and must be verified against the installed version. Since I *am* Claude Code, I captured real events + `--help` first (§1 above). De-risks the parser/tree-builder, the highest-risk components. **Serves:** §9.2, §11, §14.
+
+### D-003 — Two-process architecture: standalone Fastify control-plane + Next.js frontend
+The PRD's own diagram (§8) separates "Backend / control plane" from "Next.js portal (UI)". The process manager must be a **long-lived singleton** holding `child_process` handles — incompatible with Next.js's request-scoped/serverless route handlers. **Decision:** `apps/server` = Fastify (TS) owns spawn/stdin/signals/parse/SSE/persistence; `apps/web` = Next.js App Router (UI) talks to it via REST + SSE. **Alternatives rejected:** (a) Next custom server (couples UI build to the daemon, loses HMR ergonomics); (b) everything in Next route handlers (singleton survival across reloads is fragile). **Serves:** §8, §8.1, §14 Q1 (Node runtime).
+
+### D-004 — pnpm workspace monorepo with a shared types package
+`packages/shared` holds the normalized event schema (§9.1), API DTOs, and enums — the **frozen contract** both apps import. Lets the backend and UI evolve against one source of truth and enables safe parallel construction. pnpm 10.19 present. **Serves:** §9.1 (event normalization is the contract the UI renders from).
+
+### D-005 — **SQLite (better-sqlite3) + in-process state instead of Postgres + Redis** ⚠️ DEVIATION
+The PRD names Postgres + Redis (§8, §9.3). For a single-user, localhost-first portal (explicit §3 non-goal: no cloud/multi-user; §10 Portability: "no cloud dependency") requiring Postgres + Redis means the user must run docker-compose just to launch. **Decision:** persist to **SQLite** with a schema mirroring §9.3 (`runs`, `run_nodes`, `events`, `teams`, `run_skills`, `config`); keep hot status/heartbeats in an **in-process registry** (no Redis — single process needs no cross-process pub/sub). Data-access is isolated behind a repository module so Postgres can swap in later. **Why acceptable:** SQLite is durable + SQL-searchable (satisfies §7.8 history/search) with zero external infra. **Trade-off:** no multi-process horizontal scale (a non-goal). **Serves:** §3, §7.8, §10; **deviates from** §8/§9.3 named stack — flagged intentionally.
+
+### D-006 — Pre-assign `--session-id <uuid>`; `runId == sessionId`
+Using the verified `--session-id` flag (F-4), the portal generates the UUID up front and passes it in, so the DB row, the live process, and `--resume` all key off the same id immediately — no race waiting for the `init` event to learn the session id. **Serves:** §7.6 (resume), §9.3 (`runs.session_id`), reliability §10.
+
+### D-007 — Effort model uses REAL flag values; "ultracode"/"workflows" are presets
+Launch form effort options = the real `--effort` values `low | medium | high | xhigh | max` (F-4). The PRD's "effort level (high/xhigh/ultracode)" (§5,§7.2) is mapped: **"ultracode" = a UI preset → `--effort xhigh` + workflows-expected + stricter budget default**. The "Dynamic Workflows allow/deny" toggle (§7.2) has no CLI flag (F-6); modeled as a UI hint/flag persisted on the run + derived from effort, with a documented note that the portal cannot hard-disable orchestration via CLI on this version. **Serves:** §6, §7.2; honestly bounds §14 Q3.
+
+### D-008 — Dual budget enforcement: `--max-budget-usd` + portal-side kill
+Pass the per-run ceiling to the process via verified `--max-budget-usd` (F-4) AND track cost from `result`/`usage` events to auto-kill on breach server-side (§7.7, §10 cost-safety). Belt-and-suspenders: process-level ceiling is the primary guard; portal kill covers cases the flag doesn't (e.g., wall-clock/concurrency). Stricter default ceiling for `xhigh`/ultracode runs. **Serves:** §7.7, §10, §13 (zero runs exceed ceiling).
+
+### D-009 — `mock-claude` fixture replayer for free, deterministic pipeline tests
+A small script emits canned stream-json (including a `Task`-spawned subagent with `parent_tool_use_id` to exercise the tree builder) on a configurable delay. Server reads `CLAUDE_BIN` env (default `claude`) so tests point at the mock. **Why:** real calls cost ~$0.18 each (F-5) and are non-deterministic; the mock makes the parser/tree-builder/SSE testable in CI with zero spend and stable assertions. **Serves:** §10 reliability, §13 (100% subagents in tree — verifiable), dev velocity.
+
+### D-010 — SSE (not WebSocket) for live events; REST for commands (resolves §14 Q4)
+Live event flow is one-directional (server→browser, root + subtree). SSE over a single `GET /api/agents/:id/stream` is sufficient and simpler than a ws upgrade; commands (stop/input/resume/permission) are discrete REST calls. **Serves:** §7.3, §8.1, §9.4, §14 Q4.
+
+### D-011 — localhost-bind, no auth for v1 (resolves §14 Q5)
+Bind server + web to `127.0.0.1`; no auth layer in v1 (§3 non-goal: single-user localhost; §10 security: "localhost-bound by default; auth required if exposed"). Auth is a documented future item, not built now. **Serves:** §3, §10, §14 Q5.
+
+### D-012 — Phasing: a VERIFIED vertical slice first, then layer breadth (amended per advisor)
+~~Original: build all 5 phases breadth-first.~~ **Amended:** advisor flagged breadth-first as the top risk (context exhaustion → broad half-verified code). New order built around one demo-able loop that satisfies success metrics #1–#2:
+1. Freeze `packages/shared` contract (event schema §9.1, DTOs).
+2. Backend core: process manager + stream parser + tree builder (coherent, main-loop, **TDD against the real-trace fixtures** F-7).
+3. Verify backend boots + emits a correct tree from `mock-claude` (curl/test) BEFORE any UI.
+4. UI for the core loop: launch → fleet grid (live) → run detail (tree + timeline) → stop.
+5. THEN layer breadth: control (input/resume/permission) → teams & skills → guardrails & history.
+At every checkpoint something actually runs. **Serves:** §12, §13; risk-reduction per advisor.
+
+### D-013 — Workflows reserved for leaf UI fan-out + final adversarial review (per advisor)
+Ultracode is on, but the process-manager/parser/tree-builder are built coherently in the main loop and verified first. A `Workflow` is used only (a) to fan out genuinely-independent leaf React components AFTER the shared contract is frozen and the backend is proven, and (b) for an adversarial review pass at the end. Prevents parallel UI agents building against a contract that shifts during backend integration. **Serves:** correctness over raw parallelism. *Applied:* the UI was built coherently in the main loop (tightly-coupled shared design system made single-threaded construction safer than fan-out); the workflow was used for the final 3-dimension adversarial correctness review of the control-plane core.
+
+### D-014 — `interactive` launch flag; default one-shot for clean completion
+With `--input-format stream-json` the process stays alive after the first `result` awaiting stdin. Default `interactive:false` → stdin closed at spawn → the run executes the prompt once and **exits cleanly** (reliable `completed` status), which suits fire-and-forget fleet tasks. `interactive:true` keeps it alive → `awaiting-input` after each turn, enabling **send-input** (§7.6). Resume (§7.6) covers continuing a finished run. **Serves:** §3 goal 4, §7.6; reliable lifecycle.
+
+### D-015 — Frontend stack: Next 14.2 + React 18.3 + Tailwind 3.4 (reliability over bleeding-edge)
+Chose the well-trodden App-Router stack over Next 15 / React 19 to guarantee a clean one-pass `next build` with no RC-era edge cases. Hand-written config (no `create-next-app`) for determinism/no interactive prompts. **Trade-off:** not the newest majors; irrelevant to this app's needs. **Serves:** §10 reliability/portability.
+
+### D-016 — Validate launch `cwd` exists → 400, not a silent failed spawn
+`spawn(claude, …, {cwd})` errors if `cwd` doesn't exist, surfacing only as an opaque `failed` run. The registry now checks `existsSync(cwd) && isDirectory` at launch and returns a clear 400. (Found during M2/demo verification — a real robustness gap.) **Serves:** §10 reliability, operator UX.
+
+### D-017 — "Mission Control" aesthetic (frontend-design skill)
+Industrial telemetry console: charcoal canvas + blueprint-grid/scanline texture, amber-phosphor brand accent, **status-as-signal** color coding, monospace-forward data. Fonts: **Chakra Petch** (HUD display), **Archivo** (body), **JetBrains Mono** (telemetry/IDs) — distinctive, not generic. Signature element: the **budget gauge that heats amber→red** as a run nears its ceiling, beside the live branching workflow tree. **Serves:** §1 (a real console, not a flat list), operator legibility under density.
+
+---
+
+## 3. Deviations from the PRD (explicit)
+
+| # | PRD says | Built instead | Why |
+|---|---|---|---|
+| D-005 | Postgres + Redis | SQLite + in-process registry | Zero-infra localhost single-user; schema stays Postgres-portable |
+| D-007 | "ultracode" as an effort value; workflows allow/deny | real `--effort` values; ultracode/workflows as UI presets | matches verified CLI; no `--workflows` flag exists |
+
+All other choices implement the PRD as written.
+
+---
+
+## 3.5 Build milestones (verification log, per "evidence before assertions")
+
+- **M1 — Core pipeline verified (✓).** 12/12 vitest pass: parser + tree builder against the REAL subagent trace (correct parent/child, cost reconciled to authoritative $0.32) and synthetic fan-out (3 subagents, depth-2). `apps/server/test/pipeline.test.ts`.
+- **M2 — Control plane verified end-to-end against mock-claude (✓).** Booted Fastify server with `CLAUDE_BIN=tools/mock-claude.mjs`; launched a run via `POST /api/agents`; pipeline produced the correct nested tree (root→AG1→AG3 depth-2, +AG2), `status: completed`, cost reconciled to `$1.8423`, subagentCount=3, maxDepth=2. `/api/skills` read real `~/.claude/skills`; `/api/teams` read real `~/.claude/tasks` (7 task-lists). 
+- **Build-system notes (decisions):** (a) better-sqlite3 + esbuild require `pnpm.onlyBuiltDependencies` allowlist; native binding fetched via `prebuild-install`. (b) `tools/mock-claude.mjs` must be `chmod +x` (it's spawned directly via its `#!/usr/bin/env node` shebang). (c) D-009 mock keyed off `CLAUDE_BIN` env — server is agnostic to real-vs-mock.
+- **M3 — Full-stack verified live + visually (✓).** `next build` clean (7/7 routes, type-checked, fonts fetched). Booted both servers against mock-claude, launched a live fleet; Playwright screenshots (`docs/dashboard.png`, `docs/run-detail-live.png`) confirm: fleet grid with live status/cost gauges (budget-breach run renders RED at 92%), and run-detail rendering the correct nested workflow tree (session→Agent→nested Agent +Agent), streaming timeline, and cost reconciled to $1.8423. **Success metrics #1 (start/watch/stop end-to-end) and #2 (100% subagents with correct parent/child) demonstrated.**
+- **M4 — Adversarial review + fixes (✓).** Ran a 3-dimension review Workflow (15 agents, parser/tree · registry/lifecycle · process/SSE/db) with adversarial verification of each finding: **12 raw → 9 confirmed real** (good filtering). **All 9 fixed and re-verified** (15/15 tests, all typechecks, both builds clean, boot smoke incl. budget=0 case):
+
+| # | Sev | Bug | Fix |
+|---|---|---|---|
+| 1 | high | Failed subagent reported `completed` — parser dropped `is_error` from tool_result | parser captures `isError`; tree sets `failed`; UI renders failure (red ✕) + regression test |
+| 2 | high | Resume reused prior run's stale `RunTree` (frozen authoritativeCost → instant re-kill / masked spend) | always a fresh tree on resume; prior totals carried as a **baseline** (cumulative display, fresh per-invocation guardrail) |
+| 3 | high | `resume()` bypassed the max-concurrent-runs cap | same 429 active-count check added to resume |
+| 4 | high | Resume after restart dropped new events (`seq` collision under `INSERT OR IGNORE`) | seed `tree.seq = repo.maxEventSeq(runId)+1` on resume |
+| 5 | med | `permission_request` consumed by tree but never produced by parser (dead flow) | defensive parser cases for `system/permission_request`, `can_use_tool`, `control_request` (best-effort, documented) |
+| 6 | med | Live runs never evicted from `this.live` (unbounded leak) | `scheduleEvict` (60s grace, only when no subscribers) on terminal; cancelled on resume |
+| 7 | med | Uncleared SIGKILL timer could signal a PID-reused group 3s post-exit | `exited` guard + stored/cleared `killTimer` |
+| 8 | low | `budgetUsd === 0` caused instant auto-kill | guardrail requires `budgetUsd > 0` (verified: budget=0 run completes) |
+| 9 | low | Hello-replay capped first 5000 events → late subscribers missed the middle | `getEventsTail` replays the most-recent N for continuity-to-live |
+
+- **M5 — Advisor-driven completion checks (✓).** The advisor flagged three things verified only by reading code; all now empirically closed:
+  1. **Budget auto-kill observed firing MID-STREAM** (PRD success metric #3). Built `fixtures/runaway.jsonl` (live estimate climbs fast); a $0.50-budget run flipped to `killed` at ~$1.85 *before* completion, both live subagents cascade-flipped to `killed`, and the mock process was terminated (process-group cascade). Regression test added (16th test). **Also fixed a real bug the demo exposed:** the guardrail was retroactively "killing" already-finished runs (cost jumps to authoritative at the `result` event) → added `!resultSeen` so a completed run is never killed post-hoc (the spend already happened; over-budget completion is surfaced via the red cost UI, not a kill).
+  2. **`pnpm dev:mock` one-command path verified** — both servers up, dashboard served, run launched through the `$PWD`-wired mock end-to-end.
+  3. **Real `claude` binary path verified through the portal** — a real one-shot run completed in **4.2s**, cost reconciled to the authoritative **$0.1824**, result text exact, correct single-root tree. **No 3s stdin stall** (one-shot `.end()` gives immediate EOF; the earlier warning was from a manual test that left stdin open). Real multi-subagent `parent_tool_use_id` linkage was already confirmed pre-build (F-7).
+
+- **Final state:** **16/16 server tests pass; all 3 packages typecheck clean; `next build` clean.** Pipeline verified live end-to-end against both mock and **real claude**; budget auto-kill, cascade-kill, `dev:mock`, and resume paths all exercised. All 9 review findings + 3 advisor items resolved. **Implementation complete.**
+
+## 4.5 Feature: Orchestration Mode + Agent Templates (post-PRD extension)
+
+User request (2026-06-08): *"a template of agent + orchestration mode [where] one agent can get a task and auto-create automated agents to work on it — go deep."*
+
+### D-018 — Build "Campaigns": the portal itself orchestrates real, separately-controllable agents
+Interpretation: a **meta-orchestration layer** on top of the existing run model. One **orchestrator agent** receives an objective, **decomposes it into a structured plan**, and the **portal auto-spawns a real worker run per subtask** (each a normal tracked `claude -p` run, fully controllable), respecting dependencies + a parallelism cap, optionally feeding results to a **synthesizer**. This is deliberately *distinct* from Claude's in-process Dynamic Workflows (which the portal already observes as a tree): Campaigns give one **independently controllable, resumable, separately-budgeted agent per subtask**, visible in the fleet. **Serves:** the user's "one agent auto-creates agents" ask with maximum control/visibility.
+
+### D-019 — Orchestrator emits its plan via the verified `--json-schema` flag
+The orchestrator run is launched with `--json-schema <PLAN_SCHEMA>` (verified real flag, F-4) so its final result is **guaranteed-valid structured JSON** — no brittle free-text parsing. PLAN = `{ tasks: [{ id, title, prompt, template, dependsOn[] }] }`. **Serves:** robust auto-decomposition.
+
+### D-020 — Agent Templates are first-class, DB-backed, with built-in seeds
+Reusable profiles (name, role, system prompt, model, effort, fast, allowed tools, skills, permission mode, budget). Seeded built-ins (Orchestrator, Researcher, Implementer, Reviewer, Synthesizer). A campaign references templates by name for the orchestrator, workers, and synthesizer. **Serves:** the "template of agent" ask; reuse.
+
+### D-021 — Integration over isolation for the campaign engine; verified end-to-end (not unit-mocked)
+The engine couples to the `registry` singleton (it must spawn real runs + react to terminals). Rather than refactor for DI/mocks, it's verified by **integration**: a full campaign driven through the real engine+DB+registry against mock-claude. The pure contract (PLAN_JSON_SCHEMA, plan→DAG) is unit-tested. **Serves:** correctness evidence without inventing a mock that wouldn't exercise the real wiring.
+
+### M6 — Orchestration Mode built & verified (✓)
+- **Mechanism:** `registry.onRunTerminal` hook lets the engine react to the orchestrator's structured (`--json-schema`) plan, then auto-spawn a worker run per task via `registry.launch` (reused as-is), respecting `dependsOn` + `maxParallel`, then an optional synthesizer. New tables: `agent_templates`, `campaigns`, `campaign_tasks`; `runs.campaign_id` added (with idempotent migration). 5 built-in templates seeded.
+- **Verified live (mock):** a campaign decomposed into a **3-task DAG** (t1 Research + t2 Audit in parallel → t3 Implement after both → Synthesizer), auto-spawned 5 real campaign-tagged runs, respected dependencies, and rolled up cost to **$0.73**. UI screenshots `docs/campaign-dag.png` (orchestrator→waves→synthesizer) + `docs/templates.png`. 18/18 tests, all typechecks, `next build` clean (9 routes).
+- **Design panel note:** a 4-agent judge-panel design workflow was launched, but the working implementation was finished and **empirically verified** while it ran (the stronger validation), so the panel was stopped before returning — its purpose (de-risk the design) was already met by the live end-to-end test.
+- **mock-claude upgrade:** detects `--json-schema` → replays the plan fixture (orchestrator) vs a quick worker fixture (workers), so the whole campaign flow is testable for free.
+- **F-8 fix (advisor catch, CRITICAL):** the original engine read the plan from `run.resultText` via `JSON.parse` — but a live `--json-schema` run proved the plan lands on `result.structured_output` (an object), with `result.result` being prose. Without the fix EVERY real campaign would have failed with 0 tasks while all mock tests stayed green. Fixed end-to-end (parser→tree→Run.structuredOutput→db column→engine reads `structuredOutput` first); the orchestrator-plan fixture was made faithful (object + prose) so the mock now exercises the real path; re-verified E2E (3-task DAG → completed, $0.73). This is the third instance of the "verify against real claude, not the mock" lesson (after `parent_tool_use_id` and the 3s-stall).
+
+## 4.6 Feature research: "Auto-Learn" (self-improving orchestration)
+
+User request (2026-06-08): *"the auto-learn — use the skills to start a workflow to search how it can be done."*
+
+### D-022 — Research-first: run a multi-agent search workflow before designing Auto-Learn
+Interpretation: an **Auto-Learn** loop where the portal (a) **researches *how* to do an objective** before orchestrating — using the available Skills/MCP primitives (`deep-research`, `context7` docs, web search, codebase grep, `graphify` knowledge-graph, `personal-rag` memory) — and (b) **learns from past runs/campaigns**, distilling successful patterns into reusable Skills/Templates. Honoring the explicit "start a workflow to search how it can be done", I launched a research Workflow (4 parallel research lenses + synthesis) that *uses the skills* (WebSearch/WebFetch for prior art, context7 for Claude Code/Agent-SDK skill mechanics, codebase reads) and returns a concrete buildable design. **Build follows the synthesis** (kept as a separate step so the user stays in the loop). **Serves:** the user's "auto-learn via skills + search" ask; grounds the design in real prior art + the actual codebase.
+
+### D-023 — Fix the interactive hang + reconcile orphaned runs on boot (debugging, systematic)
+Two distinct, verified changes from a live bug report ("run stuck pending, no raw, no response"):
+1. **Root cause (F-9):** `buildArgs` no longer passes the prompt as the `-p` positional for interactive runs; `registry.startProcess` delivers it via stdin (`proc.writeUserMessage(prompt)`) after spawn. One-shot runs unchanged (positional + closed stdin). Regression-locked by a `buildArgs` argv unit test (the mock can't reproduce real stdin behavior). Verified end-to-end vs real claude: interactive run → `awaiting-input`, follow-up input works.
+2. **Orphan reconciliation:** `repo.reconcileOrphans()` (called in the registry constructor on boot) marks any non-terminal run/campaign/task `failed`, since a fresh process owns no live handles — clears the permanent "starting" zombie a server restart (incl. `tsx watch` hot-reload) leaves behind (PRD §10). Confirmed: the user's stuck run flipped to `failed` after hot-reload.
+**Serves:** §7.6 (send-input now actually works), §10 reliability.
+
+### F-11 — One-shot runs failed (exit 1): variadic `--add-dir` swallowed the trailing prompt (regression from F-9)
+**Symptom:** a run `failed` instantly (exitCode 1, ~1s, no session transcript). **Root cause:** the F-9 interactive fix moved the positional prompt to the END of argv via `args.push(req.prompt)` — placing it *after* `--add-dir <cwd>`. `--add-dir` is **variadic** (`<directories...>`), so commander consumed the prompt as another directory → claude got no prompt → `Error: Input must be provided… when using --print` → exit 1. F-9 was only verified with an *interactive* run (which has no positional), so the one-shot regression slipped through. Verified vs real claude: prompt-after-`--add-dir` → exit 1; prompt-first or prompt-after-`--` → exit 0. **Fix:** emit the positional with a `--` separator (`args.push('--', req.prompt)`) so no variadic option can swallow it (also makes prompts starting with `-` safe). Regression test updated to assert the `--` separator. Re-verified: one-shot run through the portal (cwd `/Users/jd`) now completes (exit 0). **Lesson:** when fixing one launch mode, re-verify the OTHER mode end-to-end.
+
+### F-10 / D-025 — Control must survive server restarts (Stop/Delete "didn't work" — root-caused)
+**Symptom:** a run page showed `awaiting-input`; Stop and Delete did nothing. **Root cause (multi-component, evidenced):** the dev server (`tsx watch`) had hot-reloaded repeatedly (triggered by my own code edits this session). On reload the in-memory `live` map is wiped, so: (a) `registry.stop` hit the `!lr` branch, couldn't reach the orphaned `claude` process (no persisted handle) and didn't broadcast → UI frozen; (b) the run-detail page's SSE subscriber was tied to the (now-gone) `LiveRun`, so it never received updates; (c) orphaned `claude` processes lingered. **Fixes (all verified):**
+1. **Persist the OS pid** (`runs.pid` + migration); set on spawn. Stop's not-in-memory branch kills the process group by pid (`killProcessGroup`, verified to terminate a surviving detached group) and broadcasts the status change.
+2. **Boot-time orphan kill:** `repo.nonTerminalPids()` → `killProcessGroup(pid, true)` in the registry constructor, then `reconcileOrphans()` marks rows `failed` (real PRD §10). Verified: a real surviving `claude` orphan + its DB row both resolved after restart.
+3. **Decouple per-run SSE subscribers** into a registry-level `runSubs` map keyed by runId (no longer tied to `LiveRun`) → an open run page receives stop/updates even when the run isn't in the live map; the EventSource also re-subscribes + gets a fresh `hello` after a server reconnect.
+4. Then Delete works (run is terminal). Verified end-to-end (mock + real claude restart): pid persisted, orphan killed, run `failed`, delete `200→404`.
+**Process note:** my repeated file edits were hot-reloading the user's running server — the actual trigger. With reconcile-on-boot, a restart now cleanly fails in-flight runs instead of stranding zombies; but I should avoid editing while long runs are in flight.
+
+### D-024 — Delete finished runs from history (user request)
+Added `registry.deleteRun` (terminal-only guard → 409 on live runs) + `repo.deleteRun` (cascade: events/run_nodes/run_skills/runs) + `DELETE /api/agents/:id/record` (distinct from `DELETE /api/agents/:id` = stop). Fleet SSE gains `run-removed` so cards vanish live. UI delete affordances: hover ✕ on finished fleet cards + history rows, and a Delete button on the run-detail for terminal runs (with confirm). Verified live: completed run deletes (→404, fleet→0); live run rejected (409). **Serves:** §7.8 history hygiene.
+
+## 5. Residual risks (verified vs not)
+- **Verified against real claude:** stream-json schema + `parent_tool_use_id` linkage (F-1/F-7), CLI flags (F-4), one-shot spawn→stream→complete→cost-reconcile path, one real subagent fan-out.
+- **Not yet verified against real claude (low risk):** a real *wide* Dynamic-Workflow fan-out through the live portal (mechanism proven on the single real subagent + synthetic fan-out); the headless permission control protocol (`decidePermission` + parser cases are best-effort — most fleet runs use a non-prompting permission mode); real Agent-Teams mailbox file format (watcher tolerates absence). None block local single-user use; all are documented here rather than assumed.
+
+## 4. Open items / to revisit
+- Real Dynamic-Workflow subtree event identifiers beyond `parent_tool_use_id` (need a live xhigh run that actually fans out to confirm subagent spawn/teardown markers) — parser written defensively around F-2.
+- Agent-Teams mailbox file format (not observed in sampled dirs) — watcher tolerates absence.
+- OpenTelemetry metrics panel (§10) — `CLAUDE_CODE_ENABLE_TELEMETRY=1` wiring deferred; cost/tokens sourced from `result`/`usage` events instead (sufficient for guardrails).

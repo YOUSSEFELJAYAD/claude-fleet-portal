@@ -1,0 +1,11 @@
+node_modules/
+.next/
+dist/
+*.log
+*.tsbuildinfo
+.DS_Store
+data/
+.playwright-mcp/
+*.png.tmp
+.env
+.env.local
