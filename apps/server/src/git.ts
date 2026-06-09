@@ -586,6 +586,98 @@ export async function integrateAndReport(worktreeDir: string, baseBranch: string
   return { conflict: true };
 }
 
+// ── conflict resolution (v2 #9) ────────────────────────────────────────────────
+
+export interface StartResolveMergeResult {
+  /** true when the integration merge produced conflict markers the resolve agent must reconcile. */
+  conflict: boolean;
+  /** the conflicted file paths (empty when conflict:false). */
+  conflicts: string[];
+}
+
+/**
+ * v2 #9 — START the integration merge of `baseBranch` INTO the task branch and, unlike
+ * {@link integrateAndReport}, LEAVE the conflict markers + MERGE_HEAD in place so a resolve agent
+ * can edit the files. Does NOT abort, does NOT commit. The caller (pm.ts) launches the resolve
+ * agent into this half-merged worktree, then on the agent's terminal commits / re-validates / merges
+ * — or aborts (see {@link mergeAbort}). Identity stays `fleet-pm` so a clean-after-resolve commit is
+ * attributed correctly.
+ *
+ * Returns `{conflict:false, conflicts:[]}` when the merge applied cleanly (the base was already
+ * integrated, or it merged with no textual conflict — in that rare case the merge auto-commits and
+ * the caller can re-validate directly). Returns `{conflict:true, conflicts:[…]}` with the unmerged
+ * paths when markers were left for the agent.
+ */
+export async function startResolveMerge(worktreeDir: string, baseBranch: string): Promise<StartResolveMergeResult> {
+  // already integrated? (--is-ancestor exit 0 = base tip is reachable from HEAD) → nothing to do.
+  const anc = await gitExec(worktreeDir, ['-C', worktreeDir, 'merge-base', '--is-ancestor', baseBranch, 'HEAD']);
+  if (anc.code === 0) return { conflict: false, conflicts: [] };
+  if (anc.code !== 1) throw engineErr('startResolveMerge: ancestor check failed', anc);
+
+  const merge = await gitExec(worktreeDir, [
+    '-C',
+    worktreeDir,
+    '-c',
+    `user.name=${FLEET_PM_AUTHOR.name}`,
+    '-c',
+    `user.email=${FLEET_PM_AUTHOR.email}`,
+    'merge',
+    '--no-edit',
+    baseBranch,
+  ]);
+  if (merge.ok) return { conflict: false, conflicts: [] }; // merged cleanly (auto-committed)
+  // Conflict → DO NOT abort; leave the markers + MERGE_HEAD for the resolve agent. Report the
+  // unmerged paths. (A non-conflict failure also lands here, but the conflicted-file probe below
+  // returns [] for it, and the caller's later MERGE_HEAD check + re-validate catches a bad state.)
+  const conflicts = await conflictedFiles(worktreeDir);
+  return { conflict: true, conflicts };
+}
+
+/**
+ * v2 #9 — list the worktree's currently-unmerged (conflicted) paths via
+ * `diff --name-only --diff-filter=U`. Empty when no merge is in progress / nothing conflicts.
+ * Never throws (salvages []).
+ */
+export async function conflictedFiles(worktreeDir: string): Promise<string[]> {
+  const r = await gitExec(worktreeDir, ['-C', worktreeDir, 'diff', '--name-only', '--diff-filter=U', '-z']);
+  if (!r.ok) return [];
+  return r.stdout.split('\0').filter((p) => p !== '');
+}
+
+/**
+ * v2 #9 — true when an in-progress merge exists in the worktree (MERGE_HEAD is set). Used by
+ * reconcile to detect a crash-mid-resolve worktree (and to assert a resolve attempt actually left
+ * markers). Reads `rev-parse --verify -q MERGE_HEAD` (exit 0 = present). Never throws.
+ */
+export async function isMergeInProgress(worktreeDir: string): Promise<boolean> {
+  const r = await gitExec(worktreeDir, ['-C', worktreeDir, 'rev-parse', '--verify', '-q', 'MERGE_HEAD']);
+  return r.code === 0 && r.stdout.trim() !== '';
+}
+
+/**
+ * v2 #9 — true when leftover conflict markers (`<<<<<<<` / `=======` / `>>>>>>>`) remain in the
+ * WORKING TREE. Uses `git diff --check`, which reports leftover conflict markers and exits non-zero
+ * when any are present (exit 0 = clean). This is the authoritative "did the resolve agent finish?"
+ * check: unlike the index unmerged-paths probe ({@link conflictedFiles}), it reflects the agent's
+ * on-disk edits even though the agent never ran `git add` (the engine stages on commit). Never throws.
+ */
+export async function hasConflictMarkers(worktreeDir: string): Promise<boolean> {
+  const r = await gitExec(worktreeDir, ['-C', worktreeDir, 'diff', '--check']);
+  // diff --check: exit 0 = no markers/whitespace issues; non-zero (typically 2) = issues reported on
+  // stdout. We only care about the conflict-marker lines git emits ("leftover conflict marker").
+  if (r.code === 0) return false;
+  return /leftover conflict marker/.test(r.stdout) || /leftover conflict marker/.test(r.stderr);
+}
+
+/**
+ * v2 #9 — abort an in-progress merge in the worktree (`merge --abort`), restoring it to the
+ * pre-merge state (no half-merged tree, no conflict markers, MERGE_HEAD cleared). Best-effort +
+ * idempotent — a `merge --abort` with no merge in progress is a harmless no-op here. Never throws.
+ */
+export async function mergeAbort(worktreeDir: string): Promise<void> {
+  await gitExec(worktreeDir, ['-C', worktreeDir, 'merge', '--abort']);
+}
+
 export interface MergeResult {
   ok: boolean;
   sha?: string;

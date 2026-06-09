@@ -135,7 +135,7 @@ export function buildServer() {
   registerPlanboardRoutes(app); // v2 #3 — plan-board (objective → Ready cards)
   planboard.init(); // subscribe onRunTerminal — partitioned (§3.7): acts only on its own planning runs
   pm.init(); // subscribe onRunTerminal + safety tick
-  pm.reconcile(); // boot guardrail: reset cards whose run died
+  void pm.reconcile().catch(() => {}); // boot guardrail: reset cards whose run died (async: aborts mid-resolve worktrees)
   // Kanban board live stream (sse() is module-private here; subscribeBoard never returns null).
   app.get('/api/projects/:pid/board/stream', (req, reply) => {
     const s = sse(reply, req);

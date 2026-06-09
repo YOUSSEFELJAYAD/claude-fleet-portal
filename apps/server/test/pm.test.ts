@@ -119,6 +119,26 @@ function makeFinishedWorktree(
   return { wtName, wtDir, branch };
 }
 
+/**
+ * Build a card worktree whose branch edits README.md one way, then advance the default branch (main)
+ * editing README.md a DIFFERENT way after the branch forked → a guaranteed textual conflict on both
+ * the merge-tree probe AND the integrate-base merge. Returns the worktree handle + the new main HEAD.
+ * (v2 #9 fixture: the conflict-resolution path keys off exactly this state.)
+ */
+function makeConflictingWorktree(
+  rootDir: string,
+  cardId: string,
+): { wtName: string; wtDir: string; branch: string; mainHead: string } {
+  const wt = makeFinishedWorktree(rootDir, cardId, (dir) => {
+    writeFileSync(join(dir, 'README.md'), '# from branch\n');
+  });
+  // main edits the SAME file differently after the fork → textual conflict.
+  writeFileSync(join(rootDir, 'README.md'), '# from main\n');
+  git(rootDir, 'add', '-A');
+  git(rootDir, 'commit', '-m', 'main edits readme');
+  return { ...wt, mainHead: git(rootDir, 'rev-parse', 'HEAD') };
+}
+
 // ── project / card seeding helpers ─────────────────────────────────────────────
 function makeProject(rootDir: string, patch: Partial<any> = {}): any {
   const { paused, ...createPatch } = patch;
@@ -147,6 +167,7 @@ function makeCard(projectId: string, patch: Partial<any> = {}): any {
     maxAttempts: patch.maxAttempts,
     budgetUsd: patch.budgetUsd,
     column: patch.column,
+    maxResolveAttempts: patch.maxResolveAttempts,
   });
   // apply any post-create fields not settable through createTask (worktreeName, runId, phase, ...).
   const post: any = {};
@@ -160,6 +181,8 @@ function makeCard(projectId: string, patch: Partial<any> = {}): any {
     'lastError',
     'lastDiffHash',
     'validationOutput',
+    'resolveAttemptCount',
+    'maxResolveAttempts',
   ]) {
     if (k in patch && patch[k] !== undefined) post[k] = patch[k];
   }
@@ -652,5 +675,306 @@ describe('pm.reconcile() — boot guardrail (SPEC §5.7)', () => {
     expect(fresh!.column).toBe('Review');
     expect(fresh!.executionPhase).toBe('idle');
     expect(fresh!.lastError).toContain('reconciled on boot');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// v2 #9 — conflict-resolution agent integrated into the merge pipeline (SPEC §4 #9)
+//
+// The ACTUAL claude resolution is a PAID E2E (FLAGGED, not run here): we stub registry.launch so the
+// resolve run never spawns, then SIMULATE the agent's outcome by editing (and, on success, leaving
+// the engine to commit) the half-merged worktree the engine set up. All git state is asserted over
+// REAL worktrees. `pm` is `any`-typed (top of file), so we drive the private resolve terminal handler
+// `onResolveRunDone(cardId, run)` directly for a fully deterministic, await-able test.
+// ════════════════════════════════════════════════════════════════════════════
+describe('pm #9 — conflict resolution in the merge pipeline (SPEC §4 #9)', () => {
+  it('resolveConflicts OFF → a conflicting card parks in Review/conflicts EXACTLY as v1 (no resolve run launched)', async () => {
+    const root = makeRepo('res-off');
+    const project = makeProject(root, { defaultBranch: 'master', resolveConflicts: false });
+    const card = makeCard(project.id, { title: 'c', column: 'Review' });
+    const { wtName } = makeConflictingWorktree(root, card.id);
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+    const mainHead = git(root, 'rev-parse', 'HEAD');
+
+    const stub = stubLaunch(() => baseRun('should-not-launch', project.id));
+    try {
+      await pm.approve(card.id);
+      // no resolve agent launched into THIS card's worktree when the toggle is off (filter by
+      // worktree so a stray deferred tick from an earlier test's project can't perturb the count).
+      expect(stub.calls.filter((c) => c.worktree === wtName).length).toBe(0);
+    } finally {
+      stub.restore();
+    }
+    const parked = kanbanRepo.getTask(card.id);
+    expect(parked!.column).toBe('Review');
+    expect(parked!.executionPhase).toBe('conflicts');
+    expect(parked!.lastError).toContain('conflict');
+    expect(parked!.resolveAttemptCount).toBe(0); // no attempt consumed
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(mainHead); // main untouched
+  });
+
+  it('resolveConflicts ON → launches a resolve run (UNRELAXED deny-list) into the half-merged worktree; phase resolving, attempt counted', async () => {
+    const root = makeRepo('res-launch');
+    // pushEnabled ON so we can prove the resolve launch IGNORES the relaxation and uses the
+    // UNRELAXED deny-list (push + remote denied) — the resolve agent must NEVER push.
+    const project = makeProject(root, { defaultBranch: 'master', resolveConflicts: true, pushEnabled: true });
+    const card = makeCard(project.id, { title: 'c', column: 'Review', maxResolveAttempts: 2 });
+    const { wtName, wtDir } = makeConflictingWorktree(root, card.id);
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+
+    const stub = stubLaunch((req) => baseRun('resolve-run', req.projectId));
+    try {
+      await pm.approve(card.id);
+      // exactly ONE launch targeted THIS card's worktree — the resolve run (worktree-scoped so a
+      // stray deferred tick from an earlier test's project can't perturb the count).
+      const mine = stub.calls.filter((c) => c.worktree === wtName);
+      expect(mine.length).toBe(1);
+      const req = mine[0];
+      // UNRELAXED deny-list: BOTH push + remote denied even though pushEnabled is true (§3.4).
+      expect(req.disallowedTools).toContain('Bash(git push *)');
+      expect(req.disallowedTools).toContain('Bash(git remote *)');
+      expect(req.campaignId).toBeNull();
+      expect(req.worktree).toBe(wtName);
+      expect(req.permissionMode).toBe('bypassPermissions');
+      expect(req.prompt).toContain('IN-PROGRESS MERGE');
+    } finally {
+      stub.restore();
+    }
+    const resolving = kanbanRepo.getTask(card.id);
+    expect(resolving!.executionPhase).toBe('resolving');
+    expect(resolving!.resolveAttemptCount).toBe(1); // one attempt consumed
+    expect(resolving!.runId).toBe('resolve-run'); // linked so the terminal routes back
+    // the worktree is genuinely half-merged: MERGE_HEAD set + README.md conflicted.
+    expect(() => git(wtDir, 'rev-parse', '--verify', 'MERGE_HEAD')).not.toThrow();
+    expect(git(wtDir, 'diff', '--name-only', '--diff-filter=U')).toContain('README.md');
+  });
+
+  it('resolve SUCCESS → agent resolves markers, engine commits + re-validates green → merged into main → Done', async () => {
+    const root = makeRepo('res-ok');
+    const project = makeProject(root, { defaultBranch: 'master', resolveConflicts: true });
+    const card = makeCard(project.id, { title: 'c', column: 'Review', maxResolveAttempts: 2 });
+    const { wtName, wtDir } = makeConflictingWorktree(root, card.id);
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+
+    const stub = stubLaunch((req) => baseRun('resolve-run', req.projectId));
+    try {
+      await pm.approve(card.id); // → resolving (markers left in the worktree)
+      // SIMULATE the agent: resolve the conflict marker (files only; the engine commits).
+      writeFileSync(join(wtDir, 'README.md'), '# merged: from branch + from main\n');
+      const resolveRun = baseRun('resolve-run', project.id, { status: 'completed', endedAt: 2 });
+      // drive the resolve terminal directly (await for determinism).
+      await pm.onResolveRunDone(card.id, resolveRun);
+    } finally {
+      stub.restore();
+    }
+    const done = kanbanRepo.getTask(card.id);
+    expect(done!.column).toBe('Done');
+    expect(done!.executionPhase).toBe('idle');
+    expect(done!.mergeSha).toBeTruthy();
+    // the resolved README landed on master, no markers, worktree torn down.
+    expect(git(root, 'show', 'HEAD:README.md')).toContain('merged');
+    expect(git(root, 'status', '--porcelain')).toBe('');
+    expect(git(root, 'worktree', 'list')).not.toContain(wtName);
+  });
+
+  it('resolve SHIP re-integrates+re-validates the CURRENT base (a disjoint advance during resolve cannot ship an unvalidated tree)', async () => {
+    // The boundary the fix locks: the resolve agent runs with the merge lock RELEASED, so `main` can
+    // advance meanwhile. The ship step must re-integrate the CURRENT base + RE-VALIDATE inside the lock
+    // — otherwise a disjoint advance merges cleanly and ships a tree validation never saw.
+    const root = makeRepo('res-stale');
+    const project = makeProject(root, { defaultBranch: 'master', resolveConflicts: true });
+    // validation FAILS iff sentinel.txt is present — sentinel is the disjoint change main gains mid-resolve.
+    const card = makeCard(project.id, { title: 'c', column: 'Review', validationCommand: 'test ! -f sentinel.txt' });
+    const { wtName, wtDir } = makeConflictingWorktree(root, card.id);
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+
+    const stub = stubLaunch((req) => baseRun('resolve-run', req.projectId));
+    try {
+      await pm.approve(card.id); // → resolving (README markers left)
+      // SIMULATE the agent resolving the README conflict (no sentinel yet → a pre-lock check would pass).
+      writeFileSync(join(wtDir, 'README.md'), '# merged: branch + main\n');
+      // main ADVANCES with a DISJOINT change (a new file) AFTER the resolve started → clean to integrate
+      // but it makes validation fail. The old (ship-without-re-validate) path would merge it unchecked.
+      writeFileSync(join(root, 'sentinel.txt'), 'now present\n');
+      git(root, 'add', '-A');
+      git(root, 'commit', '-m', 'main advances with a disjoint file');
+      const masterBefore = git(root, 'rev-parse', 'master');
+
+      const resolveRun = baseRun('resolve-run', project.id, { status: 'completed', endedAt: 2 });
+      await pm.onResolveRunDone(card.id, resolveRun);
+
+      const parked = kanbanRepo.getTask(card.id);
+      // re-integrate brought sentinel.txt into the tree → re-validate FAILED → NOT merged, parked.
+      expect(parked!.column).toBe('Review');
+      expect(parked!.executionPhase).toBe('failed');
+      expect(parked!.mergeSha).toBeFalsy();
+      // master did NOT advance to a merge commit — the unvalidated tree never shipped.
+      expect(git(root, 'rev-parse', 'master')).toBe(masterBefore);
+      expect(() => git(root, 'show', 'master:README.md')).not.toThrow();
+      expect(git(root, 'show', 'master:README.md')).not.toContain('merged'); // branch never merged in
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('PRODUCTION ROUTING: handleRunTerminal routes a resolving-card run terminal to the resolve path (not the build pipeline) → Done', async () => {
+    // The other tests call onResolveRunDone directly; THIS one drives the real terminal entrypoint
+    // handleRunTerminal so the `card.executionPhase === "resolving"` routing branch is exercised
+    // end-to-end. If that branch regressed, the terminal would fall through to onCardRunDone, commit
+    // a marker-laden tree, and launch a FIX run — which this test would catch (card never reaches Done).
+    const root = makeRepo('res-route');
+    const project = makeProject(root, { defaultBranch: 'master', resolveConflicts: true });
+    const card = makeCard(project.id, { title: 'c', column: 'Review', maxResolveAttempts: 2 });
+    const { wtName, wtDir } = makeConflictingWorktree(root, card.id);
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+
+    // unique run id (the test DB is shared across tests; getTaskByRunId must resolve to THIS card).
+    const rid = `resolve-route-${card.id}`;
+    const stub = stubLaunch((req) => baseRun(rid, req.projectId));
+    try {
+      await pm.approve(card.id); // → resolving (markers left, run_id=rid)
+      expect(kanbanRepo.getTask(card.id)!.executionPhase).toBe('resolving');
+      expect(kanbanRepo.getTask(card.id)!.runId).toBe(rid);
+      // SIMULATE the agent resolving the marker (files only; the engine commits).
+      writeFileSync(join(wtDir, 'README.md'), '# merged via routing\n');
+      // Fire the REAL terminal entrypoint (fire-and-forget) with the resolve run snapshot.
+      const resolveRun = baseRun(rid, project.id, { status: 'completed', endedAt: 2 });
+      pm.handleRunTerminal(resolveRun);
+      // poll until the resolve path drives the card to Done (the void'd async settles).
+      const deadline = Date.now() + 4000;
+      let done = kanbanRepo.getTask(card.id);
+      while (done!.column !== 'Done' && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+        done = kanbanRepo.getTask(card.id);
+      }
+      expect(done!.column).toBe('Done'); // routed through the resolve path, merged
+      expect(done!.mergeSha).toBeTruthy();
+      expect(git(root, 'show', 'HEAD:README.md')).toContain('merged via routing');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('resolve FAILURE (markers remain) → git merge --abort cleans the worktree, parks Review/conflicts, attempt counted, main untouched', async () => {
+    const root = makeRepo('res-fail');
+    const project = makeProject(root, { defaultBranch: 'master', resolveConflicts: true });
+    const card = makeCard(project.id, { title: 'c', column: 'Review', maxResolveAttempts: 2 });
+    const { wtName, wtDir } = makeConflictingWorktree(root, card.id);
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+    const mainHead = git(root, 'rev-parse', 'HEAD');
+
+    const stub = stubLaunch((req) => baseRun('resolve-run', req.projectId));
+    try {
+      await pm.approve(card.id); // → resolving (markers left)
+      // SIMULATE a FAILED agent: leave the markers untouched.
+      const resolveRun = baseRun('resolve-run', project.id, { status: 'completed', endedAt: 2 });
+      await pm.onResolveRunDone(card.id, resolveRun);
+    } finally {
+      stub.restore();
+    }
+    const parked = kanbanRepo.getTask(card.id);
+    expect(parked!.column).toBe('Review');
+    expect(parked!.executionPhase).toBe('conflicts');
+    expect(parked!.resolveAttemptCount).toBe(1); // attempt was consumed
+    expect(parked!.mergeSha).toBeFalsy();
+    // the half-merged tree was aborted (no MERGE_HEAD, no markers left behind).
+    expect(() => git(wtDir, 'rev-parse', '--verify', 'MERGE_HEAD')).toThrow();
+    expect(git(wtDir, 'diff', '--name-only', '--diff-filter=U')).toBe('');
+    // main untouched.
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(mainHead);
+  });
+
+  it('resolve FAILURE (re-validation fails after a clean resolution) → parks Review/failed, not merged', async () => {
+    const root = makeRepo('res-valfail');
+    const project = makeProject(root, {
+      defaultBranch: 'master',
+      resolveConflicts: true,
+      defaultValidationCommand: 'test ! -f FAIL', // fails iff a FAIL file exists in the worktree
+    });
+    const card = makeCard(project.id, { title: 'c', column: 'Review', maxResolveAttempts: 2 });
+    const { wtName, wtDir } = makeConflictingWorktree(root, card.id);
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+    const mainHead = git(root, 'rev-parse', 'HEAD');
+
+    const stub = stubLaunch((req) => baseRun('resolve-run', req.projectId));
+    try {
+      await pm.approve(card.id);
+      // agent resolves the markers cleanly BUT leaves the tree failing validation.
+      writeFileSync(join(wtDir, 'README.md'), '# resolved\n');
+      writeFileSync(join(wtDir, 'FAIL'), 'boom\n');
+      const resolveRun = baseRun('resolve-run', project.id, { status: 'completed', endedAt: 2 });
+      await pm.onResolveRunDone(card.id, resolveRun);
+    } finally {
+      stub.restore();
+    }
+    const parked = kanbanRepo.getTask(card.id);
+    expect(parked!.column).toBe('Review');
+    expect(parked!.executionPhase).toBe('failed');
+    expect(parked!.lastError).toContain('re-validation failed');
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(mainHead); // not merged
+  });
+
+  it('attempt accounting: at maxResolveAttempts → a conflict parks (no resolve launched); retries are bounded', async () => {
+    const root = makeRepo('res-cap');
+    const project = makeProject(root, { defaultBranch: 'master', resolveConflicts: true });
+    // already at the cap → the next conflict must NOT launch another resolve.
+    const card = makeCard(project.id, {
+      title: 'c',
+      column: 'Review',
+      maxResolveAttempts: 1,
+      resolveAttemptCount: 1,
+    });
+    const { wtName } = makeConflictingWorktree(root, card.id);
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+
+    const stub = stubLaunch(() => baseRun('should-not-launch', project.id));
+    try {
+      await pm.approve(card.id);
+      // at the cap → no further resolve run for THIS worktree (worktree-scoped count).
+      expect(stub.calls.filter((c) => c.worktree === wtName).length).toBe(0);
+    } finally {
+      stub.restore();
+    }
+    const parked = kanbanRepo.getTask(card.id);
+    expect(parked!.column).toBe('Review');
+    expect(parked!.executionPhase).toBe('conflicts');
+    expect(parked!.resolveAttemptCount).toBe(1); // not incremented past the cap
+  });
+
+  it('reconcile aborts a crash-mid-resolve worktree (real MERGE_HEAD) and parks the card Review/conflicts', async () => {
+    const root = makeRepo('res-reconcile');
+    const project = makeProject(root, { defaultBranch: 'master', resolveConflicts: true, paused: true });
+    const card = makeCard(project.id, { title: 'c', column: 'Review' });
+    const { wtName, wtDir } = makeConflictingWorktree(root, card.id);
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+
+    // Create a REAL in-progress conflicted merge in the worktree (a crash mid-resolve), then mark the
+    // card resolving — exactly the state a crash leaves behind.
+    const merge = (() => {
+      try {
+        git(wtDir, 'merge', '--no-edit', 'master');
+        return 'clean';
+      } catch {
+        return 'conflict';
+      }
+    })();
+    expect(merge).toBe('conflict');
+    expect(() => git(wtDir, 'rev-parse', '--verify', 'MERGE_HEAD')).not.toThrow(); // MERGE_HEAD set
+    kanbanRepo.updateTask(card.id, { executionPhase: 'resolving', runId: 'dead-resolve-run' });
+    repo.upsertRun(baseRun('dead-resolve-run', project.id, { status: 'killed', endedAt: 2 }));
+
+    const stub = stubLaunch((req) => baseRun(`r-${req.projectId}`, req.projectId));
+    try {
+      await pm.reconcile(); // async: awaits the merge --abort of the mid-resolve worktree
+    } finally {
+      stub.restore();
+    }
+    const fresh = kanbanRepo.getTask(card.id);
+    expect(fresh!.column).toBe('Review');
+    expect(fresh!.executionPhase).toBe('conflicts');
+    expect(fresh!.lastError).toContain('reconciled on boot');
+    // the worktree is clean — the in-progress merge was aborted (no MERGE_HEAD, no markers).
+    expect(() => git(wtDir, 'rev-parse', '--verify', 'MERGE_HEAD')).toThrow();
+    expect(git(wtDir, 'diff', '--name-only', '--diff-filter=U')).toBe('');
   });
 });

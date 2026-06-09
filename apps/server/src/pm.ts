@@ -37,7 +37,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
-import type { Run, Project, KanbanTask, Campaign } from '@fleet/shared';
+import type { Run, Project, KanbanTask, Campaign, ExecutionPhase } from '@fleet/shared';
 import { registry } from './registry.js';
 import { projectsRepo } from './projects.js';
 import { kanbanRepo } from './kanban.js';
@@ -50,6 +50,11 @@ import {
   ensureWorktreeIgnored,
   createWorktree,
   scrubCredentials,
+  startResolveMerge,
+  mergeAbort,
+  isMergeInProgress,
+  conflictedFiles,
+  hasConflictMarkers,
 } from './git.js';
 import { campaigns } from './campaigns.js';
 import { fetchAndSyncDefault, pushBranch, prCreate, prView } from './gh.js';
@@ -182,6 +187,30 @@ function fixPrompt(card: KanbanTask): string {
       `Validation output (tail):\n${card.validationOutput}`
     : '\n\nThe previous attempt did not pass. Address the remaining issues.';
   return base + evidence + vout;
+}
+
+/**
+ * v2 #9 — prompt for the conflict-resolution agent. The agent is dropped into a worktree with an
+ * in-progress merge (conflict markers + MERGE_HEAD). It must resolve EVERY marker to satisfy the
+ * acceptance criteria; it may edit files ONLY (the UNRELAXED deny-list blocks push/remote) and must
+ * NOT run git itself (the engine commits / aborts on its terminal). The result must pass validation.
+ */
+function resolvePrompt(card: KanbanTask, project: Project, conflicts: string[]): string {
+  const ac = card.acceptanceCriteria.trim()
+    ? card.acceptanceCriteria.trim()
+    : '(no explicit acceptance criteria — preserve the intent of BOTH sides of each conflict)';
+  const vcmd = validationCommandFor(card, project);
+  const files = conflicts.length ? `\n\nConflicted files:\n${conflicts.map((f) => `  - ${f}`).join('\n')}` : '';
+  return [
+    `You are in a git worktree with an IN-PROGRESS MERGE (the default branch was merged into this ` +
+      `task branch and left conflict markers).`,
+    `Resolve EVERY conflict marker (<<<<<<<, =======, >>>>>>>) in the working tree so the code ` +
+      `satisfies the acceptance criteria below.`,
+    `\nACCEPTANCE CRITERIA / DEFINITION OF DONE:\n${ac}` + files,
+    `\nRules:\n- Edit files ONLY. Do NOT run git (no add/commit/merge/push) — the system commits the ` +
+      `resolution for you.\n- Leave NO conflict markers behind.` +
+      (vcmd ? `\n- The result must pass the validation command: ${vcmd}` : ''),
+  ].join('\n');
 }
 
 /** PR body for `gh pr create` (v2 #2): the card's description + acceptance criteria, with a
@@ -605,6 +634,19 @@ class PmEngine {
     const card = kanbanRepo.getTaskByRunId(run.id);
     if (!card) return; // not a PM card run (e.g. a manual/standalone run that happens to have a projectId)
 
+    // v2 #9 — a resolve run links by the SAME run_id but the card sits in phase 'resolving'; route it
+    // to the resolve terminal (commit → re-validate → merge/abort) instead of the build pipeline.
+    if (card.executionPhase === 'resolving') {
+      void this.onResolveRunDone(card.id, run).catch((e) => {
+        kanbanRepo.updateTask(card.id, {
+          column: 'Review',
+          executionPhase: 'failed',
+          lastError: `pm resolve terminal error: ${e?.message ?? e}`,
+        });
+      });
+      return;
+    }
+
     // Drive the (async) terminal pipeline; failures are caught and parked, never thrown.
     void this.onCardRunDone(card.id, run).catch((e) => {
       kanbanRepo.updateTask(card.id, {
@@ -774,9 +816,9 @@ class PmEngine {
           // 2. zero-side-effect conflict probe.
           const probe = await conflictProbe(project.rootDir, base, branch);
           if (!probe.clean) {
-            kanbanRepo.updateTask(cardId, {
-              column: 'Review',
-              executionPhase: 'conflicts',
+            // v2 #9 — RESOLVE if enabled + under the cap, else park in Review exactly as v1.
+            await this.resolveOrParkConflict(cardId, project, card, wtDir, base, probe.conflicts, {
+              phase: 'conflicts',
               lastError: `merge conflicts in: ${probe.conflicts.join(', ') || '(unknown files)'}`,
             });
             return;
@@ -785,9 +827,11 @@ class PmEngine {
           // 4. integrate base INTO the branch (if main advanced) + re-validate the shipped tree.
           const integ = await integrateAndReport(wtDir, base);
           if (integ.conflict) {
-            kanbanRepo.updateTask(cardId, {
-              column: 'Review',
-              executionPhase: 'conflicts',
+            // v2 #9 — the integrate-base merge conflicted; RESOLVE if enabled + under the cap, else
+            // park exactly as v1. integrateAndReport already aborted the merge, so the worktree is
+            // clean; the resolve path re-starts the merge itself (startResolveMerge) to leave markers.
+            await this.resolveOrParkConflict(cardId, project, card, wtDir, base, [], {
+              phase: 'conflicts',
               lastError: 'integration conflict merging the default branch into the task branch',
             });
             return;
@@ -848,6 +892,268 @@ class PmEngine {
     } finally {
       this.merging.delete(cardId);
     }
+  }
+
+  // ── RESOLVE (v2 #9 — conflict-resolution agent) ─────────────────────────────────
+  /**
+   * v2 #9 — a conflict was detected in doMerge (probe-unclean OR integrate-base conflict). If the
+   * project has resolveConflicts ON and the card is UNDER its resolve cap, launch a conflict-
+   * resolution agent into the half-merged worktree (phase 'resolving'); otherwise park in Review
+   * EXACTLY as v1 (the `park` message/phase the caller would have used). Runs UNDER the merge mutex
+   * (the caller holds it) but only does worktree-local + synchronous-launch work — it returns
+   * immediately, RELEASING the mutex so the long-running resolve agent never blocks other merges.
+   * The resolve run terminal (onResolveRunDone) re-acquires the mutex to finish the merge.
+   */
+  private async resolveOrParkConflict(
+    cardId: string,
+    project: Project,
+    card: KanbanTask,
+    wtDir: string,
+    base: string,
+    conflicts: string[],
+    park: { phase: ExecutionPhase; lastError: string },
+  ): Promise<void> {
+    const canResolve = project.resolveConflicts && card.resolveAttemptCount < card.maxResolveAttempts;
+    if (!canResolve) {
+      // resolveConflicts OFF (or absent) OR at/over the cap → park in Review EXACTLY as v1.
+      kanbanRepo.updateTask(cardId, { column: 'Review', executionPhase: park.phase, lastError: park.lastError });
+      return;
+    }
+
+    // START the integration merge leaving conflict markers + MERGE_HEAD for the agent to edit.
+    let resolveMerge;
+    try {
+      resolveMerge = await startResolveMerge(wtDir, base);
+    } catch (e: any) {
+      // could not even start the merge → clean up + park (do NOT leave a half-merged tree).
+      await mergeAbort(wtDir);
+      kanbanRepo.updateTask(cardId, {
+        column: 'Review',
+        executionPhase: park.phase,
+        lastError: `${park.lastError} (resolve setup failed: ${e?.message ?? e})`,
+      });
+      return;
+    }
+
+    // Rare: the merge applied cleanly (no markers) — the probe was stale / the integrate path's
+    // earlier abort means base wasn't yet merged. The tree is now integrated + committed; re-validate
+    // and ship directly (counts as no resolve attempt — no agent was needed).
+    if (!resolveMerge.conflict) {
+      await ensureCommitted(wtDir);
+      const vr = await validateCard(wtDir, project, card);
+      if (!vr.ok) {
+        kanbanRepo.updateTask(cardId, {
+          column: 'Review',
+          executionPhase: 'failed',
+          validationOutput: vr.output,
+          lastError: 'post-integration re-validation failed; not merging',
+        });
+        return;
+      }
+      await this.shipMerge(cardId, project, card);
+      return;
+    }
+
+    // count the attempt + mark resolving, THEN launch the resolve agent into the half-merged worktree.
+    const markerFiles = resolveMerge.conflicts.length ? resolveMerge.conflicts : conflicts;
+    kanbanRepo.updateTask(cardId, {
+      executionPhase: 'resolving',
+      resolveAttemptCount: card.resolveAttemptCount + 1,
+      lastError: markerFiles.length ? `resolving conflicts in: ${markerFiles.join(', ')}` : 'resolving conflicts',
+    });
+
+    const fresh = kanbanRepo.getTask(cardId);
+    if (!fresh) {
+      await mergeAbort(wtDir); // card vanished mid-flight → don't leave a half-merged tree
+      return;
+    }
+    const launched = this.launchResolve(fresh, project, markerFiles);
+    if (!launched) {
+      // launch failed (429 / error) → abort the merge (no half-merged tree) and park in Review for a
+      // human; the attempt is counted (consumed) so retries stay bounded.
+      await mergeAbort(wtDir);
+      kanbanRepo.updateTask(cardId, {
+        column: 'Review',
+        executionPhase: park.phase,
+        lastError: `${park.lastError} (resolve agent launch failed)`,
+      });
+    }
+  }
+
+  /**
+   * v2 #9 — launch the conflict-resolution agent into the card's (half-merged) worktree. Mirrors
+   * launchFix/launchBuild, but carries the UNRELAXED deny-list (§3.4): the resolve agent edits files
+   * only and must NEVER push — the engine performs the merge/push as fleet-pm. Links the run to the
+   * card (run_id) so its terminal routes back here. Returns true on success.
+   */
+  private launchResolve(card: KanbanTask, project: Project, conflicts: string[]): boolean {
+    const wtName = card.worktreeName ?? worktreeNameFor(card);
+    try {
+      const run = registry.launch({
+        prompt: resolvePrompt(card, project, conflicts),
+        cwd: project.rootDir,
+        worktree: wtName,
+        projectId: project.id,
+        campaignId: null,
+        model: PM_MODEL,
+        effort: PM_EFFORT,
+        permissionMode: PM_PERMISSION_MODE,
+        // UNRELAXED (§3.4): the resolve agent edits files only; its push is an engine-side step, so it
+        // must NEVER inherit the relaxed (push-enabled) deny-list — force pushEnabled false.
+        disallowedTools: disallowedToolsForProject({ ...project, pushEnabled: false }),
+        budgetUsd: card.budgetUsd,
+        interactive: false,
+      });
+      kanbanRepo.updateTask(card.id, { runId: run.id, worktreeName: wtName });
+      return true;
+    } catch {
+      // 429 or any launch error → caller aborts the merge + parks (attempt already counted).
+      return false;
+    }
+  }
+
+  /**
+   * v2 #9 — the resolve agent reached terminal. ALWAYS re-validate (commit the worktree first so the
+   * resolution is real), under guards:
+   *   - the worktree must have NO conflict markers left (MERGE_HEAD must be gone OR no unmerged files)
+   *     AND the run must not have been killed/failed AND re-validation must pass → SHIP under the mutex.
+   *   - otherwise → `git merge --abort` (clean the half-merged tree — never leave one) + park in
+   *     Review (phase conflicts/failed) with the conflicting file list in lastError.
+   * The attempt was already counted in resolveOrParkConflict; at/over the cap a future conflict won't
+   * re-resolve (the cap check in resolveOrParkConflict parks instead).
+   */
+  private async onResolveRunDone(cardId: string, run: Run): Promise<void> {
+    const card = kanbanRepo.getTask(cardId);
+    if (!card) return;
+    if (PM_DONE_COLUMNS.has(card.column) || card.column === 'Backlog' || card.column === 'Ready') return;
+    const project = projectsRepo.getProject(card.projectId);
+    if (!project) return;
+    const wtName = card.worktreeName ?? worktreeNameFor(card);
+    const wtDir = worktreeDirFor(project.rootDir, wtName);
+    const base = project.defaultBranch;
+
+    const fail = async (msg: string, phase: ExecutionPhase = 'conflicts') => {
+      const remaining = await conflictedFiles(wtDir);
+      await mergeAbort(wtDir); // NEVER leave a half-merged tree
+      kanbanRepo.updateTask(cardId, {
+        column: 'Review',
+        executionPhase: phase,
+        lastError: remaining.length ? `${msg}; unresolved: ${remaining.join(', ')}` : msg,
+      });
+      this.tickSoon(card.projectId);
+    };
+
+    // a killed resolve run (user stop / budget) → abort the merge + park.
+    if (run.status === 'killed') {
+      await fail(run.killReason === 'budget' ? 'resolve run auto-killed: per-run budget reached' : 'resolve run stopped');
+      return;
+    }
+
+    // Leftover conflict markers in the WORKING TREE? → resolution incomplete → abort + park. Uses
+    // `git diff --check` (working-tree markers) — authoritative even though the agent never `git add`ed
+    // (the index stays "unmerged" until the engine stages on commit, so the index probe would lie).
+    if (await hasConflictMarkers(wtDir)) {
+      await fail('conflict resolution incomplete (markers remain)');
+      return;
+    }
+
+    // commit the resolution (`git add -A` stages the agent's edits → completes the in-progress merge
+    // as fleet-pm), then re-validate. ensureCommitted is a no-op only if the tree is already clean.
+    try {
+      await ensureCommitted(wtDir);
+    } catch (e: any) {
+      await fail(`resolve commit failed: ${e?.message ?? e}`, 'failed');
+      return;
+    }
+    // Belt-and-braces: MERGE_HEAD still set after commit means the merge never completed → incomplete.
+    if (await isMergeInProgress(wtDir)) {
+      await fail('conflict resolution did not complete the merge');
+      return;
+    }
+
+    const vr = await validateCard(wtDir, project, card);
+    if (!vr.ok) {
+      // re-validation failed after resolution → abort any residual merge + park (do NOT merge a
+      // broken tree). The merge is already committed at this point, so merge --abort is a no-op; the
+      // parked card keeps the worktree for human inspection.
+      kanbanRepo.updateTask(cardId, {
+        column: 'Review',
+        executionPhase: 'failed',
+        validationOutput: vr.output,
+        lastError: 'post-resolution re-validation failed; not merging',
+      });
+      this.tickSoon(card.projectId);
+      return;
+    }
+
+    // GREEN (pre-lock fast-check passed) → finish the merge under the per-project mutex. CRITICAL: the
+    // resolve agent ran with the lock RELEASED (it can take minutes), so `main` may have ADVANCED since
+    // startResolveMerge integrated the base. Re-integrate the CURRENT base and RE-VALIDATE inside the
+    // lock before shipping — exactly doMerge's inside-lock invariant — so the SHIPPED tree is always the
+    // VALIDATED tree and a concurrent merge can never sneak an unchecked change into the resolved card.
+    await this.withMergeLock(project.id, async () => {
+      const f = kanbanRepo.getTask(cardId);
+      if (!f) return;
+      if (f.column !== 'InProgress' && f.column !== 'Review') return; // canceled/merged meanwhile
+      kanbanRepo.updateTask(cardId, { executionPhase: 'merging' });
+
+      // re-integrate the base as it is NOW (no-op if unchanged; brings any new commits otherwise).
+      const integ = await integrateAndReport(wtDir, base);
+      if (integ.conflict) {
+        kanbanRepo.updateTask(cardId, {
+          column: 'Review',
+          executionPhase: 'conflicts',
+          lastError: 'base advanced during resolution and re-integration conflicts; resolve again or merge manually',
+        });
+        return;
+      }
+      await ensureCommitted(wtDir); // record the integration merge commit (no-op if integrate was a no-op)
+      const vr2 = await validateCard(wtDir, project, f);
+      if (!vr2.ok) {
+        kanbanRepo.updateTask(cardId, {
+          column: 'Review',
+          executionPhase: 'failed',
+          validationOutput: vr2.output,
+          lastError: 'post-integration re-validation failed after resolution; not merging',
+        });
+        return;
+      }
+      await this.shipMerge(cardId, project, f);
+    });
+    this.tickSoon(card.projectId);
+  }
+
+  /**
+   * v2 #9 — the final SHIP step shared by the normal doMerge tail and the resolve terminal: branch on
+   * merge_mode (PR push or local merge --no-ff), record the result, and tear down the worktree on a
+   * local merge. PRECONDITION: caller holds the merge mutex and the integrated tree has re-validated
+   * green. Mirrors doMerge's step-5/6 exactly so resolved cards ship identically to clean ones.
+   */
+  private async shipMerge(cardId: string, project: Project, card: KanbanTask): Promise<void> {
+    const wtName = card.worktreeName ?? worktreeNameFor(card);
+    const branch = branchNameFor(wtName);
+    const base = project.defaultBranch;
+
+    if (project.mergeMode === 'pr') {
+      await this.doMergePr(cardId, project, card, wtName, branch, base);
+      return;
+    }
+    const res = await mergeBranch(project.rootDir, branch);
+    if (!res.ok) {
+      kanbanRepo.updateTask(cardId, {
+        column: 'Review',
+        executionPhase: 'failed',
+        lastError: `merge failed: ${res.error ?? 'unknown'}`,
+      });
+      return;
+    }
+    kanbanRepo.updateTask(cardId, {
+      column: 'Done',
+      executionPhase: 'idle',
+      mergeSha: res.sha ?? null,
+      lastError: null,
+    });
+    await cleanupWorktree(project.rootDir, wtName, branch);
   }
 
   /**
@@ -1087,13 +1393,23 @@ class PmEngine {
   // ── RECONCILE (SPEC §5.7 boot guardrail) ────────────────────────────────────────
   /**
    * On boot, no live run processes exist (registry's constructor killed orphan PIDs + reconciled
-   * runs). Any card stuck in building/validating/merging whose run is dead/terminal is a zombie →
-   * reset it. A card mid-merge whose run is gone is parked in Review (re-approve/inspect); a card mid
-   * build/validate is sent back to Ready to be re-picked. Called once by the main loop on boot.
+   * runs). Any card stuck in building/validating/merging/resolving whose run is dead/terminal is a
+   * zombie → reset it. A card mid-merge whose run is gone is parked in Review (re-approve/inspect); a
+   * card mid build/validate is sent back to Ready to be re-picked; a card mid-RESOLVE (v2 #9) left a
+   * worktree with MERGE_HEAD set → `git merge --abort` it (never leave a half-merged tree) and park
+   * it in Review/conflicts. Called once by the main loop on boot. Async because the resolve sweep must
+   * abort a real in-progress merge before the worktree is clean (callers may fire-and-forget).
    */
-  reconcile(): void {
+  async reconcile(): Promise<void> {
+    const aborts: Promise<void>[] = [];
     for (const project of projectsRepo.listProjects()) {
       for (const card of kanbanRepo.listTasks(project.id)) {
+        // v2 #9 — a mid-resolve zombie (phase 'resolving', in InProgress OR Review) needs its
+        // half-merged worktree aborted regardless of run state (the resolve agent process is dead).
+        if (card.executionPhase === 'resolving') {
+          aborts.push(this.reconcileResolving(card, project));
+          continue;
+        }
         if (card.column !== 'InProgress' && !(card.column === 'Review' && card.executionPhase === 'merging')) {
           continue;
         }
@@ -1118,8 +1434,30 @@ class PmEngine {
         }
       }
     }
+    // wait for the mid-resolve worktrees to be aborted (clean) before re-evaluating.
+    await Promise.all(aborts);
     // re-evaluate every project after the reset.
     this.tickAll();
+  }
+
+  /**
+   * v2 #9 — reconcile a single mid-resolve zombie: `git merge --abort` its worktree (so no half-
+   * merged tree survives the crash) and park it in Review/conflicts for a human to inspect/re-approve.
+   * Never throws (best-effort, like cleanupWorktree).
+   */
+  private async reconcileResolving(card: KanbanTask, project: Project): Promise<void> {
+    const wtName = card.worktreeName ?? worktreeNameFor(card);
+    const wtDir = worktreeDirFor(project.rootDir, wtName);
+    try {
+      await mergeAbort(wtDir);
+    } catch {
+      /* best-effort: a missing worktree / no merge in progress is harmless */
+    }
+    kanbanRepo.updateTask(card.id, {
+      column: 'Review',
+      executionPhase: 'conflicts',
+      lastError: 'reconciled on boot: conflict resolution interrupted; re-approve to retry',
+    });
   }
 
   // ── internal ─────────────────────────────────────────────────────────────────

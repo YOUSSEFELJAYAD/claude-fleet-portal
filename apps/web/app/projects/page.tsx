@@ -47,6 +47,8 @@ interface UpdateProjectRequest {
   mergeMode?: MergeMode;
   remoteName?: string;
   pushEnabled?: boolean;
+  // ── v2 #9: conflict-resolution agent ──
+  resolveConflicts?: boolean;
 }
 
 /** git/remote readiness response (GET /api/projects/:id/git/health, v2 #2). */
@@ -158,6 +160,8 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
   const [mergeMode, setMergeMode] = useState<MergeMode>(p.mergeMode);
   const [remoteName, setRemoteName] = useState(p.remoteName);
   const [pushEnabled, setPushEnabled] = useState(p.pushEnabled);
+  // ── v2 #9: conflict-resolution agent draft ──
+  const [resolveConflicts, setResolveConflicts] = useState(p.resolveConflicts);
   const [health, setHealth] = useState<GitHealth | null>(null);
   const [healthBusy, setHealthBusy] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -206,6 +210,7 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
       mergeMode,
       remoteName: remoteName.trim() || 'origin',
       pushEnabled,
+      resolveConflicts,
     });
   }
 
@@ -389,6 +394,25 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
                 </Field>
               </div>
             )}
+          </div>
+
+          {/* ── v2 #9: conflict-resolution agent ── */}
+          <div className="mt-5 pt-4 border-t hairline">
+            <Kicker>conflict resolution</Kicker>
+            <div className="mt-2">
+              <Toggle
+                on={resolveConflicts}
+                onChange={setResolveConflicts}
+                label={resolveConflicts ? 'auto-resolve on' : 'park in Review'}
+              />
+            </div>
+            <div className="mt-2 font-mono text-[10px] leading-snug text-faint">
+              When a merge conflicts, launch a resolution agent in the task worktree to reconcile the
+              markers and re-validate before merging. The agent edits files only (never pushes).
+              {' '}
+              <span className="text-amber">Bounded by each card&rsquo;s max-resolve-attempts</span>; on
+              failure the card parks in Review with the conflicting files. Default off.
+            </div>
           </div>
 
           <div className="mt-4 flex items-center gap-3">
