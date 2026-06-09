@@ -362,3 +362,33 @@ was created *after* the gitignore commit, i.e. the race is gone by construction.
 worktree clean. Human-approve path is transitively covered (same `doMerge` via `approve()`). `worktree`/
 `disallowedTools` read `null` in the run API by design — they are launch-only spawn args (processManager
 H10), not persisted runs-table columns.
+
+## 10. v2 program — completing the v1 "out-of-scope" items (2026-06-09)
+
+Spec: `docs/superpowers/specs/2026-06-09-v2-out-of-scope-design.md` (9-designer + integration design
+workflow). User decisions: **skip §11.8 auth** (stay localhost); **§11.2 full remote git, PM may push**;
+**§11.6 add Shiki + react-markdown**; **§11.1 full file CRUD** (create/update/delete); paid E2Es
+**deferred → deterministic-first** (confirm each throwaway-repo run at fire time). Built **spec-first, in
+3 contention-driven waves, per-item green-gate + commit**. Cross-cutting rules (binding): per-module ALTER
+loops (NOT db.ts — it runs before projects/kanban CREATE → fresh-DB boot crash); `validation.ts`
+extraction; `validateAndGate` shared sink; `disallowedToolsForProject` single deny-list source (push
+relaxes only for single build/fix); credential scrub on git/gh stderr; `+resolving` phase.
+
+**Wave 1 — DONE (independent items, serial build, all committed):**
+- **#3 plan-board** (`planboard.ts`, `plan_drafts` table, PlanModal): objective → Campaigns planner DAG →
+  preview → cards with mapped `depends_on`. Partitioned onRunTerminal (campaignId:null planning run
+  claimed by neither engine — tested). **mock-claude genuinely drives the planner** (yes-fixture; first
+  server test to exercise the real spawn→parse→terminal path).
+- **#6 rich rendering** (shiki ^4.2 + react-markdown ^10.1 + remark-gfm ^4): `lib/shiki.ts` singleton
+  highlighter, `ShikiCode`/`MarkdownView`; replaced the hand-rolled renderers; lazy/SSR-safe (Shiki only
+  in useEffect, code-split → files route 48.5kB vs 91.8kB shared); sanitization kept (skipHtml,
+  urlTransform, inert `img` placeholder — no remote-image auto-fetch).
+- **#10 git-init on attach** (`git.ts initRepo`): non-git dir + `initGit` → `git init` + `.gitignore` +
+  `git add -A` (stages EXISTING files so a non-empty attach yields a clean tree — a reviewer-caught
+  blocker; staging only `.gitignore` left source untracked → empty PM worktree + perpetual dirty main).
+  Backward-compatible (no initGit → still 400 with `code:'not_a_git_repo'`).
+
+**Verified:** 198 server tests (181 v1 + 17 v2 wave-1), `pnpm -r typecheck` clean, `next build` clean
+(15 routes). **Pending:** Wave 2 (schema step + `validation.ts` extraction → #5 port-broker, #2 remote
+git, #1 file CRUD), Wave 3 (serial pm.ts: #4 campaign-per-card → #9 conflict-resolver → #7 fleet
+scheduler). On branch `feat/agent-pm-kanban`; NOT pushed.
