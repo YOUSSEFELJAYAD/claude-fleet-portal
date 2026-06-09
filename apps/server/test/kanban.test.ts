@@ -175,6 +175,91 @@ describe('W1 — POST /api/projects/:pid/tasks (create via the route)', () => {
   });
 });
 
+// ── v2 foundation: new kanban columns round-trip + defaults ───────────────────
+describe('v2 foundation — new kanban columns round-trip + defaults', () => {
+  it('applies v1-equivalent defaults for every new column on create (route → GET)', async () => {
+    const pid = makeProject();
+    const res = await createCardViaRoute(pid, { title: 'v2-defaults' });
+    expect(res.statusCode).toBe(200);
+    const card = res.json();
+    // #4
+    expect(card.mode).toBe('single');
+    // #2
+    expect(card.prUrl).toBeNull();
+    expect(card.prState).toBeNull();
+    // #5
+    expect(card.serverStartCommand).toBeNull();
+    expect(card.healthCheckUrl).toBeNull();
+    expect(card.healthCheckRegex).toBeNull();
+    // #9
+    expect(card.resolveAttemptCount).toBe(0);
+    expect(card.maxResolveAttempts).toBe(2);
+
+    // round-trips through the DB (rowToTask) too.
+    const reread = kanbanRepo.getTask(card.id);
+    expect(reread.mode).toBe('single');
+    expect(reread.maxResolveAttempts).toBe(2);
+    expect(reread.resolveAttemptCount).toBe(0);
+  });
+
+  it('round-trips explicit create-request mirrors (mode/server overrides/maxResolveAttempts)', async () => {
+    const pid = makeProject();
+    const res = await createCardViaRoute(pid, {
+      title: 'v2-explicit',
+      mode: 'campaign',
+      serverStartCommand: 'pnpm dev',
+      healthCheckUrl: 'http://127.0.0.1:$PORT/',
+      healthCheckRegex: 'listening',
+      maxResolveAttempts: 5,
+    });
+    expect(res.statusCode).toBe(200);
+    const card = res.json();
+    expect(card.mode).toBe('campaign');
+    expect(card.serverStartCommand).toBe('pnpm dev');
+    expect(card.healthCheckUrl).toBe('http://127.0.0.1:$PORT/');
+    expect(card.healthCheckRegex).toBe('listening');
+    expect(card.maxResolveAttempts).toBe(5);
+    // persisted via rowToTask/taskToRow.
+    const reread = kanbanRepo.getTask(card.id);
+    expect(reread.mode).toBe('campaign');
+    expect(reread.serverStartCommand).toBe('pnpm dev');
+    expect(reread.maxResolveAttempts).toBe(5);
+  });
+
+  it('PUT patches per-card server overrides + maxResolveAttempts and persists', async () => {
+    const pid = makeProject();
+    const card = kanbanRepo.createTask({ projectId: pid, title: 'v2-put' });
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/tasks/${card.id}`,
+      headers: H(),
+      payload: { serverStartCommand: 'make run', healthCheckUrl: 'http://localhost/h', maxResolveAttempts: 3 },
+    });
+    expect(res.statusCode).toBe(200);
+    const out = res.json();
+    expect(out.serverStartCommand).toBe('make run');
+    expect(out.healthCheckUrl).toBe('http://localhost/h');
+    expect(out.maxResolveAttempts).toBe(3);
+    const reread = kanbanRepo.getTask(card.id);
+    expect(reread.serverStartCommand).toBe('make run');
+    expect(reread.maxResolveAttempts).toBe(3);
+  });
+
+  it('mode is editable in Backlog but immutable once out of Backlog (409)', async () => {
+    const pid = makeProject();
+    const card = kanbanRepo.createTask({ projectId: pid, title: 'mode-edit' }); // Backlog
+    const ok = await app.inject({ method: 'PUT', url: `/api/tasks/${card.id}`, headers: H(), payload: { mode: 'campaign' } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().mode).toBe('campaign');
+
+    // move it out of Backlog, then attempting to switch mode is rejected.
+    kanbanRepo.updateTask(card.id, { column: 'InProgress' });
+    const rej = await app.inject({ method: 'PUT', url: `/api/tasks/${card.id}`, headers: H(), payload: { mode: 'single' } });
+    expect(rej.statusCode).toBe(409);
+    expect(kanbanRepo.getTask(card.id).mode).toBe('campaign'); // unchanged
+  });
+});
+
 // ── W1: edit content fields ───────────────────────────────────────────────────
 describe('W1 — PUT /api/tasks/:id edits content fields', () => {
   it('patches title / description / acceptanceCriteria / validationCommand / priority / labels', async () => {

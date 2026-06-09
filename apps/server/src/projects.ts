@@ -18,13 +18,16 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { Project, CreateProjectRequest } from '@fleet/shared';
+import type { Project, CreateProjectRequest, MergeMode } from '@fleet/shared';
 import db from './db.js';
 import { initRepo } from './git.js';
 
 const execFileAsync = promisify(execFile);
 
 // ── schema (idempotent) ───────────────────────────────────────────────────────
+// CREATE-body carries every column (so a fresh DB never relies on the ALTER loop), and the
+// ALTER loop below upgrades pre-existing DBs. (§3.1: projects ALTERs live HERE, not in db.ts —
+// db.ts's top-level loop runs before this CREATE TABLE, so a `no such table` would crash a fresh DB.)
 db.exec(`
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
@@ -36,9 +39,52 @@ CREATE TABLE IF NOT EXISTS projects (
   wip_limit INTEGER NOT NULL DEFAULT 3,
   budget_ceiling_usd REAL,
   paused INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  editing_enabled INTEGER NOT NULL DEFAULT 0,
+  commit_author_name TEXT,
+  commit_author_email TEXT,
+  merge_mode TEXT NOT NULL DEFAULT 'local',
+  remote_name TEXT NOT NULL DEFAULT 'origin',
+  push_enabled INTEGER NOT NULL DEFAULT 0,
+  server_start_command TEXT,
+  health_check_url TEXT,
+  health_check_regex TEXT,
+  readiness_timeout_ms INTEGER,
+  port_range_start INTEGER,
+  port_range_end INTEGER,
+  copy_env_from TEXT,
+  priority INTEGER NOT NULL DEFAULT 0,
+  resolve_conflicts INTEGER NOT NULL DEFAULT 0
 );
 `);
+
+// idempotent migrations for v2 columns added after the v1 release (§3.1). Mirrors the db.ts loop:
+// swallow ONLY the idempotent "duplicate column name"; rethrow any real DDL failure so it surfaces
+// here rather than later as an opaque "no such column" at stmt-prepare time. This loop is SAFE on a
+// fresh DB because it runs AFTER the CREATE TABLE above (unlike db.ts's top-level loop).
+for (const ddl of [
+  'ALTER TABLE projects ADD COLUMN editing_enabled INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE projects ADD COLUMN commit_author_name TEXT',
+  'ALTER TABLE projects ADD COLUMN commit_author_email TEXT',
+  "ALTER TABLE projects ADD COLUMN merge_mode TEXT NOT NULL DEFAULT 'local'",
+  "ALTER TABLE projects ADD COLUMN remote_name TEXT NOT NULL DEFAULT 'origin'",
+  'ALTER TABLE projects ADD COLUMN push_enabled INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE projects ADD COLUMN server_start_command TEXT',
+  'ALTER TABLE projects ADD COLUMN health_check_url TEXT',
+  'ALTER TABLE projects ADD COLUMN health_check_regex TEXT',
+  'ALTER TABLE projects ADD COLUMN readiness_timeout_ms INTEGER',
+  'ALTER TABLE projects ADD COLUMN port_range_start INTEGER',
+  'ALTER TABLE projects ADD COLUMN port_range_end INTEGER',
+  'ALTER TABLE projects ADD COLUMN copy_env_from TEXT',
+  'ALTER TABLE projects ADD COLUMN priority INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE projects ADD COLUMN resolve_conflicts INTEGER NOT NULL DEFAULT 0',
+]) {
+  try {
+    db.exec(ddl);
+  } catch (e: any) {
+    if (!/duplicate column name/i.test(e?.message ?? '')) throw e;
+  }
+}
 
 // ── row mappers (snake_case ↔ camelCase, like db.ts) ──────────────────────────
 function rowToProject(row: any): Project {
@@ -53,6 +99,22 @@ function rowToProject(row: any): Project {
     budgetCeilingUsd: row.budget_ceiling_usd ?? null,
     paused: !!row.paused,
     createdAt: row.created_at,
+    // ── v2 columns ──
+    editingEnabled: !!row.editing_enabled,
+    commitAuthorName: row.commit_author_name ?? null,
+    commitAuthorEmail: row.commit_author_email ?? null,
+    mergeMode: (row.merge_mode ?? 'local') as MergeMode,
+    remoteName: row.remote_name ?? 'origin',
+    pushEnabled: !!row.push_enabled,
+    serverStartCommand: row.server_start_command ?? null,
+    healthCheckUrl: row.health_check_url ?? null,
+    healthCheckRegex: row.health_check_regex ?? null,
+    readinessTimeoutMs: row.readiness_timeout_ms ?? null,
+    portRangeStart: row.port_range_start ?? null,
+    portRangeEnd: row.port_range_end ?? null,
+    copyEnvFrom: row.copy_env_from ?? null,
+    priority: row.priority ?? 0,
+    resolveConflicts: !!row.resolve_conflicts,
   };
 }
 
@@ -68,15 +130,37 @@ function projectToRow(p: Project) {
     budget_ceiling_usd: p.budgetCeilingUsd ?? null,
     paused: p.paused ? 1 : 0,
     created_at: p.createdAt,
+    // ── v2 columns ──
+    editing_enabled: p.editingEnabled ? 1 : 0,
+    commit_author_name: p.commitAuthorName ?? null,
+    commit_author_email: p.commitAuthorEmail ?? null,
+    merge_mode: p.mergeMode,
+    remote_name: p.remoteName,
+    push_enabled: p.pushEnabled ? 1 : 0,
+    server_start_command: p.serverStartCommand ?? null,
+    health_check_url: p.healthCheckUrl ?? null,
+    health_check_regex: p.healthCheckRegex ?? null,
+    readiness_timeout_ms: p.readinessTimeoutMs ?? null,
+    port_range_start: p.portRangeStart ?? null,
+    port_range_end: p.portRangeEnd ?? null,
+    copy_env_from: p.copyEnvFrom ?? null,
+    priority: p.priority,
+    resolve_conflicts: p.resolveConflicts ? 1 : 0,
   };
 }
 
 // ── prepared statements ───────────────────────────────────────────────────────
 const insertProjectStmt = db.prepare(`
 INSERT INTO projects (id, name, root_dir, default_branch, auto_merge, default_validation_command,
-  wip_limit, budget_ceiling_usd, paused, created_at)
+  wip_limit, budget_ceiling_usd, paused, created_at,
+  editing_enabled, commit_author_name, commit_author_email, merge_mode, remote_name, push_enabled,
+  server_start_command, health_check_url, health_check_regex, readiness_timeout_ms,
+  port_range_start, port_range_end, copy_env_from, priority, resolve_conflicts)
 VALUES (@id, @name, @root_dir, @default_branch, @auto_merge, @default_validation_command,
-  @wip_limit, @budget_ceiling_usd, @paused, @created_at)
+  @wip_limit, @budget_ceiling_usd, @paused, @created_at,
+  @editing_enabled, @commit_author_name, @commit_author_email, @merge_mode, @remote_name, @push_enabled,
+  @server_start_command, @health_check_url, @health_check_regex, @readiness_timeout_ms,
+  @port_range_start, @port_range_end, @copy_env_from, @priority, @resolve_conflicts)
 `);
 const getProjectStmt = db.prepare('SELECT * FROM projects WHERE id = ?');
 const listProjectsStmt = db.prepare('SELECT * FROM projects ORDER BY created_at DESC');
@@ -85,7 +169,14 @@ const updateProjectStmt = db.prepare(`
 UPDATE projects SET
   name=@name, root_dir=@root_dir, default_branch=@default_branch, auto_merge=@auto_merge,
   default_validation_command=@default_validation_command, wip_limit=@wip_limit,
-  budget_ceiling_usd=@budget_ceiling_usd, paused=@paused
+  budget_ceiling_usd=@budget_ceiling_usd, paused=@paused,
+  editing_enabled=@editing_enabled, commit_author_name=@commit_author_name,
+  commit_author_email=@commit_author_email, merge_mode=@merge_mode, remote_name=@remote_name,
+  push_enabled=@push_enabled, server_start_command=@server_start_command,
+  health_check_url=@health_check_url, health_check_regex=@health_check_regex,
+  readiness_timeout_ms=@readiness_timeout_ms, port_range_start=@port_range_start,
+  port_range_end=@port_range_end, copy_env_from=@copy_env_from, priority=@priority,
+  resolve_conflicts=@resolve_conflicts
 WHERE id=@id
 `);
 
@@ -100,6 +191,22 @@ export interface ProjectPatch {
   wipLimit?: number;
   budgetCeilingUsd?: number | null;
   paused?: boolean;
+  // ── v2 patchable fields ──
+  editingEnabled?: boolean;
+  commitAuthorName?: string | null;
+  commitAuthorEmail?: string | null;
+  mergeMode?: MergeMode;
+  remoteName?: string;
+  pushEnabled?: boolean;
+  serverStartCommand?: string | null;
+  healthCheckUrl?: string | null;
+  healthCheckRegex?: string | null;
+  readinessTimeoutMs?: number | null;
+  portRangeStart?: number | null;
+  portRangeEnd?: number | null;
+  copyEnvFrom?: string | null;
+  priority?: number;
+  resolveConflicts?: boolean;
 }
 
 export const projectsRepo = {
@@ -124,6 +231,22 @@ export const projectsRepo = {
       budgetCeilingUsd: req.budgetCeilingUsd ?? null,
       paused: false,
       createdAt: Date.now(),
+      // ── v2 fields: optional in the request, defaulted to the v1-equivalent behavior ──
+      editingEnabled: req.editingEnabled ?? false,
+      commitAuthorName: req.commitAuthorName ?? null,
+      commitAuthorEmail: req.commitAuthorEmail ?? null,
+      mergeMode: req.mergeMode ?? 'local',
+      remoteName: req.remoteName ?? 'origin',
+      pushEnabled: req.pushEnabled ?? false,
+      serverStartCommand: req.serverStartCommand ?? null,
+      healthCheckUrl: req.healthCheckUrl ?? null,
+      healthCheckRegex: req.healthCheckRegex ?? null,
+      readinessTimeoutMs: req.readinessTimeoutMs ?? null,
+      portRangeStart: req.portRangeStart ?? null,
+      portRangeEnd: req.portRangeEnd ?? null,
+      copyEnvFrom: req.copyEnvFrom ?? null,
+      priority: req.priority ?? 0,
+      resolveConflicts: req.resolveConflicts ?? false,
     };
     insertProjectStmt.run(projectToRow(project));
     return project;
@@ -145,6 +268,29 @@ export const projectsRepo = {
       budgetCeilingUsd:
         patch.budgetCeilingUsd !== undefined ? patch.budgetCeilingUsd : current.budgetCeilingUsd,
       paused: patch.paused ?? current.paused,
+      // ── v2 fields (nullable ones use the `!== undefined` form so an explicit null clears) ──
+      editingEnabled: patch.editingEnabled ?? current.editingEnabled,
+      commitAuthorName:
+        patch.commitAuthorName !== undefined ? patch.commitAuthorName : current.commitAuthorName,
+      commitAuthorEmail:
+        patch.commitAuthorEmail !== undefined ? patch.commitAuthorEmail : current.commitAuthorEmail,
+      mergeMode: patch.mergeMode ?? current.mergeMode,
+      remoteName: patch.remoteName ?? current.remoteName,
+      pushEnabled: patch.pushEnabled ?? current.pushEnabled,
+      serverStartCommand:
+        patch.serverStartCommand !== undefined ? patch.serverStartCommand : current.serverStartCommand,
+      healthCheckUrl:
+        patch.healthCheckUrl !== undefined ? patch.healthCheckUrl : current.healthCheckUrl,
+      healthCheckRegex:
+        patch.healthCheckRegex !== undefined ? patch.healthCheckRegex : current.healthCheckRegex,
+      readinessTimeoutMs:
+        patch.readinessTimeoutMs !== undefined ? patch.readinessTimeoutMs : current.readinessTimeoutMs,
+      portRangeStart:
+        patch.portRangeStart !== undefined ? patch.portRangeStart : current.portRangeStart,
+      portRangeEnd: patch.portRangeEnd !== undefined ? patch.portRangeEnd : current.portRangeEnd,
+      copyEnvFrom: patch.copyEnvFrom !== undefined ? patch.copyEnvFrom : current.copyEnvFrom,
+      priority: patch.priority ?? current.priority,
+      resolveConflicts: patch.resolveConflicts ?? current.resolveConflicts,
     };
     updateProjectStmt.run(projectToRow(next));
     return next;
@@ -260,6 +406,15 @@ export function registerProjectsRoutes(app: FastifyInstance) {
       defaultValidationCommand = body.defaultValidationCommand;
     }
 
+    // ── v2 optional fields (validated BEFORE the work-tree gate, same as above, so an invalid
+    //    request never triggers the initGit side effect). Parsed into a partial mirror appended to
+    //    createReq below. Validation errors return 400 with the offending field. ──
+    const v2 = parseProjectV2Fields(body);
+    if (v2.error) {
+      reply.code(400);
+      return { error: v2.error };
+    }
+
     // ── git work-tree gate (v2 item #10: optional git init on attach) ──────────────
     // Three outcomes for a non-work-tree, kept distinct:
     //   • missing dir / not a directory → BARE { error } 400 (no init affordance possible).
@@ -293,6 +448,7 @@ export function registerProjectsRoutes(app: FastifyInstance) {
       ...(defaultValidationCommand !== undefined ? { defaultValidationCommand } : {}),
       ...(wipLimit !== undefined ? { wipLimit } : {}),
       ...(budgetCeilingUsd !== undefined ? { budgetCeilingUsd } : {}),
+      ...v2.fields,
     };
     const project = projectsRepo.createProject(createReq);
     return project;
@@ -344,6 +500,14 @@ export function registerProjectsRoutes(app: FastifyInstance) {
       patch.defaultValidationCommand = body.defaultValidationCommand;
     }
 
+    // ── v2 patchable fields (same validators as create; only provided keys change) ──
+    const v2 = parseProjectV2Fields(body);
+    if (v2.error) {
+      reply.code(400);
+      return { error: v2.error };
+    }
+    Object.assign(patch, v2.fields);
+
     return projectsRepo.updateProject(id, patch);
   });
 
@@ -361,4 +525,89 @@ function isPositiveInt(v: unknown): v is number {
 }
 function isNullableNonNegNumber(v: unknown): v is number | null {
   return v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
+}
+function isNullableString(v: unknown): v is string | null {
+  return v === null || typeof v === 'string';
+}
+function isNullableNonNegInt(v: unknown): v is number | null {
+  return v === null || (typeof v === 'number' && Number.isInteger(v) && v >= 0);
+}
+function isNonNegInt(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0;
+}
+
+/**
+ * Parse + validate the v2 project fields (shared by create + PUT). Returns either a partial of
+ * provided, validated fields (camelCase — identical key/type shape for CreateProjectRequest AND
+ * ProjectPatch) or an error string. Only keys PRESENT on the body are emitted, so unset fields keep
+ * their create-default / current value. The route layer maps the partial straight onto its
+ * createReq / patch object. Defaults for omitted keys are applied in projectsRepo.createProject.
+ */
+function parseProjectV2Fields(body: any): { fields: Record<string, unknown>; error?: undefined } | { error: string; fields?: undefined } {
+  const f: Record<string, unknown> = {};
+
+  // #1 — editing surface
+  if (body.editingEnabled !== undefined) f.editingEnabled = !!body.editingEnabled;
+  if (body.commitAuthorName !== undefined) {
+    if (!isNullableString(body.commitAuthorName)) return { error: 'commitAuthorName must be a string or null' };
+    f.commitAuthorName = body.commitAuthorName;
+  }
+  if (body.commitAuthorEmail !== undefined) {
+    if (!isNullableString(body.commitAuthorEmail)) return { error: 'commitAuthorEmail must be a string or null' };
+    f.commitAuthorEmail = body.commitAuthorEmail;
+  }
+
+  // #2 — remote git
+  if (body.mergeMode !== undefined) {
+    if (body.mergeMode !== 'local' && body.mergeMode !== 'pr') return { error: "mergeMode must be 'local' or 'pr'" };
+    f.mergeMode = body.mergeMode;
+  }
+  if (body.remoteName !== undefined) {
+    if (typeof body.remoteName !== 'string' || !body.remoteName.trim()) {
+      return { error: 'remoteName must be a non-empty string' };
+    }
+    f.remoteName = body.remoteName;
+  }
+  if (body.pushEnabled !== undefined) f.pushEnabled = !!body.pushEnabled;
+
+  // #5 — server-validation config
+  if (body.serverStartCommand !== undefined) {
+    if (!isNullableString(body.serverStartCommand)) return { error: 'serverStartCommand must be a string or null' };
+    f.serverStartCommand = body.serverStartCommand;
+  }
+  if (body.healthCheckUrl !== undefined) {
+    if (!isNullableString(body.healthCheckUrl)) return { error: 'healthCheckUrl must be a string or null' };
+    f.healthCheckUrl = body.healthCheckUrl;
+  }
+  if (body.healthCheckRegex !== undefined) {
+    if (!isNullableString(body.healthCheckRegex)) return { error: 'healthCheckRegex must be a string or null' };
+    f.healthCheckRegex = body.healthCheckRegex;
+  }
+  if (body.readinessTimeoutMs !== undefined) {
+    if (!isNullableNonNegInt(body.readinessTimeoutMs)) return { error: 'readinessTimeoutMs must be a non-negative integer or null' };
+    f.readinessTimeoutMs = body.readinessTimeoutMs;
+  }
+  if (body.portRangeStart !== undefined) {
+    if (!isNullableNonNegInt(body.portRangeStart)) return { error: 'portRangeStart must be a non-negative integer or null' };
+    f.portRangeStart = body.portRangeStart;
+  }
+  if (body.portRangeEnd !== undefined) {
+    if (!isNullableNonNegInt(body.portRangeEnd)) return { error: 'portRangeEnd must be a non-negative integer or null' };
+    f.portRangeEnd = body.portRangeEnd;
+  }
+  if (body.copyEnvFrom !== undefined) {
+    if (!isNullableString(body.copyEnvFrom)) return { error: 'copyEnvFrom must be a string or null' };
+    f.copyEnvFrom = body.copyEnvFrom;
+  }
+
+  // #7 — fleet scheduler priority
+  if (body.priority !== undefined) {
+    if (!isNonNegInt(body.priority)) return { error: 'priority must be a non-negative integer' };
+    f.priority = body.priority;
+  }
+
+  // #9 — conflict resolution
+  if (body.resolveConflicts !== undefined) f.resolveConflicts = !!body.resolveConflicts;
+
+  return { fields: f };
 }

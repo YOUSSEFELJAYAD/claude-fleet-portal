@@ -354,6 +354,153 @@ describe('W0 round-trip — autoMerge/budgetCeiling/wipLimit/validationCommand t
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// v2 Wave 2/3 foundation: the new projects columns (#1/#2/#5/#7/#9) round-trip
+// POST/PUT → projectToRow → SQLite → rowToProject → GET, with v1-equivalent
+// defaults applied for omitted fields. Proves the CREATE-body + mapper threading.
+// ────────────────────────────────────────────────────────────────────────────
+describe('v2 foundation — new project columns round-trip + defaults', () => {
+  it('applies v1-equivalent defaults for every new column when omitted (POST → GET)', async () => {
+    const dir = makeGitRepo('main');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'v2-defaults', rootDir: dir },
+    });
+    expect(created.statusCode).toBe(200);
+    const id = created.json().id;
+
+    const got = await app.inject({ method: 'GET', url: `/api/projects/${id}`, headers: H() });
+    expect(got.statusCode).toBe(200);
+    const p = got.json();
+    // #1
+    expect(p.editingEnabled).toBe(false);
+    expect(p.commitAuthorName).toBeNull();
+    expect(p.commitAuthorEmail).toBeNull();
+    // #2
+    expect(p.mergeMode).toBe('local');
+    expect(p.remoteName).toBe('origin');
+    expect(p.pushEnabled).toBe(false);
+    // #5
+    expect(p.serverStartCommand).toBeNull();
+    expect(p.healthCheckUrl).toBeNull();
+    expect(p.healthCheckRegex).toBeNull();
+    expect(p.readinessTimeoutMs).toBeNull();
+    expect(p.portRangeStart).toBeNull();
+    expect(p.portRangeEnd).toBeNull();
+    expect(p.copyEnvFrom).toBeNull();
+    // #7
+    expect(p.priority).toBe(0);
+    // #9
+    expect(p.resolveConflicts).toBe(false);
+  });
+
+  it('round-trips explicit non-default values for every new column via POST → GET', async () => {
+    const dir = makeGitRepo('main');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: {
+        name: 'v2-explicit',
+        rootDir: dir,
+        editingEnabled: true,
+        commitAuthorName: 'Ada',
+        commitAuthorEmail: 'ada@example.com',
+        mergeMode: 'pr',
+        remoteName: 'upstream',
+        pushEnabled: true,
+        serverStartCommand: 'npm start',
+        healthCheckUrl: 'http://127.0.0.1:$PORT/health',
+        healthCheckRegex: 'ready',
+        readinessTimeoutMs: 30000,
+        portRangeStart: 4000,
+        portRangeEnd: 4100,
+        copyEnvFrom: '.env.local',
+        priority: 3,
+        resolveConflicts: true,
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const id = created.json().id;
+
+    const p = (await app.inject({ method: 'GET', url: `/api/projects/${id}`, headers: H() })).json();
+    expect(p.editingEnabled).toBe(true);
+    expect(p.commitAuthorName).toBe('Ada');
+    expect(p.commitAuthorEmail).toBe('ada@example.com');
+    expect(p.mergeMode).toBe('pr');
+    expect(p.remoteName).toBe('upstream');
+    expect(p.pushEnabled).toBe(true);
+    expect(p.serverStartCommand).toBe('npm start');
+    expect(p.healthCheckUrl).toBe('http://127.0.0.1:$PORT/health');
+    expect(p.healthCheckRegex).toBe('ready');
+    expect(p.readinessTimeoutMs).toBe(30000);
+    expect(p.portRangeStart).toBe(4000);
+    expect(p.portRangeEnd).toBe(4100);
+    expect(p.copyEnvFrom).toBe('.env.local');
+    expect(p.priority).toBe(3);
+    expect(p.resolveConflicts).toBe(true);
+  });
+
+  it('PUT patches the new columns and persists them through SQLite (only provided keys change)', async () => {
+    const dir = makeGitRepo('main');
+    const id = (
+      await app.inject({ method: 'POST', url: '/api/projects', headers: H(), payload: { name: 'v2-put', rootDir: dir } })
+    ).json().id;
+
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${id}`,
+      headers: H(),
+      payload: {
+        editingEnabled: true,
+        mergeMode: 'pr',
+        pushEnabled: true,
+        priority: 2,
+        resolveConflicts: true,
+        commitAuthorName: 'Grace',
+        readinessTimeoutMs: 12345,
+      },
+    });
+    expect(put.statusCode).toBe(200);
+
+    const p = (await app.inject({ method: 'GET', url: `/api/projects/${id}`, headers: H() })).json();
+    expect(p.editingEnabled).toBe(true);
+    expect(p.mergeMode).toBe('pr');
+    expect(p.pushEnabled).toBe(true);
+    expect(p.priority).toBe(2);
+    expect(p.resolveConflicts).toBe(true);
+    expect(p.commitAuthorName).toBe('Grace');
+    expect(p.readinessTimeoutMs).toBe(12345);
+    // untouched keys keep their defaults
+    expect(p.remoteName).toBe('origin');
+    expect(p.healthCheckUrl).toBeNull();
+  });
+
+  it('rejects invalid new-column values with 400 (mergeMode, priority, readinessTimeoutMs)', async () => {
+    const dir = makeGitRepo('main');
+    const id = (
+      await app.inject({ method: 'POST', url: '/api/projects', headers: H(), payload: { name: 'v2-bad', rootDir: dir } })
+    ).json().id;
+
+    const badMode = await app.inject({ method: 'PUT', url: `/api/projects/${id}`, headers: H(), payload: { mergeMode: 'remote' } });
+    expect(badMode.statusCode).toBe(400);
+    const badPriority = await app.inject({ method: 'PUT', url: `/api/projects/${id}`, headers: H(), payload: { priority: -1 } });
+    expect(badPriority.statusCode).toBe(400);
+    const badTimeout = await app.inject({ method: 'PUT', url: `/api/projects/${id}`, headers: H(), payload: { readinessTimeoutMs: 1.5 } });
+    expect(badTimeout.statusCode).toBe(400);
+    // a bad new field on CREATE also rejects (and validates before any git-init side effect).
+    const badCreate = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'v2-bad-create', rootDir: dir, mergeMode: 'nope' },
+    });
+    expect(badCreate.statusCode).toBe(400);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // W0: update policy is executor-only. name and rootDir are IMMUTABLE — a PUT
 // supplying them must NOT change them, yet must still apply the policy fields.
 // ────────────────────────────────────────────────────────────────────────────

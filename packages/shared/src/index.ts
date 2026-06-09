@@ -296,6 +296,14 @@ export interface SpendSummary {
   totalRunsToday: number;
 }
 
+/** Fleet-level cross-project scheduler config (v2 #7). A single-row table backs it. */
+export interface FleetConfig {
+  /** Concurrency slots held back from the per-project PM run-count for campaigns/non-PM work. */
+  reserveSlotsForNonPm: number;
+  /** Daily fleet-wide spend ceiling in USD (null = no fleet ceiling). */
+  fleetSpendCeilingUsd: number | null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE stream envelope (PRD §9.4 /stream)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -444,6 +452,9 @@ export type CampaignMessage =
 // Projects + Kanban + autonomous PM (spec docs/superpowers/specs/2026-06-09-agent-pm-kanban-design.md)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Per-project merge strategy: local `merge --no-ff` (v1 default) or push branch + open a GitHub PR (v2 #2). */
+export type MergeMode = 'local' | 'pr';
+
 /** A first-class project = a git repo root that scopes runs/campaigns/kanban + executor policy. */
 export interface Project {
   id: string;
@@ -457,6 +468,28 @@ export interface Project {
   budgetCeilingUsd: number | null;
   paused: boolean;
   createdAt: number;
+  // ── v2 #1: in-browser file CRUD + commit surface ──────────────────────────────
+  /** Gate for the in-browser file edit/commit surface (default false). */
+  editingEnabled: boolean;
+  /** Optional per-project author override for browser commits (else the ambient git identity). */
+  commitAuthorName: string | null;
+  commitAuthorEmail: string | null;
+  // ── v2 #2: full remote git (push / fetch / GitHub PR) ─────────────────────────
+  mergeMode: MergeMode;
+  remoteName: string;
+  pushEnabled: boolean;
+  // ── v2 #5: port-broker server validation ──────────────────────────────────────
+  serverStartCommand: string | null;
+  healthCheckUrl: string | null;
+  healthCheckRegex: string | null;
+  readinessTimeoutMs: number | null;
+  portRangeStart: number | null;
+  portRangeEnd: number | null;
+  copyEnvFrom: string | null;
+  // ── v2 #7: fleet-level cross-project scheduler ────────────────────────────────
+  priority: number;
+  // ── v2 #9: conflict-resolution agent ──────────────────────────────────────────
+  resolveConflicts: boolean;
 }
 
 export interface CreateProjectRequest {
@@ -474,14 +507,39 @@ export interface CreateProjectRequest {
    * attached to a pre-existing repo (no provenance column). v2 item #10.
    */
   initGit?: boolean;
+  // ── v2 optional mirrors (all default-applied server-side when omitted) ─────────
+  editingEnabled?: boolean; // #1
+  commitAuthorName?: string | null; // #1
+  commitAuthorEmail?: string | null; // #1
+  mergeMode?: MergeMode; // #2
+  remoteName?: string; // #2
+  pushEnabled?: boolean; // #2
+  serverStartCommand?: string | null; // #5
+  healthCheckUrl?: string | null; // #5
+  healthCheckRegex?: string | null; // #5
+  readinessTimeoutMs?: number | null; // #5
+  portRangeStart?: number | null; // #5
+  portRangeEnd?: number | null; // #5
+  copyEnvFrom?: string | null; // #5
+  priority?: number; // #7
+  resolveConflicts?: boolean; // #9
 }
 
 /** Human-draggable workflow column. The PM only picks up `Ready`. */
 export type KanbanColumn = 'Backlog' | 'Ready' | 'InProgress' | 'Review' | 'Done' | 'Blocked' | 'Canceled';
 export const KANBAN_COLUMNS: KanbanColumn[] = ['Backlog', 'Ready', 'InProgress', 'Review', 'Done', 'Blocked', 'Canceled'];
 
-/** Derived execution badge, orthogonal to the column. */
-export type ExecutionPhase = 'idle' | 'building' | 'validating' | 'merging' | 'conflicts' | 'paused-budget' | 'failed';
+/** Derived execution badge, orthogonal to the column. `resolving` = a conflict-resolution agent is
+ *  reconciling the task branch (v2 #9, §3.6). */
+export type ExecutionPhase =
+  | 'idle'
+  | 'building'
+  | 'validating'
+  | 'merging'
+  | 'conflicts'
+  | 'paused-budget'
+  | 'failed'
+  | 'resolving';
 
 /** A kanban card = a human-curated work unit; the PARENT of execution. */
 export interface KanbanTask {
@@ -510,6 +568,19 @@ export interface KanbanTask {
   lastError: string | null;
   createdAt: number;
   updatedAt: number;
+  // ── v2 #4: campaign-per-card delegation ───────────────────────────────────────
+  /** `single` (one build run, default) or `campaign` (a sub-DAG of orchestrator+worker runs). */
+  mode: 'single' | 'campaign';
+  // ── v2 #2: full remote git (push / fetch / GitHub PR) ─────────────────────────
+  prUrl: string | null;
+  prState: 'open' | 'merged' | 'closed' | null;
+  // ── v2 #5: port-broker server validation (per-card overrides) ──────────────────
+  serverStartCommand: string | null;
+  healthCheckUrl: string | null;
+  healthCheckRegex: string | null;
+  // ── v2 #9: conflict-resolution agent ──────────────────────────────────────────
+  resolveAttemptCount: number;
+  maxResolveAttempts: number;
 }
 
 export interface CreateKanbanTaskRequest {
@@ -523,6 +594,12 @@ export interface CreateKanbanTaskRequest {
   maxAttempts?: number;
   budgetUsd?: number | null;
   column?: KanbanColumn;
+  // ── v2 optional mirrors (defaults applied server-side when omitted) ────────────
+  mode?: 'single' | 'campaign'; // #4
+  serverStartCommand?: string | null; // #5
+  healthCheckUrl?: string | null; // #5
+  healthCheckRegex?: string | null; // #5
+  maxResolveAttempts?: number; // #9
 }
 
 export type KanbanBoardMessage =

@@ -12,6 +12,7 @@ const PHASE_META: Record<ExecutionPhase, { label: string; color: string; live: b
   building: { label: 'BUILDING', color: '#39d4cf', live: true },
   validating: { label: 'VALIDATING', color: '#ffb000', live: true },
   merging: { label: 'MERGING', color: '#b08cff', live: true },
+  resolving: { label: 'RESOLVING', color: '#b08cff', live: true },
   conflicts: { label: 'CONFLICTS', color: '#ff7a45', live: false },
   'paused-budget': { label: 'PAUSED $', color: '#ff7a45', live: false },
   failed: { label: 'FAILED', color: '#ff5d5d', live: false },

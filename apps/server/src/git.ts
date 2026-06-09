@@ -688,6 +688,21 @@ function nthSpace(s: string, n: number): number {
   return idx;
 }
 
+/**
+ * Strip embedded credentials from a string before it reaches `lastError`, the DB, or an SSE
+ * broadcast (v2 §3.5 / risk #1). Redacts the userinfo of any `scheme://user:pass@host` URL — the
+ * two leakage shapes are GitHub's `https://x-access-token:<TOKEN>@github.com/...` and a generic
+ * `https://user:pass@host/...`. The host + path are preserved so the message stays useful. Applied
+ * at every site that surfaces git/gh stderr (#2 wires the call sites; the helper lands here now).
+ */
+export function scrubCredentials(s: string): string {
+  if (!s) return s;
+  // Match the userinfo portion (user[:pass]@) following a URL scheme, and replace it with a redaction.
+  // [^\s/@:]+ for the user, optional :[^\s/@]* for the password — bounded so it never crosses a
+  // whitespace/path boundary and can't run past the '@'.
+  return s.replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/g, '$1***@');
+}
+
 /** Compose a stable error string from a failed gitExec result (stderr-first, like mcp.ts). */
 function gitErr(r: GitExecResult): string {
   if (r.code === 127) return 'git binary not found';

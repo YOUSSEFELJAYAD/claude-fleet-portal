@@ -42,14 +42,12 @@ import {
   cleanupWorktree,
   ensureWorktreeIgnored,
 } from './git.js';
+import { runValidation, VALIDATION_MAX_BUFFER } from './validation.js';
 
 const execFileAsync = promisify(execFile);
 
 // ── tunables ──────────────────────────────────────────────────────────────────
 const SAFETY_TICK_MS = 10_000; // unref'd: human card moves fire no terminal event (SPEC §5.1)
-const VALIDATION_TIMEOUT_MS = 10 * 60_000; // 10 min cap for a pure-check validation command
-const VALIDATION_MAX_BUFFER = 8 * 1024 * 1024; // 8MB stdout/stderr cap
-const VALIDATION_OUTPUT_CAP = 16 * 1024; // chars of (stdout+stderr) threaded into a fix prompt
 
 /** PM run template defaults (SPEC §5.2). bypassPermissions is safe here: the build runs in an
  *  ISOLATED worktree and git push/remote are denied, so an unattended run can't escape or publish. */
@@ -58,50 +56,24 @@ const PM_EFFORT = 'high' as const;
 const PM_PERMISSION_MODE = 'bypassPermissions' as const;
 const PM_DISALLOWED_TOOLS = ['Bash(git push *)', 'Bash(git remote *)'];
 
+/**
+ * The ONE deny-list source every PM launch path reads (v2 §3.4): single build/fix, the campaign
+ * worker (#4), and the resolve agent (#9). For now it returns the CURRENT PM_DISALLOWED_TOOLS
+ * unconditionally (byte-for-byte the v1 list). The push relaxation (`push_enabled=1` → drop the
+ * `git push` deny) lands with #2, and applies ONLY to single-mode build/fix — campaign workers and
+ * the resolve agent never inherit it. A fresh array is returned each call so a consumer can never
+ * mutate the shared constant.
+ */
+export function disallowedToolsForProject(_project: Project): string[] {
+  return [...PM_DISALLOWED_TOOLS];
+}
+
 /** Columns from which the PM never re-launches / re-evaluates a card (terminal-ish). */
 const PM_DONE_COLUMNS = new Set(['Done', 'Canceled']);
 
-// ── validation runner (pure checks, SPEC §5.4 / §11.5) ─────────────────────────
-interface ValidationResult {
-  ok: boolean;
-  /** Combined, capped stdout+stderr for evidence + fix-prompt threading. */
-  output: string;
-  code: number;
-}
-
-/**
- * Run a validation command in the worktree dir via `bash -lc <cmd>` (the spec allows a shell so a
- * project can use `npm test && npm run typecheck` etc.). NEVER throws — like mcp.ts / git.ts it
- * salvages stdout/stderr/exit-code into a result object. Exit 0 == pass.
- */
-async function runValidation(worktreeDir: string, cmd: string): Promise<ValidationResult> {
-  try {
-    const { stdout, stderr } = await execFileAsync('bash', ['-lc', cmd], {
-      cwd: worktreeDir,
-      timeout: VALIDATION_TIMEOUT_MS,
-      maxBuffer: VALIDATION_MAX_BUFFER,
-      encoding: 'utf8',
-    });
-    return { ok: true, output: capOutput(stdout, stderr), code: 0 };
-  } catch (e: any) {
-    const stdout = typeof e?.stdout === 'string' ? e.stdout : '';
-    const stderr = typeof e?.stderr === 'string' ? e.stderr : '';
-    let code: number;
-    if (typeof e?.code === 'number') code = e.code;
-    else if (e?.code === 'ENOENT') code = 127;
-    else if (e?.killed || e?.code === 'ETIMEDOUT' || e?.signal) code = 124;
-    else code = -1;
-    const out = capOutput(stdout, stderr) || (e?.message ?? '');
-    return { ok: false, output: out, code };
-  }
-}
-
-function capOutput(stdout: string, stderr: string): string {
-  const combined = [stdout, stderr].filter(Boolean).join('\n').trim();
-  return combined.length > VALIDATION_OUTPUT_CAP
-    ? combined.slice(-VALIDATION_OUTPUT_CAP) // keep the TAIL (errors print last)
-    : combined;
-}
+// ── validation runner ──────────────────────────────────────────────────────────
+// runValidation / ValidationResult / capOutput + the VALIDATION_* consts moved to validation.ts
+// (v2 §3.2) so #4/#5/#9 can share them without importing pm.ts. pm.ts imports them above.
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 /** Deterministic worktree NAME for a card (SPEC §6: `task-<id>`). */
@@ -331,7 +303,7 @@ class PmEngine {
         model: PM_MODEL,
         effort: PM_EFFORT,
         permissionMode: PM_PERMISSION_MODE,
-        disallowedTools: PM_DISALLOWED_TOOLS,
+        disallowedTools: disallowedToolsForProject(project),
         budgetUsd: fresh.budgetUsd,
         interactive: false,
       });
@@ -368,7 +340,7 @@ class PmEngine {
         model: PM_MODEL,
         effort: PM_EFFORT,
         permissionMode: PM_PERMISSION_MODE,
-        disallowedTools: PM_DISALLOWED_TOOLS,
+        disallowedTools: disallowedToolsForProject(project),
         budgetUsd: card.budgetUsd,
         interactive: false,
       });
@@ -454,7 +426,26 @@ class PmEngine {
       return;
     }
 
-    // 2. validate in the worktree (SPEC §5.4). No command → treat as pass (nothing to check).
+    // 2. validate → gate/rework (extracted to the shared sink, v2 §3.3). ensure-committed already
+    // happened above; validateAndGate validates the worktree then pass→gate / fail→rework.
+    await this.validateAndGate(cardId, project);
+    this.tickSoon(card.projectId);
+  }
+
+  /**
+   * Shared validate→gate sink (v2 §3.3): the single funnel the single-run terminal (here), the
+   * campaign terminal (#4), and the resolve terminal (#9) all route into. PRECONDITION: the
+   * worktree is already ensure-committed by the caller. Validates the worktree (no command → treat
+   * as pass), then pass → gate, fail → rework. Behavior is byte-for-byte the v1 onCardRunDone
+   * validate→gate region; only the enclosing tickSoon stays with each caller.
+   */
+  private async validateAndGate(cardId: string, project: Project): Promise<void> {
+    const card = kanbanRepo.getTask(cardId);
+    if (!card) return;
+    const wtName = card.worktreeName ?? worktreeNameFor(card);
+    const wtDir = worktreeDirFor(project.rootDir, wtName);
+
+    // validate in the worktree (SPEC §5.4). No command → treat as pass (nothing to check).
     kanbanRepo.updateTask(cardId, { executionPhase: 'validating' });
     const cmd = validationCommandFor(card, project);
     let passed = true;
@@ -470,7 +461,6 @@ class PmEngine {
     } else {
       await this.rework(cardId, project, validationOutput);
     }
-    this.tickSoon(card.projectId);
   }
 
   // ── GATE (SPEC §5.5 / §6) ──────────────────────────────────────────────────────

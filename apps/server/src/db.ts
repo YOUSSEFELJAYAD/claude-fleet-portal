@@ -142,7 +142,10 @@ CREATE TABLE IF NOT EXISTS campaigns (
   model TEXT NOT NULL,
   started_at INTEGER NOT NULL,
   ended_at INTEGER,
-  cost_usd REAL NOT NULL DEFAULT 0
+  cost_usd REAL NOT NULL DEFAULT 0,
+  project_id TEXT,
+  disallowed_tools TEXT,
+  permission_mode TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_campaigns_started ON campaigns(started_at DESC);
 
@@ -171,6 +174,11 @@ for (const ddl of [
   'ALTER TABLE runs ADD COLUMN project_id TEXT', // agent-PM feature
   'ALTER TABLE campaigns ADD COLUMN project_id TEXT',
   'CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)',
+  // v2 #4 — campaign-per-card delegation: workers carry a deny-list + a non-interactive
+  // permission mode so `interactive:false` workers don't stall. campaigns table is OWNED by db.ts,
+  // so (per §3.1) these campaigns-only ALTERs go in the EXISTING db.ts loop (NOT a new one).
+  'ALTER TABLE campaigns ADD COLUMN disallowed_tools TEXT',
+  'ALTER TABLE campaigns ADD COLUMN permission_mode TEXT',
 ]) {
   try {
     db.exec(ddl);

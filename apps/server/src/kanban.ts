@@ -30,6 +30,8 @@ import { pm } from './pm.js'; // circular but runtime-safe: pm uses kanbanRepo o
 
 // ── schema (idempotent) ───────────────────────────────────────────────────────
 // NOTE: `column` and `rank` are SQLite keywords → always double-quoted in DDL/DML.
+// CREATE-body carries every column (so a fresh DB never relies on the ALTER loop), and the ALTER
+// loop below upgrades pre-existing DBs. (§3.1: kanban_tasks ALTERs live HERE, not in db.ts.)
 db.exec(`
 CREATE TABLE IF NOT EXISTS kanban_tasks (
   id TEXT PRIMARY KEY,
@@ -56,11 +58,41 @@ CREATE TABLE IF NOT EXISTS kanban_tasks (
   merge_sha TEXT,
   last_error TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'single',
+  pr_url TEXT,
+  pr_state TEXT,
+  server_start_command TEXT,
+  health_check_url TEXT,
+  health_check_regex TEXT,
+  resolve_attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_resolve_attempts INTEGER NOT NULL DEFAULT 2
 );
 CREATE INDEX IF NOT EXISTS idx_kanban_project ON kanban_tasks(project_id, "column", "rank");
 CREATE INDEX IF NOT EXISTS idx_kanban_run ON kanban_tasks(run_id);
 `);
+
+// idempotent migrations for v2 columns + the campaign index (§3.1). `campaign_id` ALREADY exists
+// in the base table, so only an index is added for it (NOT re-added as a column). Mirrors db.ts:
+// swallow ONLY "duplicate column name"; rethrow any real DDL failure. SAFE on a fresh DB (runs
+// after the CREATE TABLE above). `CREATE INDEX IF NOT EXISTS` is naturally idempotent.
+for (const ddl of [
+  "ALTER TABLE kanban_tasks ADD COLUMN mode TEXT NOT NULL DEFAULT 'single'",
+  'ALTER TABLE kanban_tasks ADD COLUMN pr_url TEXT',
+  'ALTER TABLE kanban_tasks ADD COLUMN pr_state TEXT',
+  'ALTER TABLE kanban_tasks ADD COLUMN server_start_command TEXT',
+  'ALTER TABLE kanban_tasks ADD COLUMN health_check_url TEXT',
+  'ALTER TABLE kanban_tasks ADD COLUMN health_check_regex TEXT',
+  'ALTER TABLE kanban_tasks ADD COLUMN resolve_attempt_count INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE kanban_tasks ADD COLUMN max_resolve_attempts INTEGER NOT NULL DEFAULT 2',
+  'CREATE INDEX IF NOT EXISTS idx_kanban_campaign ON kanban_tasks(campaign_id)',
+]) {
+  try {
+    db.exec(ddl);
+  } catch (e: any) {
+    if (!/duplicate column name/i.test(e?.message ?? '')) throw e;
+  }
+}
 
 const KANBAN_COLS = new Set<string>(KANBAN_COLUMNS);
 const PHASES = new Set<ExecutionPhase>([
@@ -71,6 +103,7 @@ const PHASES = new Set<ExecutionPhase>([
   'conflicts',
   'paused-budget',
   'failed',
+  'resolving',
 ]);
 
 // ── lexorank ──────────────────────────────────────────────────────────────────
@@ -118,7 +151,9 @@ const COLS = `
   id, project_id, "column", execution_phase, title, description, acceptance_criteria,
   validation_command, priority, "rank", depends_on, assignee, labels, run_id, campaign_id,
   worktree_name, attempt_count, max_attempts, budget_usd, validation_output, last_diff_hash,
-  merge_sha, last_error, created_at, updated_at
+  merge_sha, last_error, created_at, updated_at,
+  mode, pr_url, pr_state, server_start_command, health_check_url, health_check_regex,
+  resolve_attempt_count, max_resolve_attempts
 `;
 
 const getTaskStmt = db.prepare(`SELECT ${COLS} FROM kanban_tasks WHERE id = ?`);
@@ -142,12 +177,16 @@ const insertStmt = db.prepare(`
     id, project_id, "column", execution_phase, title, description, acceptance_criteria,
     validation_command, priority, "rank", depends_on, assignee, labels, run_id, campaign_id,
     worktree_name, attempt_count, max_attempts, budget_usd, validation_output, last_diff_hash,
-    merge_sha, last_error, created_at, updated_at
+    merge_sha, last_error, created_at, updated_at,
+    mode, pr_url, pr_state, server_start_command, health_check_url, health_check_regex,
+    resolve_attempt_count, max_resolve_attempts
   ) VALUES (
     @id, @project_id, @column, @execution_phase, @title, @description, @acceptance_criteria,
     @validation_command, @priority, @rank, @depends_on, @assignee, @labels, @run_id, @campaign_id,
     @worktree_name, @attempt_count, @max_attempts, @budget_usd, @validation_output, @last_diff_hash,
-    @merge_sha, @last_error, @created_at, @updated_at
+    @merge_sha, @last_error, @created_at, @updated_at,
+    @mode, @pr_url, @pr_state, @server_start_command, @health_check_url, @health_check_regex,
+    @resolve_attempt_count, @max_resolve_attempts
   )
 `);
 
@@ -160,7 +199,11 @@ const updateStmt = db.prepare(`
     campaign_id = @campaign_id, worktree_name = @worktree_name, attempt_count = @attempt_count,
     max_attempts = @max_attempts, budget_usd = @budget_usd, validation_output = @validation_output,
     last_diff_hash = @last_diff_hash, merge_sha = @merge_sha, last_error = @last_error,
-    updated_at = @updated_at
+    updated_at = @updated_at,
+    mode = @mode, pr_url = @pr_url, pr_state = @pr_state,
+    server_start_command = @server_start_command, health_check_url = @health_check_url,
+    health_check_regex = @health_check_regex, resolve_attempt_count = @resolve_attempt_count,
+    max_resolve_attempts = @max_resolve_attempts
   WHERE id = @id
 `);
 
@@ -201,6 +244,15 @@ function rowToTask(r: any): KanbanTask {
     lastError: r.last_error ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    // ── v2 columns ──
+    mode: (r.mode ?? 'single') as 'single' | 'campaign',
+    prUrl: r.pr_url ?? null,
+    prState: (r.pr_state ?? null) as KanbanTask['prState'],
+    serverStartCommand: r.server_start_command ?? null,
+    healthCheckUrl: r.health_check_url ?? null,
+    healthCheckRegex: r.health_check_regex ?? null,
+    resolveAttemptCount: r.resolve_attempt_count ?? 0,
+    maxResolveAttempts: r.max_resolve_attempts ?? 2,
   };
 }
 
@@ -231,6 +283,15 @@ function taskToRow(t: KanbanTask): Record<string, unknown> {
     last_error: t.lastError,
     created_at: t.createdAt,
     updated_at: t.updatedAt,
+    // ── v2 columns ──
+    mode: t.mode,
+    pr_url: t.prUrl,
+    pr_state: t.prState,
+    server_start_command: t.serverStartCommand,
+    health_check_url: t.healthCheckUrl,
+    health_check_regex: t.healthCheckRegex,
+    resolve_attempt_count: t.resolveAttemptCount,
+    max_resolve_attempts: t.maxResolveAttempts,
   };
 }
 
@@ -321,6 +382,15 @@ export const kanbanRepo = {
       lastError: null,
       createdAt: now,
       updatedAt: now,
+      // ── v2 fields: optional in the request, defaulted to the v1-equivalent behavior ──
+      mode: req.mode ?? 'single',
+      prUrl: null,
+      prState: null,
+      serverStartCommand: req.serverStartCommand ?? null,
+      healthCheckUrl: req.healthCheckUrl ?? null,
+      healthCheckRegex: req.healthCheckRegex ?? null,
+      resolveAttemptCount: 0,
+      maxResolveAttempts: req.maxResolveAttempts ?? 2,
     };
     insertStmt.run(taskToRow(task));
     broadcastTask(task);
@@ -436,6 +506,15 @@ export function registerKanbanRoutes(app: FastifyInstance) {
         maxAttempts: body.maxAttempts != null ? Number(body.maxAttempts) : undefined,
         budgetUsd: body.budgetUsd === null ? null : body.budgetUsd != null ? Number(body.budgetUsd) : undefined,
         column: PATCHABLE_COLUMN(body.column) ? body.column : undefined,
+        // ── v2 optional mirrors ──
+        mode: body.mode === 'campaign' || body.mode === 'single' ? body.mode : undefined,
+        serverStartCommand:
+          body.serverStartCommand === null ? null : body.serverStartCommand != null ? String(body.serverStartCommand) : undefined,
+        healthCheckUrl:
+          body.healthCheckUrl === null ? null : body.healthCheckUrl != null ? String(body.healthCheckUrl) : undefined,
+        healthCheckRegex:
+          body.healthCheckRegex === null ? null : body.healthCheckRegex != null ? String(body.healthCheckRegex) : undefined,
+        maxResolveAttempts: body.maxResolveAttempts != null ? Number(body.maxResolveAttempts) : undefined,
       };
       const created = kanbanRepo.createTask(createReq);
       void pm.tick(pid); // pick up immediately if the card landed in Ready (else ≤10s safety tick)
@@ -476,6 +555,27 @@ export function registerKanbanRoutes(app: FastifyInstance) {
         if ('budgetUsd' in body) patch.budgetUsd = body.budgetUsd == null ? null : Number(body.budgetUsd);
         if (Array.isArray(body.labels)) patch.labels = body.labels.map(String);
         if (PATCHABLE_PHASE(body.executionPhase)) patch.executionPhase = body.executionPhase;
+
+        // ── v2 editable fields ───────────────────────────────────────────────
+        // mode (#4): immutable once executing — only a Backlog card may switch single<->campaign.
+        if (body.mode === 'campaign' || body.mode === 'single') {
+          if (existing.column !== 'Backlog') {
+            return { code: 409 as const, error: 'mode can only be changed while the card is in Backlog' };
+          }
+          patch.mode = body.mode;
+        }
+        // per-card server-validation overrides (#5).
+        if ('serverStartCommand' in body) {
+          patch.serverStartCommand = body.serverStartCommand == null ? null : String(body.serverStartCommand);
+        }
+        if ('healthCheckUrl' in body) {
+          patch.healthCheckUrl = body.healthCheckUrl == null ? null : String(body.healthCheckUrl);
+        }
+        if ('healthCheckRegex' in body) {
+          patch.healthCheckRegex = body.healthCheckRegex == null ? null : String(body.healthCheckRegex);
+        }
+        // resolve attempt cap (#9).
+        if (body.maxResolveAttempts != null) patch.maxResolveAttempts = Number(body.maxResolveAttempts);
 
         // ── depends_on (re-validated against the project graph) ───────────────
         if (Array.isArray(body.dependsOn)) {
