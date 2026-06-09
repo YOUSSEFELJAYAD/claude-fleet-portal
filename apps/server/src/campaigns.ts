@@ -81,6 +81,8 @@ function tpl(name: string | null | undefined, fallbackRole: string): AgentTempla
 class CampaignEngine {
   private subs = new Map<string, Set<(m: CampaignMessage) => void>>();
   private listSubs = new Set<(c: Campaign) => void>();
+  /** v2 #4 — campaign ids already delivered to onCampaignTerminal subscribers (fire-once de-dupe). */
+  private terminalSeen = new Set<string>();
 
   init() {
     registry.onRunTerminal((run) => this.handleRunTerminal(run));
@@ -102,6 +104,28 @@ class CampaignEngine {
   subscribeList(cb: (c: Campaign) => void): () => void {
     this.listSubs.add(cb);
     return () => this.listSubs.delete(cb);
+  }
+
+  /**
+   * v2 #4 — fire `cb` exactly once per campaign when it first reaches a TERMINAL status
+   * (completed / failed / killed). The PM (pm.ts) subscribes to drive a campaign-per-card's
+   * validate→gate on whole-campaign completion (NOT per-worker). Built on the existing emitCampaign
+   * broadcast (every campaign state change already flows through listSubs) — the engine itself is
+   * NOT rewritten. De-duped via `terminalSeen` so multiple terminal re-emits (e.g. a kill that also
+   * rolls up cost + re-emits) call back only once. Returns an unsubscribe fn.
+   */
+  onCampaignTerminal(cb: (c: Campaign) => void): () => void {
+    const wrapped = (c: Campaign) => {
+      if (!TERMINAL_CAMPAIGN.has(c.status)) return;
+      if (this.terminalSeen.has(c.id)) return;
+      this.terminalSeen.add(c.id);
+      try {
+        cb(c);
+      } catch {
+        /* a terminal subscriber must never break the campaign broadcast */
+      }
+    };
+    return this.subscribeList(wrapped);
   }
   private broadcast(id: string, m: CampaignMessage) {
     for (const cb of this.subs.get(id) ?? []) {
@@ -152,6 +176,14 @@ class CampaignEngine {
       startedAt: now,
       endedAt: null,
       costUsd: 0,
+      // ── v2 #4: campaign-per-card delegation ──
+      // A standalone campaign (the /api/campaigns route) passes none of these → null, preserving v1
+      // behavior (no projectId on the runs, per-template permission mode, no engine deny-list). A
+      // campaign-per-card (pm.launchBuild) sets all three so its runs carry the project, the UNRELAXED
+      // deny-list (workers never push), and a non-interactive permission mode.
+      projectId: req.projectId ?? null,
+      disallowedTools: req.disallowedTools ?? null,
+      permissionMode: req.permissionMode ?? null,
     };
     repo.upsertCampaign(campaign);
 
@@ -161,13 +193,15 @@ class CampaignEngine {
       cwd: req.cwd,
       model: campaign.model,
       effort: req.effort ?? orchT.effort,
-      permissionMode: orchT.permissionMode,
+      permissionMode: campaign.permissionMode ?? orchT.permissionMode,
       allowedTools: orchT.allowedTools,
       skills: orchT.skills,
       budgetUsd: orchT.budgetUsd,
       appendSystemPrompt: orchT.systemPrompt,
       jsonSchema: PLAN_JSON_SCHEMA,
       campaignId: campaign.id,
+      projectId: campaign.projectId,
+      disallowedTools: campaign.disallowedTools ?? undefined,
       interactive: false,
     });
     campaign.orchestratorRunId = run.id;
@@ -334,12 +368,17 @@ class CampaignEngine {
       cwd: campaign.cwd,
       model: campaign.model || t.model,
       effort: t.effort,
-      permissionMode: t.permissionMode,
+      // v2 #4: a campaign-per-card forces a non-interactive permission mode (else workers stall) and
+      // carries the project + UNRELAXED deny-list (workers never push). Standalone campaigns keep the
+      // per-template behavior (campaign.permissionMode/disallowedTools null).
+      permissionMode: campaign.permissionMode ?? t.permissionMode,
       allowedTools: t.allowedTools,
       skills: t.skills,
       budgetUsd: campaign.budgetPerWorkerUsd ?? t.budgetUsd,
       appendSystemPrompt: t.systemPrompt,
       campaignId: campaign.id,
+      projectId: campaign.projectId,
+      disallowedTools: campaign.disallowedTools ?? undefined,
       interactive: false,
     });
   }
@@ -358,12 +397,14 @@ class CampaignEngine {
       cwd: campaign.cwd,
       model: campaign.model || t.model,
       effort: t.effort,
-      permissionMode: t.permissionMode,
+      permissionMode: campaign.permissionMode ?? t.permissionMode,
       allowedTools: t.allowedTools,
       skills: t.skills,
       budgetUsd: t.budgetUsd,
       appendSystemPrompt: t.systemPrompt,
       campaignId: campaign.id,
+      projectId: campaign.projectId,
+      disallowedTools: campaign.disallowedTools ?? undefined,
       interactive: false,
     });
     campaign.synthesizerRunId = run.id;

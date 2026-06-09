@@ -158,6 +158,12 @@ const COLS = `
 
 const getTaskStmt = db.prepare(`SELECT ${COLS} FROM kanban_tasks WHERE id = ?`);
 const getByRunStmt = db.prepare(`SELECT ${COLS} FROM kanban_tasks WHERE run_id = ?`);
+// v2 #4 — resolve a campaign-mode card by the campaign it owns (uses idx_kanban_campaign). The
+// `campaign_id IS NOT NULL` guard is belt-and-suspenders: getTaskByCampaignId(null/'') early-returns
+// in the repo, so a #3 planning run / single-mode card (campaign_id null) can never match here (§3.7).
+const getByCampaignStmt = db.prepare(
+  `SELECT ${COLS} FROM kanban_tasks WHERE campaign_id = ? AND campaign_id IS NOT NULL`,
+);
 const listByProjectStmt = db.prepare(
   `SELECT ${COLS} FROM kanban_tasks WHERE project_id = ? ORDER BY "column", "rank", created_at`,
 );
@@ -348,6 +354,18 @@ export const kanbanRepo = {
   getTaskByRunId(runId: string): KanbanTask | null {
     if (!runId) return null;
     const r = getByRunStmt.get(runId) as any;
+    return r ? rowToTask(r) : null;
+  },
+
+  /**
+   * v2 #4 — resolve the campaign-mode card that OWNS a campaign (campaign_id link). The PM's campaign
+   * terminal handler uses this to route a completed campaign into validateAndGate. Returns null for a
+   * falsy id, so a #3 planning run (campaignId null) / single-mode card is claimed by NEITHER engine
+   * (§3.7 partition invariant): PM single owns campaignId==null + run_id; campaigns own campaignId!=null.
+   */
+  getTaskByCampaignId(campaignId: string): KanbanTask | null {
+    if (!campaignId) return null;
+    const r = getByCampaignStmt.get(campaignId) as any;
     return r ? rowToTask(r) : null;
   },
 

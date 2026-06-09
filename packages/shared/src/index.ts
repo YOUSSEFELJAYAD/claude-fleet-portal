@@ -390,6 +390,15 @@ export interface Campaign {
   startedAt: number;
   endedAt: number | null;
   costUsd: number;
+  // ── v2 #4: campaign-per-card delegation ──
+  /** Owning project (set for a campaign-per-card; null for a standalone campaign). */
+  projectId: string | null;
+  /** Deny-list every worker/orchestrator/synthesizer launch carries (v2 #4 — campaign workers
+   *  NEVER push; the engine-side merge pushes as fleet-pm). null → engine default (no deny-list). */
+  disallowedTools: string[] | null;
+  /** Permission mode every launch carries so `interactive:false` workers don't stall awaiting a
+   *  prompt (v2 #4). null → fall back to the per-template permission mode. */
+  permissionMode: PermissionMode | null;
   // ── derived ──
   tasks?: CampaignTask[];
   taskCount?: number;
@@ -408,6 +417,10 @@ export interface CreateCampaignRequest {
   budgetPerWorkerUsd?: number | null;
   model?: string;
   effort?: EffortLevel;
+  // ── v2 #4: campaign-per-card delegation (internal — set by pm.launchBuild, not the public route) ──
+  projectId?: string | null;
+  disallowedTools?: string[] | null;
+  permissionMode?: PermissionMode | null;
 }
 
 /** The plan the orchestrator must return — also passed to `claude --json-schema` (DC.md D-019). */

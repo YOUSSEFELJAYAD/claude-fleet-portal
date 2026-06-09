@@ -646,6 +646,35 @@ export async function mergeBranch(root: string, branch: string): Promise<MergeRe
 }
 
 /**
+ * v2 #4 — create the isolated worktree for a card up front: `git worktree add
+ * .claude/worktrees/<name> -b <branch>`. A SINGLE-mode build relies on `claude --worktree` to
+ * create this on launch, but a campaign-per-card spawns its orchestrator/workers via the campaign
+ * engine (which uses `cwd`, NOT `--worktree`), so the PM must create the worktree itself and point
+ * the campaign's cwd at it. Idempotent: if the worktree dir already registers as a worktree, this is
+ * a no-op success. Returns `{ ok, dir, error? }`; the caller maps `!ok` to a parked card.
+ */
+export interface CreateWorktreeResult {
+  ok: boolean;
+  dir: string;
+  error?: string;
+}
+export async function createWorktree(root: string, worktreeName: string, branch: string): Promise<CreateWorktreeResult> {
+  const wtPath = path.join(root, '.claude', 'worktrees', worktreeName);
+  // already a registered worktree? (re-launch / retry) → reuse it.
+  const list = await gitExec(root, ['-C', root, 'worktree', 'list', '--porcelain']);
+  if (list.ok && list.stdout.split(/\r?\n/).some((l) => l === `worktree ${wtPath}`)) {
+    return { ok: true, dir: wtPath };
+  }
+  const add = await gitExec(root, ['-C', root, 'worktree', 'add', wtPath, '-b', branch]);
+  if (!add.ok) {
+    // branch may already exist from a prior partial run → retry without -b (check out the branch).
+    const retry = await gitExec(root, ['-C', root, 'worktree', 'add', wtPath, branch]);
+    if (!retry.ok) return { ok: false, dir: wtPath, error: (add.stderr || retry.stderr || 'worktree add failed').trim() };
+  }
+  return { ok: true, dir: wtPath };
+}
+
+/**
  * Tear down a finished task's worktree + branch (SPEC §6.6): `worktree remove --force` (tolerate an
  * unclean tree), `branch -d` (then `-D` fallback if it was never merged, e.g. a cancel/cleanup path),
  * `worktree prune`. Best-effort and idempotent — never throws.

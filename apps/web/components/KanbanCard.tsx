@@ -130,6 +130,16 @@ export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, o
             PR {task.prState}
           </span>
         )}
+        {/* v2 #4 — campaign-mode marker (a sub-DAG of orchestrator+worker runs, not one build run). */}
+        {task.mode === 'campaign' && (
+          <span
+            className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border"
+            style={{ color: '#b08cff', borderColor: '#b08cff40' }}
+            title="runs as a campaign (orchestrator + worker sub-DAG)"
+          >
+            campaign
+          </span>
+        )}
         {task.labels?.map((l) => (
           <span key={l} className="font-mono text-[9px] px-1.5 py-0.5 border border-line2 text-faint">{l}</span>
         ))}
@@ -147,6 +157,12 @@ export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, o
           {task.runId && (
             <Link href={`/runs/${task.runId}`} className="font-mono text-[9.5px] text-dim hover:text-amber underline">
               run
+            </Link>
+          )}
+          {/* v2 #4 — drill into the campaign sub-DAG (reuses the existing campaign view + SSE stream). */}
+          {task.mode === 'campaign' && task.campaignId && (
+            <Link href={`/orchestrate/${task.campaignId}`} className="font-mono text-[9.5px] text-dim hover:text-amber underline">
+              campaign ↗
             </Link>
           )}
           {(isReview || task.worktreeName) && (

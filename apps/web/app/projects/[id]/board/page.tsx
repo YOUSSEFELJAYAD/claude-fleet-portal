@@ -82,6 +82,9 @@ export default function BoardPage({ params }: { params: { id: string } }) {
   const [budgetUsd, setBudgetUsd] = useState('');
   const [maxAttempts, setMaxAttempts] = useState('3');
   const [column, setColumn] = useState<KanbanColumn>('Backlog');
+  // v2 #4 — single (one build run) vs campaign (orchestrator+worker sub-DAG). Immutable once the card
+  // leaves Backlog (the server rejects a mode edit outside Backlog), so it's only offered at create.
+  const [mode, setMode] = useState<'single' | 'campaign'>('single');
 
   // load project header (spend gauge / wip context). Best-effort; board still works without it.
   useEffect(() => {
@@ -131,6 +134,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
         maxAttempts: maxAttempts.trim() ? Number(maxAttempts) : undefined,
         budgetUsd: budgetUsd.trim() ? Number(budgetUsd) : undefined,
         column,
+        mode,
       }),
     });
     // reset (SSE delivers the new card)
@@ -142,6 +146,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
     setBudgetUsd('');
     setMaxAttempts('3');
     setColumn('Backlog');
+    setMode('single');
     setShowCreate(false);
   }
 
@@ -258,6 +263,12 @@ export default function BoardPage({ params }: { params: { id: string } }) {
                 </Select>
               </Field>
             </div>
+            <Field label="mode" hint="single build run · or a campaign sub-DAG · immutable once it leaves Backlog">
+              <Select value={mode} onChange={(e) => setMode(e.target.value as 'single' | 'campaign')}>
+                <option value="single">single</option>
+                <option value="campaign">campaign</option>
+              </Select>
+            </Field>
             <div className="flex items-center gap-2">
               <Btn type="submit" variant="solid" disabled={busy || !title.trim()}>
                 Create card

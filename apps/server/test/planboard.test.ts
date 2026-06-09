@@ -374,5 +374,8 @@ describe('§3.7 partition invariant — planning run touches neither campaign no
     expect(campaigns.view(runId)).toBeNull();
     // 5) the PM's getTaskByRunId does NOT match it (no kanban card links to a planning run).
     expect(kanbanRepo.getTaskByRunId(runId)).toBeNull();
+    // 6) §3.7 (#4): the campaign-card resolver does NOT match the planning run either — a planning
+    //    run carries campaignId:null and no card links a campaign_id to it.
+    expect(kanbanRepo.getTaskByCampaignId(runId)).toBeNull();
   });
 });

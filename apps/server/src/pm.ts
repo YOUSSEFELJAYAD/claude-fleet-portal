@@ -23,14 +23,21 @@
  * H2 ordering (cancel/delete): mark the card terminal in the DB FIRST, then registry.stop(run_id) — the
  * synchronous onRunTerminal that stop() fires re-reads the card and short-circuits on the terminal column.
  *
- * Out-of-scope (SPEC §11): no campaign-per-card (one build run per card; campaign_id stays null), no
- * remote git / push (disallowedTools), no conflict resolution (conflicts park in Review), no port-binding
- * validation (pure checks only). The PM never auto-generates the backlog — humans create cards.
+ * v2 #4 (campaign-per-card): a card with mode==='campaign' runs as a CAMPAIGN (orchestrator+worker
+ * sub-DAG) instead of one build run. launchBuild branches on card.mode; the campaign is scoped to the
+ * card's worktree and the card stores campaign_id (NOT run_id). A separate onCampaignTerminal handler
+ * routes the card into the SAME validateAndGate sink when the WHOLE campaign completes. Partition holds:
+ * campaign runs (campaignId!=null) are owned by campaigns.ts; PM single-mode owns campaignId==null+run_id.
+ * No double-gate: a single-mode card gates on its run terminal; a campaign-mode card gates on the
+ * campaign terminal; an individual worker run terminal never triggers the card gate.
+ *
+ * Still out-of-scope here: no conflict resolution beyond #9 (conflicts park in Review).
+ * The PM never auto-generates the backlog — humans create cards.
  */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
-import type { Run, Project, KanbanTask } from '@fleet/shared';
+import type { Run, Project, KanbanTask, Campaign } from '@fleet/shared';
 import { registry } from './registry.js';
 import { projectsRepo } from './projects.js';
 import { kanbanRepo } from './kanban.js';
@@ -41,8 +48,10 @@ import {
   mergeBranch,
   cleanupWorktree,
   ensureWorktreeIgnored,
+  createWorktree,
   scrubCredentials,
 } from './git.js';
+import { campaigns } from './campaigns.js';
 import { fetchAndSyncDefault, pushBranch, prCreate, prView } from './gh.js';
 import { runValidation, VALIDATION_MAX_BUFFER } from './validation.js';
 import { brokerValidate, type BrokerConfig } from './portbroker.js';
@@ -201,6 +210,9 @@ class PmEngine {
   // ── lifecycle ───────────────────────────────────────────────────────────────
   init() {
     registry.onRunTerminal((run) => this.handleRunTerminal(run));
+    // v2 #4 — a campaign-mode card gates on WHOLE-campaign completion (not its workers' run
+    // terminals, which carry campaignId!=null and are skipped by handleRunTerminal's partition guard).
+    campaigns.onCampaignTerminal((c) => this.handleCampaignTerminal(c));
     if (!this.safetyTimer) {
       // Human card moves (Backlog→Ready, drag) fire no terminal event → an unref'd safety tick
       // re-evaluates every project periodically. unref so it never keeps the process alive.
@@ -363,6 +375,9 @@ class PmEngine {
     const fresh = kanbanRepo.getTask(card.id);
     if (!fresh || fresh.column !== 'Ready') return 'skip';
 
+    // v2 #4 — a campaign-mode card delegates to a campaign sub-DAG instead of one build run.
+    if (fresh.mode === 'campaign') return this.launchCampaignBuild(fresh, project);
+
     const wtName = worktreeNameFor(fresh);
     try {
       // Gitignore precheck (commit .gitignore as fleet-pm). MUST complete BEFORE registry.launch
@@ -401,6 +416,142 @@ class PmEngine {
       });
       return 'skip';
     }
+  }
+
+  /**
+   * v2 #4 — launch a CAMPAIGN scoped to a campaign-mode card (in place of one build run). Creates +
+   * starts a campaign whose objective is built from the card, whose cwd is the card's OWN isolated
+   * worktree (same worktreeNameFor / branchNameFor as a single build, so validateAndGate + the merge
+   * pipeline find it unchanged), and persists `kanban_tasks.campaign_id` (NOT run_id) on the card.
+   * Returns the same 'ok' | 'capped' | 'skip' contract as launchBuild.
+   *
+   * Deny-list: the campaign's workers/orchestrator/synthesizer carry the UNRELAXED deny-list
+   * (`disallowedToolsForProject` with pushEnabled forced false — workers never push; the engine-side
+   * merge pushes as fleet-pm) and a non-interactive permission mode (else interactive:false workers
+   * stall awaiting a prompt). Both ride the campaigns.disallowed_tools / permission_mode columns.
+   */
+  private async launchCampaignBuild(fresh: KanbanTask, project: Project): Promise<'ok' | 'capped' | 'skip'> {
+    const wtName = worktreeNameFor(fresh);
+    const branch = branchNameFor(wtName);
+    try {
+      // Same gitignore precheck as a single build (must precede the worktree create so the main
+      // worktree stays clean and mergeBranch doesn't later refuse on a dirty tree).
+      await ensureWorktreeIgnored(project.rootDir);
+      // The campaign engine spawns its runs via `cwd` (NOT `claude --worktree`), so the PM must create
+      // the worktree itself and point the campaign at it.
+      const wt = await createWorktree(project.rootDir, wtName, branch);
+      if (!wt.ok) {
+        kanbanRepo.updateTask(fresh.id, {
+          column: 'Blocked',
+          executionPhase: 'failed',
+          lastError: `campaign worktree create failed: ${wt.error ?? 'unknown'}`,
+        });
+        return 'skip';
+      }
+
+      // UNRELAXED deny-list (§3.4): campaign workers NEVER push — force pushEnabled false regardless of
+      // the project's single-mode relaxation. permissionMode: the same unattended bypass the PM build
+      // uses (isolated worktree + push denied → safe), so interactive:false workers don't stall.
+      const campaign = campaigns.create({
+        objective: buildPrompt(fresh),
+        cwd: wt.dir,
+        budgetPerWorkerUsd: fresh.budgetUsd,
+        projectId: project.id,
+        disallowedTools: disallowedToolsForProject({ ...project, pushEnabled: false }),
+        permissionMode: PM_PERMISSION_MODE,
+      });
+
+      kanbanRepo.updateTask(fresh.id, {
+        column: 'InProgress',
+        executionPhase: 'building',
+        campaignId: campaign.id, // NOT run_id — a campaign-mode card links by campaign_id (§3.7)
+        runId: null,
+        worktreeName: wtName,
+        lastError: null,
+      });
+      return 'ok';
+    } catch (e: any) {
+      if (e?.statusCode === 429) return 'capped'; // orchestrator launch hit the concurrency cap
+      kanbanRepo.updateTask(fresh.id, {
+        column: 'Blocked',
+        executionPhase: 'failed',
+        lastError: `campaign launch failed: ${e?.message ?? e}`,
+      });
+      return 'skip';
+    }
+  }
+
+  /**
+   * v2 #4 — react to a WHOLE campaign reaching terminal (completed/failed/killed). Look up the card
+   * that owns the campaign (by campaign_id) and route it into the SHARED validateAndGate (§3.3) so the
+   * card's validate→gate→merge fires on CAMPAIGN completion. The partition keeps this from double-gating:
+   *   - a #3 planning run / standalone campaign has no owning card → getTaskByCampaignId returns null.
+   *   - an individual worker run terminal carries campaignId!=null → handleRunTerminal skips it; only
+   *     this whole-campaign signal reaches here.
+   * Failed/killed campaigns don't merge — they go through validateAndGate exactly like a single build
+   * whose work didn't satisfy the acceptance criteria (validation is the incompleteness catch); a card
+   * with no commits / failing validation reworks or parks, never silently merging an incomplete tree.
+   */
+  private handleCampaignTerminal(c: Campaign): void {
+    if (!c.projectId) return; // standalone campaign (not a campaign-per-card) → not ours
+    const card = kanbanRepo.getTaskByCampaignId(c.id);
+    if (!card) return; // no card owns this campaign
+    // H2 ordering: if a human/cancel already moved the card terminal, do nothing.
+    if (PM_DONE_COLUMNS.has(card.column) || card.column === 'Backlog' || card.column === 'Ready') return;
+    const project = projectsRepo.getProject(card.projectId);
+    if (!project) return;
+
+    // A KILLED campaign (user stop via DELETE /api/campaigns/:id, or pm.cancel below) is not a build
+    // to gate — mirror onCardRunDone's killed branch: leave a terminal card alone, mark a still-running
+    // one Blocked. Completed/failed both route into validateAndGate (single-mode parity: a failed/empty
+    // campaign with no validation command parks in Review exactly like a failed single run does).
+    if (c.status === 'killed') {
+      if (card.column === 'InProgress') {
+        kanbanRepo.updateTask(card.id, {
+          column: 'Blocked',
+          executionPhase: 'failed',
+          lastError: 'campaign stopped',
+        });
+      }
+      this.tickSoon(card.projectId);
+      return;
+    }
+
+    void this.onCardCampaignDone(card.id, project).catch((e) => {
+      kanbanRepo.updateTask(card.id, {
+        column: 'Blocked',
+        executionPhase: 'failed',
+        lastError: `pm campaign terminal error: ${e?.message ?? e}`,
+      });
+    });
+  }
+
+  /**
+   * v2 #4 — the campaign-terminal counterpart of onCardRunDone: ensure-committed the campaign's
+   * worktree (the engine-side fleet-pm commit, so the diff/probe/merge see real commits), then route
+   * into the SHARED validateAndGate. Mirrors onCardRunDone's structure minus the run-status branches
+   * (a campaign has no single run.status / killReason).
+   */
+  private async onCardCampaignDone(cardId: string, project: Project): Promise<void> {
+    const card = kanbanRepo.getTask(cardId);
+    if (!card) return;
+    const wtName = card.worktreeName ?? worktreeNameFor(card);
+    const wtDir = worktreeDirFor(project.rootDir, wtName);
+
+    try {
+      await ensureCommitted(wtDir);
+    } catch (e: any) {
+      kanbanRepo.updateTask(cardId, {
+        column: 'Blocked',
+        executionPhase: 'failed',
+        lastError: `ensure-committed failed: ${e?.message ?? e}`,
+      });
+      this.tickSoon(card.projectId);
+      return;
+    }
+
+    await this.validateAndGate(cardId, project);
+    this.tickSoon(card.projectId);
   }
 
   /** Relaunch a fix run for a card already in InProgress, threading validation output (SPEC §5.6). */
@@ -899,14 +1050,26 @@ class PmEngine {
     const card = kanbanRepo.getTask(cardId);
     if (!card) return;
     const runId = card.runId;
+    const campaignId = card.campaignId; // v2 #4 — a campaign-mode card delegates to a campaign
     const project = projectsRepo.getProject(card.projectId);
-    // 1. DB terminal FIRST (H2).
+    // 1. DB terminal FIRST (H2). The Canceled column makes every downstream terminal a no-op:
+    //    registry.stop()'s synchronous onRunTerminal AND campaigns.kill()'s onCampaignTerminal both
+    //    re-read the card and short-circuit on the terminal column.
     kanbanRepo.updateTask(cardId, {
       column: 'Canceled',
       executionPhase: 'idle',
       lastError: 'canceled by user',
     });
-    // 2. stop the run (fires onRunTerminal synchronously; the Canceled column makes it a no-op).
+    // 2. stop the campaign (campaign card) or the single build run (single card).
+    if (campaignId) {
+      // a campaign card carries campaign_id, not run_id; kill the whole campaign so its orchestrator
+      // + in-flight workers stop spending (campaigns.kill is itself H2-ordered internally).
+      try {
+        campaigns.kill(campaignId);
+      } catch {
+        /* campaign already gone / terminal */
+      }
+    }
     if (runId) {
       try {
         registry.stop(runId);

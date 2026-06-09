@@ -32,6 +32,8 @@ describe('campaign KILL ordering (H2) — no cost-spending orphan workers', () =
       orchestratorRunId: 'orch', synthesizerRunId: null,
       maxParallel: 4, autoSynthesize: false, budgetPerWorkerUsd: 5,
       model: 'claude-haiku-4-5', startedAt: now, endedAt: null, costUsd: 0,
+      // v2 #4 — a standalone campaign sets none of these (null preserves v1 behavior).
+      projectId: null, disallowedTools: null, permissionMode: null,
     });
 
     let statusAtFirstStop: string | undefined;

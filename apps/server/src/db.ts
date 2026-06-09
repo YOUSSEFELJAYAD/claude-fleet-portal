@@ -546,9 +546,11 @@ export const repo = {
   upsertCampaign(c: Campaign) {
     db.prepare(`
       INSERT INTO campaigns (id, objective, cwd, status, orchestrator_template, worker_template, synthesizer_template,
-        orchestrator_run_id, synthesizer_run_id, max_parallel, auto_synthesize, budget_per_worker_usd, model, started_at, ended_at, cost_usd)
+        orchestrator_run_id, synthesizer_run_id, max_parallel, auto_synthesize, budget_per_worker_usd, model, started_at, ended_at, cost_usd,
+        project_id, disallowed_tools, permission_mode)
       VALUES (@id,@objective,@cwd,@status,@orchestrator_template,@worker_template,@synthesizer_template,
-        @orchestrator_run_id,@synthesizer_run_id,@max_parallel,@auto_synthesize,@budget_per_worker_usd,@model,@started_at,@ended_at,@cost_usd)
+        @orchestrator_run_id,@synthesizer_run_id,@max_parallel,@auto_synthesize,@budget_per_worker_usd,@model,@started_at,@ended_at,@cost_usd,
+        @project_id,@disallowed_tools,@permission_mode)
       ON CONFLICT(id) DO UPDATE SET status=@status, orchestrator_run_id=@orchestrator_run_id,
         synthesizer_run_id=@synthesizer_run_id, ended_at=@ended_at, cost_usd=@cost_usd
     `).run({
@@ -557,6 +559,11 @@ export const repo = {
       orchestrator_run_id: c.orchestratorRunId, synthesizer_run_id: c.synthesizerRunId, max_parallel: c.maxParallel,
       auto_synthesize: c.autoSynthesize ? 1 : 0, budget_per_worker_usd: c.budgetPerWorkerUsd, model: c.model,
       started_at: c.startedAt, ended_at: c.endedAt, cost_usd: c.costUsd,
+      // v2 #4 — set at INSERT (campaign-per-card identity/launch knobs are immutable for a campaign's
+      // life, so the ON CONFLICT update intentionally leaves them untouched).
+      project_id: c.projectId ?? null,
+      disallowed_tools: c.disallowedTools ? JSON.stringify(c.disallowedTools) : null,
+      permission_mode: c.permissionMode ?? null,
     });
   },
   getCampaign(id: string): Campaign | null {
@@ -596,7 +603,21 @@ function rowToCampaign(row: any): Campaign {
     orchestratorRunId: row.orchestrator_run_id, synthesizerRunId: row.synthesizer_run_id, maxParallel: row.max_parallel,
     autoSynthesize: !!row.auto_synthesize, budgetPerWorkerUsd: row.budget_per_worker_usd, model: row.model,
     startedAt: row.started_at, endedAt: row.ended_at, costUsd: row.cost_usd,
+    // ── v2 #4 columns ──
+    projectId: row.project_id ?? null,
+    disallowedTools: row.disallowed_tools ? safeStrArray(row.disallowed_tools) : null,
+    permissionMode: (row.permission_mode ?? null) as Campaign['permissionMode'],
   };
+}
+
+/** Parse a JSON string[] column; null/garbage → null (preserve "unset" vs an empty list). */
+function safeStrArray(s: unknown): string[] | null {
+  try {
+    const v = JSON.parse(String(s));
+    return Array.isArray(v) ? v.map(String) : null;
+  } catch {
+    return null;
+  }
 }
 function rowToTask(row: any): CampaignTask {
   return {
