@@ -1,15 +1,20 @@
 'use client';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import type { ColorToken } from '@/lib/shiki';
 
 /**
- * Hand-rolled unified-diff renderer (SPEC §7, ZERO new deps — no react-diff-view).
+ * Unified-diff renderer (v2 spec §4 #6).
  *
- * Splits raw unified-diff text on \n and colors each line by its first char:
- *   - `+ ` additions (green)   - `- ` deletions (red)   - context (dim)
- *   - `@@ … @@` hunk headers (amber)   - `diff --git` / `index` / `+++` / `---` file headers (faint)
- * Renders line numbers parsed from each hunk header so the gutter tracks both sides.
- * Purely presentational; the server already caps the payload (~600 lines / 64KB) and appends a
- * truncation marker, so this component just needs to render whatever string it is handed.
+ * Parsing is unchanged from v1: split raw unified-diff text on \n and classify each line by its
+ * leading char (add / del / context / hunk header / file-meta / truncation), tracking the
+ * old/new line numbers parsed from each `@@` hunk header.
+ *
+ * NEW in v2: per-line SYNTAX COLORING. The changed file's extension (`path`) is mapped to a Shiki
+ * language (fallback `text`); each add/del/context line's TEXT is tokenized with the shared Shiki
+ * highlighter (lazy dynamic import — never blocks paint) and rendered as colored token spans.
+ * The add/del row BACKGROUND tint and the +/- sign column stay exactly as before; Shiki supplies
+ * only the per-token foreground colors. While the highlighter loads, or on any failure, every line
+ * renders as plain text in its kind color — a safe fallback that is always legible.
  */
 
 type LineKind = 'add' | 'del' | 'ctx' | 'hunk' | 'meta' | 'trunc';
@@ -99,17 +104,65 @@ const KIND_STYLE: Record<LineKind, { bg: string; fg: string; sign: string }> = {
   trunc: { bg: 'rgba(255,176,0,0.05)', fg: '#7b828c', sign: ' ' },
 };
 
+/** Lines whose code content we syntax-color (headers/meta/trunc keep their flat kind color). */
+const CODE_KINDS = new Set<LineKind>(['add', 'del', 'ctx']);
+
+/** Derive a Shiki lang hint from the changed file path (fallback handled downstream → `text`). */
+function extFromPath(p: string | null | undefined): string {
+  if (!p) return 'text';
+  const clean = p.split(' → ').pop() || p; // rename "old → new" → use the new path
+  const dot = clean.lastIndexOf('.');
+  const slash = clean.lastIndexOf('/');
+  return dot > slash ? clean.slice(dot + 1).toLowerCase() : 'text';
+}
+
 export function DiffView({
   diff,
+  path,
   truncated = false,
   binary = false,
   error,
 }: {
   diff: string;
+  /** changed file path → per-line syntax language (optional; falls back to plain text). */
+  path?: string | null;
   truncated?: boolean;
   binary?: boolean;
   error?: string;
 }) {
+  const lang = extFromPath(path);
+  const lines = React.useMemo(() => (diff && diff.trim() ? parseDiff(diff) : []), [diff]);
+
+  // Per-line token map: index → colored tokens. Populated lazily once the highlighter loads.
+  const [tokenMap, setTokenMap] = useState<Record<number, ColorToken[]> | null>(null);
+
+  useEffect(() => {
+    if (!lines.length || lang === 'text') {
+      setTokenMap(null);
+      return;
+    }
+    let alive = true;
+    setTokenMap(null);
+    import('@/lib/shiki')
+      .then(async ({ highlightLineTokens }) => {
+        const map: Record<number, ColorToken[]> = {};
+        await Promise.all(
+          lines.map(async (ln, i) => {
+            if (CODE_KINDS.has(ln.kind) && ln.text) {
+              map[i] = await highlightLineTokens(ln.text, lang);
+            }
+          }),
+        );
+        if (alive) setTokenMap(map);
+      })
+      .catch(() => {
+        // leave tokenMap null → plain-text fallback per kind color
+      });
+    return () => {
+      alive = false;
+    };
+  }, [lines, lang]);
+
   if (error) {
     return (
       <div className="font-mono text-[12px] text-sig-failed border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">
@@ -123,12 +176,12 @@ export function DiffView({
   if (!diff || !diff.trim()) {
     return <div className="font-mono text-[12px] text-faint border border-dashed border-line2 px-3 py-3">No changes.</div>;
   }
-  const lines = parseDiff(diff);
   return (
     <div className="border border-line2 bg-black/40 overflow-auto">
       <pre className="font-mono text-[11.5px] leading-[1.55] m-0" style={{ tabSize: 2 }}>
         {lines.map((ln, i) => {
           const s = KIND_STYLE[ln.kind];
+          const toks = tokenMap?.[i];
           return (
             <div key={i} className="flex" style={{ background: s.bg }}>
               <span
@@ -146,7 +199,17 @@ export function DiffView({
               <span className="select-none" style={{ width: 14, color: s.fg, flex: '0 0 auto', textAlign: 'center' }}>
                 {ln.kind === 'add' || ln.kind === 'del' ? s.sign : ''}
               </span>
-              <span style={{ color: s.fg, whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>{ln.text || ' '}</span>
+              <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>
+                {toks && CODE_KINDS.has(ln.kind) ? (
+                  toks.map((t, j) => (
+                    <span key={j} style={{ color: t.color ?? s.fg }}>
+                      {t.content}
+                    </span>
+                  ))
+                ) : (
+                  <span style={{ color: s.fg }}>{ln.text || ' '}</span>
+                )}
+              </span>
             </div>
           );
         })}

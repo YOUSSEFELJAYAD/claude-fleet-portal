@@ -11,8 +11,8 @@ import { DiffView } from '@/components/DiffView';
 /**
  * Read-only file browser + working-tree change view (SPEC §7, §8). Two modes:
  *   - "Browse"  → lazy FileTree (left) + type-aware FileViewer (right)
- *   - "Changes" → working-tree status (GET .../git/status) + per-file hand-rolled diff
- * Zero new deps; all rendering is hand-rolled.
+ *   - "Changes" → working-tree status (GET .../git/status) + per-file syntax-colored diff
+ * Rich rendering via Shiki + react-markdown (v2 spec §4 #6); lazy-loaded, plain-text fallback.
  */
 
 interface StatusEntry {
@@ -185,7 +185,7 @@ export default function ProjectFilesPage({ params }: { params: { id: string } })
                         {d === 'loading' || d === undefined ? (
                           <div className="font-mono text-[11px] text-faint py-2">loading diff…</div>
                         ) : (
-                          <DiffView diff={d.diff} truncated={d.truncated} binary={d.binary} error={d.error} />
+                          <DiffView diff={d.diff} path={s.path} truncated={d.truncated} binary={d.binary} error={d.error} />
                         )}
                       </div>
                     )}
