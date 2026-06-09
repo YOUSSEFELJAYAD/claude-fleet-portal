@@ -104,3 +104,39 @@ describe('path-traversal guards (H21)', () => {
     expect(res.statusCode).toBe(200);
   });
 });
+
+describe('config ↔ fleet deadlock guard (residual H9 path — DC §10)', () => {
+  const H = () => ({ host: `127.0.0.1:${PORT}` });
+
+  beforeAll(async () => {
+    // Normalize cap first (an earlier H9 test leaves it at 4), THEN raise the fleet reserve —
+    // the /api/fleet/config guard itself requires reserve < cap at PUT time.
+    await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: { maxConcurrentRuns: 8 } });
+    const res = await app.inject({ method: 'PUT', url: '/api/fleet/config', headers: H(), payload: { reserveSlotsForNonPm: 4 } });
+    expect(res.statusCode).toBe(200);
+  });
+
+  afterAll(async () => {
+    await app.inject({ method: 'PUT', url: '/api/fleet/config', headers: H(), payload: { reserveSlotsForNonPm: 0 } });
+    await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: { maxConcurrentRuns: 8 } });
+  });
+
+  it('rejects lowering maxConcurrentRuns TO the fleet reserve (PM pool would be 0) and leaves config unchanged', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: { maxConcurrentRuns: 4 } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain('reserveSlotsForNonPm'); // names the remedy, not a generic 400
+    const cfg = await app.inject({ method: 'GET', url: '/api/config', headers: H() });
+    expect(cfg.json().maxConcurrentRuns).toBe(8); // rejected PUT must not have applied
+  });
+
+  it('rejects lowering maxConcurrentRuns BELOW the fleet reserve', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: { maxConcurrentRuns: 3 } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('accepts a cap strictly above the reserve', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: { maxConcurrentRuns: 5 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().maxConcurrentRuns).toBe(5);
+  });
+});

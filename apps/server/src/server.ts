@@ -5,7 +5,7 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import { randomUUID } from 'node:crypto';
-import { ALLOWED_HOSTS, ALLOWED_ORIGINS } from './config.js';
+import { ALLOWED_HOSTS, ALLOWED_ORIGINS, validateConfig } from './config.js';
 import { registry } from './registry.js';
 import { campaigns } from './campaigns.js';
 import { seedTemplates } from './templates.js';
@@ -28,7 +28,7 @@ import { registerKanbanRoutes, subscribeBoard } from './kanban.js';
 import { registerFileviewRoutes } from './fileview.js';
 import { registerFileeditRoutes } from './fileedit.js'; // v2 #1 — file CRUD + commit (opt-in per project)
 import { registerPlanboardRoutes, planboard } from './planboard.js'; // v2 #3 — objective → Ready cards
-import { registerFleetRoutes } from './fleet.js'; // v2 #7 — cross-project fleet scheduler (admission)
+import { registerFleetRoutes, assertCapAboveReserve } from './fleet.js'; // v2 #7 — cross-project fleet scheduler (admission)
 import { pm } from './pm.js';
 
 /** H21 — a cwd query must be an absolute path with no traversal/null byte (or absent). */
@@ -181,7 +181,11 @@ export function buildServer() {
   app.get('/api/config', async () => registry.getConfig());
   app.put('/api/config', async (req, reply) => {
     try {
-      registry.setConfig(req.body); // H9 — validates/clamps, throws 400 on invalid
+      const next = validateConfig(req.body); // H9 — validates/clamps, throws 400 on invalid
+      // Deadlock cross-check on the post-clamp cap (the fleet PUT guards the other direction);
+      // done at the route layer so config.ts never has to import fleet state.
+      assertCapAboveReserve(next.maxConcurrentRuns);
+      registry.setConfig(next);
       return registry.getConfig();
     } catch (e: any) {
       reply.code(e.statusCode ?? 400);

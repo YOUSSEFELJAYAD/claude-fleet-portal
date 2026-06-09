@@ -119,6 +119,28 @@ export function validateFleetConfig(input: unknown): FleetConfig {
   return { reserveSlotsForNonPm, fleetSpendCeilingUsd };
 }
 
+/**
+ * Mirror of the validateFleetConfig cross-check for the OTHER write path (the DC §10 residual):
+ * lowering the GLOBAL maxConcurrentRuns (PUT /api/config) at/below the existing fleet reserve
+ * zeroes the PM pool just as surely as raising the reserve does. config.ts can't read fleet
+ * state (config↔registry↔fleet import cycle), so the /api/config route calls this with the
+ * post-clamp cap before applying. Throws 400; direct repo.setConfig writes remain covered only
+ * by the loud fleetStatus.deadlocked signal.
+ */
+export function assertCapAboveReserve(nextMaxConcurrentRuns: number): void {
+  const reserve = fleetRepo.get().reserveSlotsForNonPm;
+  if (nextMaxConcurrentRuns <= reserve) {
+    throw Object.assign(
+      new Error(
+        `maxConcurrentRuns (${nextMaxConcurrentRuns}) must be > reserveSlotsForNonPm (${reserve}); ` +
+          'otherwise the PM scheduler pool is 0 and every card stalls in Ready. ' +
+          'Lower the fleet reserve first (PUT /api/fleet/config) or keep a higher cap.',
+      ),
+      { statusCode: 400 },
+    );
+  }
+}
+
 export const fleetRepo = {
   /** The stored fleet config merged over DEFAULT_FLEET_CONFIG (so a missing/partial row is whole). */
   get(): FleetConfig {
