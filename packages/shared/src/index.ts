@@ -467,6 +467,13 @@ export interface CreateProjectRequest {
   defaultValidationCommand?: string | null;
   wipLimit?: number;
   budgetCeilingUsd?: number | null;
+  /**
+   * When `true` AND `rootDir` is an existing directory that is NOT a git work tree, the create
+   * route runs `git init` (seeding `.gitignore` + an initial commit) before attaching it, instead
+   * of returning the not-a-git-repo 400. The resulting project is indistinguishable from one
+   * attached to a pre-existing repo (no provenance column). v2 item #10.
+   */
+  initGit?: boolean;
 }
 
 /** Human-draggable workflow column. The PM only picks up `Ready`. */

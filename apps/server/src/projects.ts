@@ -16,9 +16,11 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Project, CreateProjectRequest } from '@fleet/shared';
 import db from './db.js';
+import { initRepo } from './git.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -167,6 +169,17 @@ async function detectDefaultBranch(dir: string): Promise<string> {
   }
 }
 
+/** True iff `dir` exists on disk and is a directory (used to separate "missing dir" — a bare 400 —
+ *  from "exists but not a repo" — which can offer git init). */
+async function isDirectory(dir: string): Promise<boolean> {
+  try {
+    const st = await fs.stat(dir);
+    return st.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** True iff `dir` is an absolute path that resolves to a git work tree. */
 async function isGitWorkTree(dir: string): Promise<boolean> {
   if (typeof dir !== 'string' || !path.isAbsolute(dir)) return false;
@@ -209,19 +222,19 @@ export function registerProjectsRoutes(app: FastifyInstance) {
       reply.code(400);
       return { error: 'rootDir must be an absolute path' };
     }
-    if (!(await isGitWorkTree(rootDir))) {
-      reply.code(400);
-      return { error: 'rootDir must be an existing git repository' };
-    }
 
-    // optional fields — validate when present. If no branch is given, DETECT the repo's
-    // actual current branch (main vs master vs anything) instead of assuming 'main'.
+    // Parse defaultBranch BEFORE any git-init side effect (an invalid request must never leave a
+    // repo on disk). It's also the branch threaded into initRepo when initGit is set (SPEC #10
+    // decision: branch from the form, default 'main'); the actual-branch detection fallback stays
+    // BELOW the work-tree gate so it reads the just-init'd repo.
     let defaultBranch = body.defaultBranch !== undefined ? String(body.defaultBranch).trim() : undefined;
     if (defaultBranch !== undefined && !defaultBranch) {
       reply.code(400);
       return { error: 'defaultBranch must be a non-empty string when provided' };
     }
-    if (defaultBranch === undefined) defaultBranch = await detectDefaultBranch(rootDir);
+
+    // Validate the remaining optional fields BEFORE the work-tree gate too, so an invalid request
+    // (e.g. a bad wipLimit) can never trigger the initGit side effect and leave a repo on disk.
     let wipLimit: number | undefined;
     if (body.wipLimit !== undefined) {
       if (!isPositiveInt(body.wipLimit)) {
@@ -246,6 +259,31 @@ export function registerProjectsRoutes(app: FastifyInstance) {
       }
       defaultValidationCommand = body.defaultValidationCommand;
     }
+
+    // ── git work-tree gate (v2 item #10: optional git init on attach) ──────────────
+    // Three outcomes for a non-work-tree, kept distinct:
+    //   • missing dir / not a directory → BARE { error } 400 (no init affordance possible).
+    //   • exists, initGit !== true      → { error, code:'not_a_git_repo' } 400 so the UI can offer init.
+    //   • exists, initGit === true      → run initRepo then proceed; an init failure → 500.
+    if (!(await isGitWorkTree(rootDir))) {
+      if (!(await isDirectory(rootDir))) {
+        reply.code(400);
+        return { error: 'rootDir must be an existing directory' };
+      }
+      if (body.initGit !== true) {
+        reply.code(400);
+        return { error: 'rootDir must be an existing git repository', code: 'not_a_git_repo' };
+      }
+      const init = await initRepo(rootDir, defaultBranch ?? 'main');
+      if (!init.ok) {
+        reply.code(500);
+        return { error: `failed to initialize git repository: ${init.error ?? 'unknown error'}` };
+      }
+    }
+
+    // If no branch was given, DETECT the repo's actual current branch (main vs master vs anything)
+    // instead of assuming 'main'. Runs AFTER the gate so it reads the just-init'd repo.
+    if (defaultBranch === undefined) defaultBranch = await detectDefaultBranch(rootDir);
 
     const createReq: CreateProjectRequest = {
       name,

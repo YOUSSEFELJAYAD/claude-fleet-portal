@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -122,6 +122,122 @@ describe('W0 create — rootDir validation (git + absolute)', () => {
       payload: { name: '   ', rootDir: dir },
     });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// v2 #10: non-git projects — optional `git init` on attach. A plain dir without
+// initGit → 400 with code 'not_a_git_repo' (so the UI can offer init); WITH
+// initGit:true → the dir is initialized (init commit + .gitignore worktree rule +
+// requested branch) and the project is created (200, indistinguishable from an
+// attached repo). A missing/nonexistent dir → still a BARE 400 (no init). Uses
+// execFileSync git for on-disk ground truth, mirroring the makeGitRepo harness.
+// ────────────────────────────────────────────────────────────────────────────
+describe('v2 #10 — non-git attach with optional git init', () => {
+  const git = (dir: string, args: string[]) =>
+    execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+
+  it("returns 400 with code 'not_a_git_repo' for a plain dir without initGit", async () => {
+    const dir = makeNonGitDir();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'plain-no-init', rootDir: dir }, // no initGit
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('not_a_git_repo');
+  });
+
+  it('initGit:true on a plain dir → inits the repo (commit + .gitignore + branch) and creates the project (200)', async () => {
+    const dir = makeNonGitDir();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      // Distinctive branch so a coincidental 'main' default can't give a false pass.
+      payload: { name: 'init-trunk', rootDir: dir, initGit: true, defaultBranch: 'trunk' },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.id).toBeTruthy();
+    expect(body.rootDir).toBe(dir);
+    expect(body.defaultBranch).toBe('trunk'); // the project row carries the init branch
+
+    // On-disk ground truth: a real work tree, an initial commit, the seeded ignore rule,
+    // and HEAD on the requested branch.
+    expect(existsSync(join(dir, '.git'))).toBe(true);
+    expect(git(dir, ['rev-parse', '--is-inside-work-tree'])).toBe('true');
+    expect(Number(git(dir, ['rev-list', '--count', 'HEAD']))).toBeGreaterThanOrEqual(1);
+    expect(git(dir, ['symbolic-ref', '--short', 'HEAD'])).toBe('trunk');
+    expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toContain('.claude/worktrees/');
+  });
+
+  it("initGit:true WITHOUT an explicit branch → repo on 'main' and detectDefaultBranch returns 'main'", async () => {
+    const dir = makeNonGitDir();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'init-default', rootDir: dir, initGit: true }, // no defaultBranch
+    });
+    expect(res.statusCode).toBe(200);
+    // Detection runs AFTER init on the freshly-created repo → reads the init branch ('main').
+    expect(res.json().defaultBranch).toBe('main');
+    expect(git(dir, ['symbolic-ref', '--short', 'HEAD'])).toBe('main');
+  });
+
+  it('an invalid optional field (wipLimit:0) with initGit:true → 400 and NO repo on disk', async () => {
+    // Cheap-field validation must run BEFORE the init side effect, so a bad request can never
+    // leave a git repo behind on the user's directory.
+    const dir = makeNonGitDir();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'bad-opt-init', rootDir: dir, initGit: true, wipLimit: 0 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(existsSync(join(dir, '.git'))).toBe(false); // no side effect on an invalid request
+  });
+
+  it('initGit:true on a NON-EMPTY dir → initial commit tracks existing files and the work tree is CLEAN', async () => {
+    // The realistic attach case (the UI placeholder is `~/code/acme`): a dir that already has
+    // source files. The initial commit MUST include them — staging only .gitignore would leave
+    // them untracked, so a PM worktree would branch from an empty tree AND the untracked files
+    // would keep main perpetually dirty → mergeBranch (clean-check) would refuse every merge.
+    const dir = makeNonGitDir();
+    writeFileSync(join(dir, 'app.py'), 'print("hi")\n');
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src', 'util.py'), 'x = 1\n');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'init-nonempty', rootDir: dir, initGit: true },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const tracked = git(dir, ['ls-files']).split('\n').filter(Boolean);
+    expect(tracked).toContain('app.py');
+    expect(tracked).toContain('src/util.py');
+    expect(tracked).toContain('.gitignore');
+    // CLEAN work tree (nothing untracked/uncommitted) → mergeBranch's clean assertion will pass.
+    expect(git(dir, ['status', '--porcelain'])).toBe('');
+  });
+
+  it('a nonexistent dir with initGit:true → still a BARE 400 (no code, no init)', async () => {
+    const missing = join(tmpdir(), `fleet-missing-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'missing-init', rootDir: missing, initGit: true },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBeUndefined(); // missing-dir stays bare; not the not_a_git_repo path
+    expect(existsSync(missing)).toBe(false); // and no repo was created on disk
   });
 });
 

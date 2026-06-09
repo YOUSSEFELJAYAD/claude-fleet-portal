@@ -14,12 +14,18 @@ async function j<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!r.ok) {
     let msg = r.statusText;
+    let code: string | undefined;
     try {
-      msg = (await r.json()).error ?? msg;
+      const body = await r.json();
+      msg = body.error ?? msg;
+      code = body.code; // e.g. 'not_a_git_repo' so callers can offer git-init (v2 #10)
     } catch {
       /* ignore */
     }
-    throw new Error(msg);
+    const e = new Error(msg) as Error & { code?: string; status?: number };
+    e.code = code;
+    e.status = r.status;
+    throw e;
   }
   // DELETE may return empty body
   if (r.status === 204) return undefined as unknown as T;
@@ -61,12 +67,25 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
     }
     setBusy(true);
     setErr(null);
+    const payload: CreateProjectRequest = {
+      name: name.trim(),
+      rootDir: rootDir.trim(),
+      defaultBranch: defaultBranch.trim() || 'main',
+    };
     try {
-      await projectsApi.create({
-        name: name.trim(),
-        rootDir: rootDir.trim(),
-        defaultBranch: defaultBranch.trim() || 'main',
-      });
+      try {
+        await projectsApi.create(payload);
+      } catch (e: any) {
+        // The dir exists but isn't a git repo — offer to initialize it and re-submit (v2 #10).
+        if (
+          e?.code === 'not_a_git_repo' &&
+          confirm(`"${payload.rootDir}" is not a git repository.\n\nInitialize it as a git repo (git init on branch "${payload.defaultBranch}") and attach it?`)
+        ) {
+          await projectsApi.create({ ...payload, initGit: true });
+        } else {
+          throw e;
+        }
+      }
       setName('');
       setRootDir('');
       setDefaultBranch('main');

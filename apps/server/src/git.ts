@@ -189,6 +189,78 @@ export async function ensureWorktreeIgnored(root: string): Promise<void> {
   }
 }
 
+// ── git init on attach (SPEC v2 §4 item #10) ──────────────────────────────────
+
+export interface InitRepoResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Initialize `dir` as a git work tree so a non-git directory can be attached as a project
+ * (v2 item #10): `git init -b <branch>`, seed a minimal `.gitignore` (just the agent-worktrees
+ * rule, so the merge engine's pathspec-scoped staging can never reach a sibling worktree), and
+ * make ONE initial commit so the repo has a base for worktrees/merges (a repo with no commits
+ * has no HEAD to branch worktrees from).
+ *
+ * Commit identity is FLEET_PM_AUTHOR via `-c user.name/email` (NOT ambient) — mirrors
+ * ensureWorktreeIgnored / ensureCommitted, and is required because a brand-new environment may
+ * have no configured git identity (the test harness skips commits for exactly this reason). We do
+ * NOT delegate to ensureWorktreeIgnored: that helper is best-effort and swallows commit failures,
+ * but item #10 requires an init failure to surface (→ 500) and the initial commit to be guaranteed.
+ *
+ * Idempotent / safe: if `dir` is ALREADY a work tree this is a no-op (no re-init, no clobbering an
+ * existing .gitignore, no extra commit). Returns `{ ok, error? }` like mergeBranch; the caller maps
+ * `!ok` to a 500.
+ */
+export async function initRepo(dir: string, branch: string): Promise<InitRepoResult> {
+  // Belt-and-braces idempotency: never touch a dir that is already a work tree.
+  const probe = await gitExec(dir, ['-C', dir, 'rev-parse', '--is-inside-work-tree']);
+  if (probe.ok && probe.stdout.trim() === 'true') return { ok: true };
+
+  const init = await gitExec(dir, ['-C', dir, 'init', '-b', branch]);
+  if (!init.ok) return { ok: false, error: gitErr(init) };
+
+  // Seed a minimal .gitignore (only the worktrees rule). Don't clobber an existing file.
+  const gi = path.join(dir, '.gitignore');
+  try {
+    let exists = true;
+    try {
+      await fs.access(gi);
+    } catch {
+      exists = false;
+    }
+    if (!exists) await fs.writeFile(gi, '.claude/worktrees/\n', 'utf8');
+  } catch (e: any) {
+    return { ok: false, error: `init: could not write .gitignore: ${e?.message ?? e}` };
+  }
+
+  // Stage ALL existing contents (not just .gitignore) so attaching a NON-empty dir produces an
+  // initial commit containing the user's files. Staging only .gitignore would leave source files
+  // untracked → a PM worktree would branch from an effectively empty tree AND the untracked files
+  // would keep the main worktree perpetually dirty, so mergeBranch would refuse every merge.
+  // The .gitignore (written above) is already in place, so `add -A` correctly excludes .claude/worktrees/.
+  const add = await gitExec(dir, ['-C', dir, 'add', '-A']);
+  if (!add.ok) return { ok: false, error: gitErr(add) };
+
+  const commit = await gitExec(dir, [
+    '-C',
+    dir,
+    '-c',
+    `user.name=${FLEET_PM_AUTHOR.name}`,
+    '-c',
+    `user.email=${FLEET_PM_AUTHOR.email}`,
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-m',
+    'chore: initialize repository (fleet attach)',
+  ]);
+  if (!commit.ok) return { ok: false, error: gitErr(commit) };
+
+  return { ok: true };
+}
+
 // ── read helpers (READ-ONLY) ──────────────────────────────────────────────────
 
 export interface LsTreeEntry {
