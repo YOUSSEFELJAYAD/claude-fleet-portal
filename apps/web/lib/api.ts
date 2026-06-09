@@ -127,6 +127,7 @@ export interface FleetStatus {
   spendTodayUsd: number;
   spendCeilingUsd: number | null;
   spendExceeded: boolean;
+  deadlocked: boolean; // pool is 0 while ≥1 project demands it → every Ready card stalls silently
   projects: FleetProjectStatus[];
 }
 

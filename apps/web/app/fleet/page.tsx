@@ -89,6 +89,18 @@ export default function FleetSchedulerPage() {
         />
       </Panel>
 
+      {status?.deadlocked && (
+        <div
+          className="font-mono text-[11px] mb-5 px-4 py-3 rounded border leading-relaxed"
+          style={{ color: '#ff5d5d', borderColor: '#ff5d5d55', background: '#ff5d5d12' }}
+        >
+          <span className="font-display tracking-wide">PM POOL DEADLOCKED.</span> The pool is 0
+          (reserve {status.config.reserveSlotsForNonPm} ≥ maxConcurrentRuns {status.maxConcurrentRuns})
+          while projects have Ready cards — nothing will launch. Lower the reserve below, or raise
+          global maxConcurrentRuns in settings.
+        </div>
+      )}
+
       {statusErr && (
         <div className="font-mono text-[11px] text-sig-failed mb-4" style={{ color: '#ff5d5d' }}>
           {statusErr}

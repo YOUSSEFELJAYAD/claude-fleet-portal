@@ -38,11 +38,15 @@ import { projectsRepo } from './projects.js';
 import { kanbanRepo } from './kanban.js';
 
 // ── defaults ──────────────────────────────────────────────────────────────────
-/** v2 §4 #7 decisions: a couple of slots reserved for campaigns/non-PM work by default; no fleet
- *  spend ceiling unless one is configured (null = no fleet-wide cap). The PM-pool is then
- *  maxConcurrentRuns - reserveSlotsForNonPm. */
+/** v2 §4 #7 defaults. reserveSlotsForNonPm defaults to 0 (NOT 2): the reserve is a soft hold-back of
+ *  PM slots so campaign workers (#4) aren't fully crowded out — but campaigns are an opt-in advanced
+ *  feature, so a non-zero default would silently tax single-project PM throughput (e.g. 8→6) for the
+ *  common no-campaign case AND widen the deadlock surface (a non-zero default reserve colliding with a
+ *  lowered global maxConcurrentRuns). Default 0 = full PM pool; users running campaigns raise it. No
+ *  fleet spend ceiling unless configured (null = no fleet-wide cap). PM-pool = maxConcurrentRuns -
+ *  reserveSlotsForNonPm. */
 export const DEFAULT_FLEET_CONFIG: FleetConfig = {
-  reserveSlotsForNonPm: 2,
+  reserveSlotsForNonPm: 0,
   fleetSpendCeilingUsd: null,
 };
 
@@ -355,6 +359,14 @@ export interface FleetStatus {
   spendTodayUsd: number;
   spendCeilingUsd: number | null;
   spendExceeded: boolean;
+  /**
+   * Loud H9 signal: the PM pool is 0 (reserve >= maxConcurrentRuns) WHILE ≥1 project is demanding it,
+   * so every Ready card stalls with no admission and no other surfaced error. validateFleetConfig
+   * rejects this for a /fleet PUT, but it is still reachable by lowering the GLOBAL maxConcurrentRuns
+   * (via /api/config) at/below the fleet reserve — that path never touches fleet config. Surfacing it
+   * here lets the /fleet page show the operator WHY nothing launches instead of failing silently.
+   */
+  deadlocked: boolean;
   projects: FleetProjectStatus[];
 }
 
@@ -403,6 +415,8 @@ export function fleetStatus(): FleetStatus {
     spendTodayUsd: spend,
     spendCeilingUsd: cfg.fleetSpendCeilingUsd,
     spendExceeded: cfg.fleetSpendCeilingUsd != null && spend >= cfg.fleetSpendCeilingUsd,
+    // pool 0 + at least one demanding project = silent stall; make it explicit for the UI.
+    deadlocked: pool <= 0 && rows.length > 0,
     projects,
   };
 }

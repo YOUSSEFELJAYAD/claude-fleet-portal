@@ -380,13 +380,37 @@ describe('reserveSlotsForNonPm — slots withheld from the PM pool', () => {
     expect(st.projects.find((p: any) => p.projectId === a.id)!.quota).toBe(4);
   });
 
-  it('denies admission once the reserve consumes the whole concurrency cap (pool 0)', () => {
+  it('denies admission once the reserve consumes the whole concurrency cap (pool 0) and flags deadlocked', () => {
+    // This config is written straight via fleetRepo.set, BYPASSING validateFleetConfig (which would
+    // now reject reserve >= cap). It models the still-reachable path: lowering global maxConcurrentRuns
+    // at/below an existing reserve. tryAdmit floors the pool at 0 and fleetStatus surfaces deadlocked.
     registry.config.maxConcurrentRuns = 2;
     fleet.fleetRepo.set({ reserveSlotsForNonPm: 2, fleetSpendCeilingUsd: null });
     const a = makeProject({ priority: 0 });
-    makeReadyCard(a.id);
-    expect(fleet.fleetStatus().pool).toBe(0);
+    makeReadyCard(a.id); // a demands the pool
+    const st = fleet.fleetStatus();
+    expect(st.pool).toBe(0);
+    expect(st.deadlocked).toBe(true); // loud H9 signal: pool 0 WHILE a project demands it
     expect(fleet.tryAdmit(a.id)).toBe(false);
+  });
+
+  it('does NOT flag deadlocked when the pool is 0 but no project is demanding', () => {
+    registry.config.maxConcurrentRuns = 2;
+    fleet.fleetRepo.set({ reserveSlotsForNonPm: 2, fleetSpendCeilingUsd: null });
+    makeProject({ priority: 0 }); // exists but NO Ready card / no live run → not demanding
+    const st = fleet.fleetStatus();
+    expect(st.pool).toBe(0);
+    expect(st.deadlocked).toBe(false); // nothing is waiting, so a 0 pool harms nothing
+  });
+
+  it('does NOT flag deadlocked when the pool is healthy', () => {
+    registry.config.maxConcurrentRuns = 6;
+    fleet.fleetRepo.set({ reserveSlotsForNonPm: 0, fleetSpendCeilingUsd: null });
+    const a = makeProject({ priority: 0 });
+    makeReadyCard(a.id);
+    const st = fleet.fleetStatus();
+    expect(st.pool).toBe(6);
+    expect(st.deadlocked).toBe(false);
   });
 });
 
