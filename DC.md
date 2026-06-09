@@ -414,7 +414,19 @@ relaxes only for single build/fix); credential scrub on git/gh stderr; `+resolvi
 - **#7 fleet scheduler** (`5ef98b0`): `tryAdmit` admission gate in launchBuild (fair-share by priority,
   reserve slots, daily ceiling, no preemption) + `/fleet` page. Mutation-verified wiring test.
 
-**Verified:** **309 server tests** (21 files), `pnpm -r typecheck` clean (3 pkgs), `next build` clean
+**Post-review fix — fleet-reserve deadlock guard** (`bbede02`, advisor-flagged H9 class): the `/fleet`
+form let a user set `reserveSlotsForNonPm >= maxConcurrentRuns`, driving the PM pool to 0 so EVERY card
+stalls in Ready with no surfaced error. `validateFleetConfig` now reads `registry.config` and rejects the
+cross-config invariant at PUT time; `tryAdmit` keeps its `max(0,…)` floor so a config written straight via
+`fleetRepo.set` (bypassing validation) degrades to "admit nothing" rather than going negative. Two
+discriminating tests added (== cap and > cap reject; cap-1 boundary accept). Note: the guard only fires
+when `maxConcurrentRuns ≤ 100`, since reserve is independently clamped to ≤ 100 (the live dev config runs
+`maxConcurrentRuns: 300`, so the clamp is hit first there). Curl-smoked live against `dev:mock`: fleet
+config GET/PUT (+reject), fleet status (full `FleetStatus` shape), `git/health` (`GitHealth` shape), files
+tree, `files/edit` (`editable` correctly gated by `editingEnabled`), plans, git/status — all contracts
+green (the web pages redeclare `FleetStatus`/`GitHealth` locally, so these aren't typecheck-covered).
+
+**Verified:** **311 server tests** (21 files), `pnpm -r typecheck` clean (3 pkgs), `next build` clean
 (**16 routes**, /fleet added). **Deferred paid E2Es** (per decision §10.3, confirm at run time): #2 PR-open
 on a throwaway repo, #4 a small real campaign, #9 a real conflict resolution. On branch
-`feat/agent-pm-kanban`, **16 commits ahead of main, NOT pushed** (no remote; user pushes only when asked).
+`feat/agent-pm-kanban`, **19 commits ahead of main, NOT pushed** (no remote; user pushes only when asked).
