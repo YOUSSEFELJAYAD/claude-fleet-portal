@@ -388,7 +388,33 @@ relaxes only for single build/fix); credential scrub on git/gh stderr; `+resolvi
   blocker; staging only `.gitignore` left source untracked → empty PM worktree + perpetual dirty main).
   Backward-compatible (no initGit → still 400 with `code:'not_a_git_repo'`).
 
-**Verified:** 198 server tests (181 v1 + 17 v2 wave-1), `pnpm -r typecheck` clean, `next build` clean
-(15 routes). **Pending:** Wave 2 (schema step + `validation.ts` extraction → #5 port-broker, #2 remote
-git, #1 file CRUD), Wave 3 (serial pm.ts: #4 campaign-per-card → #9 conflict-resolver → #7 fleet
-scheduler). On branch `feat/agent-pm-kanban`; NOT pushed.
+**Wave 2 — DONE (foundation + 3 items):**
+- **Foundation** (`eabf9e7`): all `projects`(+15)/`kanban_tasks`(+8)/`campaigns`(+2) migrations in per-module
+  ALTER loops (NOT db.ts — §3.1), `validation.ts` extraction (§3.2), `validateAndGate`/`withProjectLock`/
+  `disallowedToolsForProject` pm hooks, `scrubCredentials`, `+resolving` phase. Behavior-preserving.
+- **4 scaffold modules** (`8da3013`): fileedit/gh/portbroker/fleet authored in PARALLEL (disjoint new
+  files, unit-tested); two reviewer-caught majors fixed (fileedit CREATE-rollback unlink; fleet
+  no-starve trim).
+- **#5 port-broker** (`88ab089`): `validateCard` selector routes both validate sites (validateAndGate +
+  doMerge re-validate) through brokerValidate when a server-start command is set, else pure runValidation.
+- **#2 full remote git** (`d30c565`): doMerge PR-mode (fetch/FF-sync→push→gh pr create→park Review w/
+  pr_state; never auto-merges PR, never force-pushes); `disallowedToolsForProject` relaxes push ONLY for
+  single build/fix when pushEnabled; refreshPr; git/health route; re-approve guard; credential scrub.
+- **#1 file CRUD** (`529cf54`): fileedit routes registered, `pm.withProjectLock` alias; FileViewer edit
+  mode (create/update/delete, baseOid 409 guard) gated by `editingEnabled`.
+
+**Wave 3 — DONE (serial pm.ts chain):**
+- **#4 campaign-per-card** (`135b2db`): a `mode:'campaign'` card runs a campaign sub-DAG; gate fires on
+  campaign completion via `onCampaignTerminal`→`validateAndGate`; workers get the UNRELAXED deny-list
+  (discriminating security test); single-mode unchanged, no double-gate, engine reused. cancel kills the campaign.
+- **#9 conflict-resolution agent** (`47757df`): opt-in resolve run on a merge conflict → ALWAYS re-validate
+  → merge/abort; reconcile sweeps a mid-resolve worktree. Reviewer-caught correctness FIX: the ship step
+  re-integrates the CURRENT base + re-validates INSIDE the mutex (a disjoint advance during the lock-
+  released resolve run can't ship an unvalidated tree) — discriminating stale-base test added.
+- **#7 fleet scheduler** (`5ef98b0`): `tryAdmit` admission gate in launchBuild (fair-share by priority,
+  reserve slots, daily ceiling, no preemption) + `/fleet` page. Mutation-verified wiring test.
+
+**Verified:** **309 server tests** (21 files), `pnpm -r typecheck` clean (3 pkgs), `next build` clean
+(**16 routes**, /fleet added). **Deferred paid E2Es** (per decision §10.3, confirm at run time): #2 PR-open
+on a throwaway repo, #4 a small real campaign, #9 a real conflict resolution. On branch
+`feat/agent-pm-kanban`, **16 commits ahead of main, NOT pushed** (no remote; user pushes only when asked).
