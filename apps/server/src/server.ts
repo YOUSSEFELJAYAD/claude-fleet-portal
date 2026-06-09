@@ -28,6 +28,7 @@ import { registerKanbanRoutes, subscribeBoard } from './kanban.js';
 import { registerFileviewRoutes } from './fileview.js';
 import { registerFileeditRoutes } from './fileedit.js'; // v2 #1 — file CRUD + commit (opt-in per project)
 import { registerPlanboardRoutes, planboard } from './planboard.js'; // v2 #3 — objective → Ready cards
+import { registerFleetRoutes } from './fleet.js'; // v2 #7 — cross-project fleet scheduler (admission)
 import { pm } from './pm.js';
 
 /** H21 — a cwd query must be an absolute path with no traversal/null byte (or absent). */
@@ -133,6 +134,7 @@ export function buildServer() {
   registerFileviewRoutes(app);
   registerFileeditRoutes(app); // v2 #1 — opt-in file CRUD + commit (per-project editing_enabled gate)
   registerPlanboardRoutes(app); // v2 #3 — plan-board (objective → Ready cards)
+  registerFleetRoutes(app); // v2 #7 — fleet config + status (admission gate is in pm.launchBuild)
   planboard.init(); // subscribe onRunTerminal — partitioned (§3.7): acts only on its own planning runs
   pm.init(); // subscribe onRunTerminal + safety tick
   void pm.reconcile().catch(() => {}); // boot guardrail: reset cards whose run died (async: aborts mid-resolve worktrees)

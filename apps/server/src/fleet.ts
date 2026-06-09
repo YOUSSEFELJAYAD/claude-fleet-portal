@@ -153,6 +153,17 @@ function pmLiveCounts(): Map<string, number> {
   return m;
 }
 
+/** Map of projectId → cumulative spend (USD) across EVERY run scoped to it (PM + campaign, live +
+ *  terminal). Mirrors pm.ts's private projectSpend(): one pass over registry.listRuns() — surfaced
+ *  read-only on the /fleet status snapshot. */
+function projectSpendCounts(): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of registry.listRuns()) {
+    if (r.projectId != null) m.set(r.projectId, (m.get(r.projectId) ?? 0) + (r.costUsd || 0));
+  }
+  return m;
+}
+
 // ── fair-share apportionment ───────────────────────────────────────────────────
 interface DemandRow {
   project: Project;
@@ -316,6 +327,9 @@ export interface FleetProjectStatus {
   readyCards: number;
   quota: number; // fair-share quota under the current pool (0 when not demanding)
   demanding: boolean;
+  wipLimit: number; // the project's per-project WIP cap (pm.ts gate, surfaced read-only for the /fleet UI)
+  inProgress: number; // cards currently in the InProgress column (kanbanRepo.inProgressCount)
+  projectSpend: number; // cumulative USD across every run scoped to this project (pm.ts projectSpend)
 }
 
 export interface FleetStatus {
@@ -339,6 +353,7 @@ export function fleetStatus(): FleetStatus {
   const rows = demandingProjects(liveCounts);
   const quotas = computeQuotas(rows, pool);
   const demandById = new Map(rows.map((r) => [r.project.id, r]));
+  const spendByProject = projectSpendCounts();
 
   let pmLiveTotal = 0;
   for (const v of liveCounts.values()) pmLiveTotal += v;
@@ -359,6 +374,9 @@ export function fleetStatus(): FleetStatus {
       readyCards: ready,
       quota: quotas.get(p.id) ?? 0,
       demanding: !!d,
+      wipLimit: p.wipLimit,
+      inProgress: kanbanRepo.inProgressCount(p.id),
+      projectSpend: spendByProject.get(p.id) ?? 0,
     };
   });
 

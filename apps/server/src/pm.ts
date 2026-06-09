@@ -57,6 +57,7 @@ import {
   hasConflictMarkers,
 } from './git.js';
 import { campaigns } from './campaigns.js';
+import { tryAdmit } from './fleet.js';
 import { fetchAndSyncDefault, pushBranch, prCreate, prView } from './gh.js';
 import { runValidation, VALIDATION_MAX_BUFFER } from './validation.js';
 import { brokerValidate, type BrokerConfig } from './portbroker.js';
@@ -403,6 +404,11 @@ class PmEngine {
     // Re-read to avoid racing a concurrent move.
     const fresh = kanbanRepo.getTask(card.id);
     if (!fresh || fresh.column !== 'Ready') return 'skip';
+
+    // v2 #7 — fleet admission gate: when total demand exceeds the global pool, fair-share by project
+    // priority. Denied → leave the card Ready ('capped', like a 429) and retry on the next tick. Covers
+    // BOTH single and campaign launches (a campaign card consumes fleet capacity too).
+    if (!tryAdmit(project.id)) return 'capped';
 
     // v2 #4 — a campaign-mode card delegates to a campaign sub-DAG instead of one build run.
     if (fresh.mode === 'campaign') return this.launchCampaignBuild(fresh, project);

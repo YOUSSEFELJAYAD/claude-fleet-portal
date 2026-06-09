@@ -10,6 +10,7 @@ import { LaunchModal } from './LaunchModal';
 const NAV = [
   { href: '/', label: 'Fleet', glyph: '◉' },
   { href: '/projects', label: 'Projects', glyph: '◫' },
+  { href: '/fleet', label: 'Scheduler', glyph: '⚖' },
   { href: '/orchestrate', label: 'Orchestrate', glyph: '⛓' },
   { href: '/templates', label: 'Templates', glyph: '⊞' },
   { href: '/schedules', label: 'Schedules', glyph: '⏱' },

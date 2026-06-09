@@ -15,6 +15,7 @@ import type {
   PlanDraft,
   PlanTask,
   KanbanColumn,
+  FleetConfig,
 } from '@fleet/shared';
 
 export const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
@@ -99,6 +100,36 @@ export type CommitFileResult =
   | { ok: true; sha: string; author: string | { name: string; email: string } }
   | { ok: false; error: string };
 
+// ── v2 #7: fleet cross-project scheduler status (mirrors server src/fleet.ts) ──
+/** Per-project allocation row in the fleet status snapshot. Mirrors FleetProjectStatus in
+ *  apps/server/src/fleet.ts EXACTLY (the server type isn't exported from @fleet/shared). */
+export interface FleetProjectStatus {
+  projectId: string;
+  name: string;
+  priority: number;
+  paused: boolean;
+  weight: number; // priority + 1 (0 when not demanding)
+  liveRuns: number; // live PM runs
+  readyCards: number;
+  quota: number; // fair-share quota under the current pool (0 when not demanding)
+  demanding: boolean;
+  wipLimit: number; // per-project WIP cap (read-only here)
+  inProgress: number; // cards in the InProgress column
+  projectSpend: number; // cumulative USD across runs scoped to this project
+}
+
+/** Live fleet allocation snapshot (GET /api/fleet/status). Mirrors FleetStatus in src/fleet.ts. */
+export interface FleetStatus {
+  config: FleetConfig;
+  maxConcurrentRuns: number;
+  pool: number; // PM slots = max(0, maxConcurrentRuns - reserveSlotsForNonPm)
+  pmLiveTotal: number;
+  spendTodayUsd: number;
+  spendCeilingUsd: number | null;
+  spendExceeded: boolean;
+  projects: FleetProjectStatus[];
+}
+
 export const api = {
   launch: (b: LaunchRequest) => j<Run>('/api/agents', { method: 'POST', body: JSON.stringify(b) }),
   listRuns: (q?: { status?: string; effort?: string; q?: string }) => j<Run[]>('/api/agents' + qs(q)),
@@ -119,6 +150,13 @@ export const api = {
   config: () => j<PortalConfig>('/api/config'),
   setConfig: (c: PortalConfig) => j<PortalConfig>('/api/config', { method: 'PUT', body: JSON.stringify(c) }),
   spend: () => j<SpendSummary>('/api/spend'),
+
+  // Fleet cross-project scheduler (v2 #7).
+  fleetStatus: () => j<FleetStatus>('/api/fleet/status'),
+  fleetConfig: () => j<FleetConfig>('/api/fleet/config'),
+  setFleetConfig: (c: FleetConfig) =>
+    j<FleetConfig>('/api/fleet/config', { method: 'PUT', body: JSON.stringify(c) }),
+
   teams: () => j<TeamSummary[]>('/api/teams'),
   team: (id: string) => j<TeamView>(`/api/teams/${id}`),
 
