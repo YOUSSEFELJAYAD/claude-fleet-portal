@@ -474,3 +474,28 @@ path) stays covered by the DETERMINISTIC suite (`pm #9 re-validation-fails → p
 these runs.
 
 On branch `feat/agent-pm-kanban` (merged into local **main**), **20 commits**, NOT pushed (no remote).
+
+**Post-E2E follow-ups (2026-06-09, on main) — the three §10 caveats that were actually actionable:**
+- **Residual deadlock path SEALED (`d029ea2`).** `PUT /api/config` now cross-checks the post-clamp
+  cap against the live fleet reserve via `fleet.assertCapAboveReserve` before applying — the check
+  sits at the ROUTE layer (server.ts imports both sides already), so config.ts still never imports
+  fleet state and the rejected circular-import design stays rejected. TDD: 3 route tests (reject
+  `==`, reject `<`, accept `>`; a rejected PUT provably leaves config unchanged). Live-smoked on
+  dev:mock: reserve→4, `PUT {maxConcurrentRuns:4}` → 400 naming `reserveSlotsForNonPm` + remedy,
+  live config untouched (still the stale 300 — deliberately NOT re-PUT, which would re-clamp it),
+  reserve restored→0. Remaining exposure is code-level only (direct `repo.setConfig`/`fleetRepo.set`
+  writes, no HTTP path; boot also loads the stored config unvalidated — pre-existing H9 scope) —
+  both still surfaced loud by `fleetStatus.deadlocked`.
+- **`FleetStatus`/`FleetProjectStatus`/`GitHealth` moved to `@fleet/shared` (`98866a9`).** The web
+  imported hand-mirrored copies (lib/api.ts, projects page) — the §10 "not typecheck-covered"
+  caveat. Now: one declaration in shared; fleet.ts imports it; projects.ts binds the git/health
+  response to `GitHealth`; web re-exports from lib/api.ts. Contract drift now fails `tsc` in all
+  3 packages.
+- **`next build` re-run CLEAN — 16/16 routes** (the `/fleet` banner + both changes above included),
+  closing the "build not re-run" caveat. dev:mock stopped for the build (shared `.next`), restarted
+  detached after, both ports verified healthy.
+
+State: **316 server tests** (21 files, +3 guard tests), `pnpm -r typecheck` clean, `next build` clean.
+Not actioned (unchanged scope): validation-with-teeth real-claude E2E (deterministic suite covers
+gating; paid run only on request) and the throwaway repo `yeljayad/fleet-pm-e2e-throwaway` (deletion
+offered, awaiting user say-so).
