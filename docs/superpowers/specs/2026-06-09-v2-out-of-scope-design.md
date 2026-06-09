@@ -76,10 +76,16 @@ A `#3` planning run carries `campaignId:null` and has no card; it must no-op thr
 
 ## 4. The nine items
 
-### #1 — In-browser edit + commit surface
-- **Goal:** edit a file in `FileViewer` and commit it to the project's MAIN working tree as the
-  ambient human git identity (not `fleet-pm`), gated by a per-project `editing_enabled` toggle
-  (default OFF), reusing `fileview.ts`'s `safePath` guard, coexisting safely with the PM.
+### #1 — In-browser file CRUD + commit surface
+- **Goal:** create, update, AND delete files in the project's MAIN working tree from the browser and
+  commit the change as the ambient human git identity (not `fleet-pm`), gated by a per-project
+  `editing_enabled` toggle (default OFF), reusing `fileview.ts`'s `safePath` guard, coexisting safely
+  with the PM. (Decision: full add/update/remove, not edit-existing-only.)
+- **CRUD shape:** the atomic commit route takes `{ path, content?, delete?, message, baseOid? }`:
+  `delete:true` → `git rm -- <path>` + commit; otherwise write `content` (creating parent dirs +
+  the file if it doesn't exist → covers "add") → `git add -- <path>` + commit. New-file creation and
+  deletion run under the SAME `safePath` + `.claude/worktrees/**` reject + `pm.withProjectLock` guards.
+  A `baseOid` of `null`/absent is allowed for a brand-new path; a delete requires the path to exist.
 - **Keystones:** (a) New `apps/server/src/fileedit.ts` (`registerFileeditRoutes`) — keeps
   `fileview.ts`'s "read-only" contract intact. (b) Reuse the PM's lock: add a thin public
   `pm.withProjectLock(projectId, fn)` delegating to the private `withMergeLock`, and run the whole
@@ -279,17 +285,12 @@ Each wave ends green (typecheck + tests) and is committed before the next starts
   #4 a small real campaign-per-card; #9 a real conflict resolve. Each ~$0.20–0.50.
 - Gate per wave: `pnpm -r typecheck` green + full server suite green + `next build` clean.
 
-## 10. Decisions needing your sign-off
+## 10. Decisions — RESOLVED (user sign-off 2026-06-09)
 
-Almost everything has a baked-in default above. The few that materially change behavior:
-
-1. **PR auto-merge (#2):** default = portal opens the PR, a human merges it on GitHub (we do NOT
-   `gh pr merge --auto`). Keep, or auto-merge PRs when `auto_merge=1`?
-2. **Edit surface — new files (#1):** v1 edits EXISTING files only. Allow creating new files too?
-   (Default: existing-only in v1.)
-3. **Real-claude E2E budget (#2/#4/#9):** OK to spend ~$1–1.50 total on the three paid E2Es, or
-   keep everything deterministic and skip the paid runs?
-4. **Fleet scheduler scope (#7):** admission-only, daily spend window, priority-only weight, no
-   preemption — confirm that's the behavior you want.
-
-Everything else follows the baked-in defaults; tell me any you want changed.
+1. **PR auto-merge (#2):** ✅ portal opens the PR, a human merges it on GitHub (no `gh pr merge --auto`).
+2. **Edit surface (#1):** ✅ **full file CRUD** — create / update / delete (not edit-existing-only). See §4 #1.
+3. **Real-claude E2E budget (#2/#4/#9):** **deferred → deterministic-first.** All items ship with
+   no-cost tests; each ~$0.20–0.50 paid E2E (#2 PR, #4 campaign, #9 resolve) is confirmed with the
+   user at the moment it would run. The #2 PR E2E MUST target a throwaway repo via an explicit repo
+   arg — never the user's real `origin`.
+4. **Fleet scheduler (#7):** ✅ admission-only, daily spend window, priority-only weight, no preemption.
