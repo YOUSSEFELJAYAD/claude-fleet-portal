@@ -444,7 +444,33 @@ locally, so these aren't typecheck-covered).
 **Verified:** **313 server tests** (21 files), `pnpm -r typecheck` clean (3 pkgs). `next build` last clean
 at **16 routes**; the small additive `/fleet` banner (one type field + one conditional element, no new
 imports/routes) is typecheck-clean but `next build` was NOT re-run (would tear down the live dev server).
-All verification is **deterministic — NOT real-claude.** **Deferred paid E2Es** (per decision §10.3,
-confirm at run time, throwaway targets only): #2 PR-open on a throwaway repo, #4 a small real campaign,
-#9 a real conflict resolution. On branch `feat/agent-pm-kanban`, **20 commits ahead of main, NOT pushed**
-(no remote; user pushes only when asked).
+Merged to local **main** (no remote; nothing pushed).
+
+**Real-claude E2Es — ALL THREE deferred items now PASSED (2026-06-09, user-authorized, $1.73 real Opus,
+on an ISOLATED server: `CLAUDE_BIN=claude FLEET_DATA_DIR=/tmp/fleet-e2e-data FLEET_SERVER_PORT=4329`,
+non-watch `tsx`, live dev:mock untouched):**
+- **#2 PR-open ($0.19):** throwaway PRIVATE repo `yeljayad/fleet-pm-e2e-throwaway` (free push/PR auth
+  pre-flight FIRST, then paid build). defaultBranch `main` (matched the repo's real default — dodged the
+  v1 main-vs-master bug). Result: `hello.txt` built → branch pushed → base FF-synced → **PR #2 OPEN** →
+  card parked Review WITH pr_url. All 4 pass conditions met.
+- **#4 campaign-per-card ($1.04):** card `mode:'campaign'` → delegated to a campaign (campaignId set, NOT
+  a single run) → 3 worker runs all terminal → card gated on the CAMPAIGN terminal → local `--no-ff`
+  merge → **Done** (`alpha.txt`/`beta.txt` on main, mergeSha set). COST FINDING: per-project
+  `budgetCeilingUsd` is ADMISSION-ONLY — it does NOT preempt an in-flight campaign (spent $1.04 > the
+  $0.75 ceiling); the tiny objective was the real bound. (By design — admission-only, no preemption.)
+- **#9 conflict resolution ($0.50 = $0.27 build + $0.23 resolve):** `resolveConflicts:true`,
+  `autoMerge:false` so the card parked in Review for a GUARANTEED conflict injection (advisor's adaptive
+  method: read the branch's actual committed file, THEN write a conflicting change to those exact lines on
+  main; `merge-tree` pre-confirmed the conflict). Approve → ship → integrate hit the conflict →
+  `executionPhase:'resolving'` (resolve agent ran) → re-integrate → **clean union merge, ZERO conflict
+  markers** → **Done** (mergeSha `7f24dc1`).
+
+**IMPORTANT verification caveat:** all three E2Es ran with `defaultValidationCommand: null`, so every
+validate / re-validate gate was a PASS-THROUGH (no-op). These E2Es prove the real-claude **mechanisms** —
+build→push→PR (#2), campaign delegation→gate→merge (#4), conflict→resolve-agent→re-integrate→merge (#9).
+They do NOT exercise validation-with-teeth. Specifically #9 exercised the re-INTEGRATE-inside-mutex half
+(the stale-base fix) but NOT the re-VALIDATE half; gating-with-teeth (incl. the #9 re-validation-fails→park
+path) stays covered by the DETERMINISTIC suite (`pm #9 re-validation-fails → parks Review/failed`), not by
+these runs.
+
+On branch `feat/agent-pm-kanban` (merged into local **main**), **20 commits**, NOT pushed (no remote).
