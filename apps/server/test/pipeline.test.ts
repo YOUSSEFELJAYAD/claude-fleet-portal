@@ -67,6 +67,18 @@ describe('parser', () => {
     expect(p.text).toBe('po');
   });
 
+  it('H22: parses system/api_retry and a SendUserMessage tool_use into distinct events', () => {
+    const [retry] = normalize({ type: 'system', subtype: 'api_retry', parent_tool_use_id: null, attempt: 2, max_retries: 5, retry_delay_ms: 1000, category: 'overloaded' });
+    expect(retry.type).toBe('api_retry');
+    const [msg] = normalize({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { id: 'm', content: [{ type: 'tool_use', name: 'SendUserMessage', id: 't', input: { message: 'Need your input' } }], usage: {} },
+    });
+    expect(msg.type).toBe('agent_message');
+    expect(msg.text).toBe('Need your input');
+  });
+
   it('estimateCost is conservative and monotonic in tokens', () => {
     const rates = { inputPerM: 5, outputPerM: 25 };
     const a = estimateCost({ inputTokens: 1000, outputTokens: 100, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 }, rates);
@@ -98,6 +110,15 @@ describe('tree builder — REAL subagent trace (fixtures/real-subagent.jsonl)', 
   it('reconciles run cost to the authoritative result.total_cost_usd', () => {
     expect(tree.authoritativeCost).toBeCloseTo(0.3233155, 6);
   });
+
+  it('aggregates final tokens from result.modelUsage (not the orchestrator-only result.usage) — H7', () => {
+    // result.usage is the orchestrator's in-context line (64088 ctx / 422 out); the run
+    // total across all agents lives in result.modelUsage (92063 ctx / 559 out). With
+    // subagents the displayed total must use modelUsage or it undercounts by ~28k.
+    const r = tree.rollups();
+    expect(r.tokensIn).toBe(20259 + 41866 + 29938); // 92063
+    expect(r.tokensOut).toBe(559);
+  });
 });
 
 describe('processManager.buildArgs — interactive stdin-prompt fix', () => {
@@ -112,6 +133,25 @@ describe('processManager.buildArgs — interactive stdin-prompt fix', () => {
     const addDirIdx = args.indexOf('--add-dir');
     if (addDirIdx >= 0) expect(args[addDirIdx + 2]).not.toBe('do the thing');
     expect(args).toContain('--session-id');
+  });
+
+  it('H10: worktree + variadic --disallowedTools + --agents keep the prompt safely last after `--`', () => {
+    const args = buildArgs(
+      { ...base, cwd: '/some/dir', worktree: 'wt1', disallowedTools: ['Bash(git push *)', 'Write'], agentsJson: { reviewer: { prompt: 'x' } } },
+      'sid-h10',
+      false,
+    );
+    // the F-11 invariant must still hold: prompt is the final token, right after `--`
+    expect(args[args.length - 1]).toBe('do the thing');
+    expect(args[args.length - 2]).toBe('--');
+    // the new flags are present, BEFORE the separator
+    expect(args).toContain('--worktree');
+    expect(args[args.indexOf('--worktree') + 1]).toBe('wt1');
+    expect(args).toContain('--disallowedTools');
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('Bash(git push *),Write'); // single comma-joined value
+    expect(args).toContain('--agents');
+    // no variadic flag swallowed the prompt
+    expect(args.indexOf('--')).toBeGreaterThan(args.indexOf('--disallowedTools'));
   });
 
   it('interactive: NEVER passes the prompt as a positional (delivered via stdin) and adds --input-format', () => {
@@ -208,6 +248,39 @@ describe('tree builder — failure & accounting (review fixes)', () => {
       }
     }
     expect(crossedBeforeResult).toBe(true); // guardrail would fire mid-stream, before completion
+  });
+
+  it('counts a split assistant message (same message.id, repeated usage) ONCE, not N× (H1)', () => {
+    // CC 2.1.168 emits one logical assistant message as MULTIPLE top-level `assistant`
+    // objects sharing message.id, each REPEATING the message-level usage. The live cost
+    // estimate (which drives the budget auto-kill, registry.ts) must count it once.
+    // Real evidence: msg_01PByqSz29cDP9SuDDvz1185 appears 3× in fixtures/real-subagent.jsonl.
+    const usage = { input_tokens: 1000, output_tokens: 300, cache_creation_input_tokens: 200, cache_read_input_tokens: 5000 };
+    const mk = (text: string) => ({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      session_id: 'sess-1',
+      message: { id: 'msg_split', content: [{ type: 'text', text }], usage },
+    });
+    const tree = feed([mk('part one '), mk('part two '), mk('part three')]);
+    const single = estimateCost(
+      { inputTokens: 1000, outputTokens: 300, cacheCreationInputTokens: 200, cacheReadInputTokens: 5000 },
+      { inputPerM: 5, outputPerM: 25 },
+    );
+    expect(tree.rollups().portionCostUsd).toBeCloseTo(single, 9); // counted once, not 3×
+    expect(tree.nodes.get('run-1')!.tokensOut).toBe(300); // output tokens once, not 900
+  });
+
+  it('still counts DISTINCT message ids (and id-less usage) independently — dedup is per-message', () => {
+    // guard against over-dedup: different message.ids must each accrue.
+    const mk = (id: string | undefined, out: number) => ({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      session_id: 's',
+      message: { ...(id ? { id } : {}), content: [{ type: 'text', text: 'x' }], usage: { input_tokens: 0, output_tokens: out } },
+    });
+    const tree = feed([mk('m1', 100), mk('m2', 50), mk(undefined, 7)]);
+    expect(tree.nodes.get('run-1')!.tokensOut).toBe(157); // 100 + 50 + 7, all distinct
   });
 
   it('baseline carries cumulative cost while portionCost tracks this invocation (review #2)', () => {

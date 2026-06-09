@@ -51,6 +51,8 @@ export type NormalizedEventType =
   | 'subagent_done'
   | 'status'
   | 'rate_limit'
+  | 'api_retry' // H22 — transient retry (overload/rate-limit) so a retrying run isn't "frozen"
+  | 'agent_message' // H22 — agent→user message via --brief / SendUserMessage tool
   | 'result'
   | 'error'
   | 'exit';
@@ -126,6 +128,8 @@ export interface Run {
   teamId: string | null;
   /** set when this run is a campaign orchestrator/worker/synthesizer (Orchestration Mode). */
   campaignId: string | null;
+  /** set when this run belongs to a Project / Kanban card (agent-PM feature). */
+  projectId: string | null;
   status: RunStatus;
   startedAt: number;
   endedAt: number | null;
@@ -133,6 +137,10 @@ export interface Run {
   tokensOut: number;
   costUsd: number;
   exitCode: number | null;
+  /** why a run was killed — distinguishes a user stop from a budget auto-kill (H5). */
+  killReason: 'user' | 'budget' | null;
+  /** captured failure cause (child stderr / guardrail note) surfaced on failed/killed runs (H5). */
+  error: string | null;
   budgetUsd: number | null;
   permissionMode: PermissionMode;
   allowedTools: string | null;
@@ -179,6 +187,16 @@ export interface LaunchRequest {
   jsonSchema?: unknown;
   /** internal: campaign membership for orchestrator/worker/synthesizer runs. */
   campaignId?: string | null;
+  /** internal: project / kanban-card membership (agent-PM feature). */
+  projectId?: string | null;
+  /** H10 — `-w/--worktree <name>`: run in an isolated git worktree (safe parallel writes). */
+  worktree?: string;
+  /** H10 — `--disallowedTools <tools...>`: a tool deny-list (e.g. "Bash(git push *)"). */
+  disallowedTools?: string[];
+  /** H10 — `--agents <json>`: define ephemeral subagents inline at launch. */
+  agentsJson?: unknown;
+  /** H22 — `--brief`: enable the agent→user SendUserMessage tool. */
+  brief?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -283,7 +301,7 @@ export interface SpendSummary {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type StreamMessage =
-  | { kind: 'hello'; run: Run; nodes: RunNode[]; events: NormalizedEvent[] }
+  | { kind: 'hello'; run: Run; nodes: RunNode[]; events: NormalizedEvent[]; truncatedBefore?: number }
   | { kind: 'event'; event: NormalizedEvent }
   | { kind: 'node'; node: RunNode }
   | { kind: 'run'; run: Run };
@@ -421,6 +439,89 @@ export type CampaignMessage =
   | { kind: 'campaign-hello'; campaign: Campaign }
   | { kind: 'campaign'; campaign: Campaign }
   | { kind: 'task'; task: CampaignTask };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Projects + Kanban + autonomous PM (spec docs/superpowers/specs/2026-06-09-agent-pm-kanban-design.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A first-class project = a git repo root that scopes runs/campaigns/kanban + executor policy. */
+export interface Project {
+  id: string;
+  name: string;
+  rootDir: string;
+  defaultBranch: string;
+  /** true = trusted full-auto merge (checks still run); false (default) = park in Review for human approve. */
+  autoMerge: boolean;
+  defaultValidationCommand: string | null;
+  wipLimit: number;
+  budgetCeilingUsd: number | null;
+  paused: boolean;
+  createdAt: number;
+}
+
+export interface CreateProjectRequest {
+  name: string;
+  rootDir: string;
+  defaultBranch?: string;
+  autoMerge?: boolean;
+  defaultValidationCommand?: string | null;
+  wipLimit?: number;
+  budgetCeilingUsd?: number | null;
+}
+
+/** Human-draggable workflow column. The PM only picks up `Ready`. */
+export type KanbanColumn = 'Backlog' | 'Ready' | 'InProgress' | 'Review' | 'Done' | 'Blocked' | 'Canceled';
+export const KANBAN_COLUMNS: KanbanColumn[] = ['Backlog', 'Ready', 'InProgress', 'Review', 'Done', 'Blocked', 'Canceled'];
+
+/** Derived execution badge, orthogonal to the column. */
+export type ExecutionPhase = 'idle' | 'building' | 'validating' | 'merging' | 'conflicts' | 'paused-budget' | 'failed';
+
+/** A kanban card = a human-curated work unit; the PARENT of execution. */
+export interface KanbanTask {
+  id: string;
+  projectId: string;
+  column: KanbanColumn;
+  executionPhase: ExecutionPhase;
+  title: string;
+  description: string;
+  acceptanceCriteria: string;
+  validationCommand: string | null;
+  priority: number; // 0 none .. 4 urgent
+  rank: string; // lexorank in-column ordering
+  dependsOn: string[];
+  assignee: string; // 'pm' | 'human'
+  labels: string[];
+  runId: string | null;
+  campaignId: string | null;
+  worktreeName: string | null;
+  attemptCount: number;
+  maxAttempts: number;
+  budgetUsd: number | null;
+  validationOutput: string | null;
+  lastDiffHash: string | null;
+  mergeSha: string | null;
+  lastError: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateKanbanTaskRequest {
+  projectId: string;
+  title: string;
+  description?: string;
+  acceptanceCriteria?: string;
+  validationCommand?: string | null;
+  priority?: number;
+  dependsOn?: string[];
+  maxAttempts?: number;
+  budgetUsd?: number | null;
+  column?: KanbanColumn;
+}
+
+export type KanbanBoardMessage =
+  | { kind: 'board-hello'; tasks: KanbanTask[] }
+  | { kind: 'task'; task: KanbanTask }
+  | { kind: 'task-removed'; taskId: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Static reference data

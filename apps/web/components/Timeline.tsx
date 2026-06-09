@@ -16,6 +16,8 @@ const META: Record<string, { glyph: string; color: string; label: string }> = {
   error: { glyph: '✕', color: '#ff5d5d', label: 'error' },
   status: { glyph: '·', color: '#5b626d', label: 'status' },
   rate_limit: { glyph: '◷', color: '#5b626d', label: 'rate limit' },
+  api_retry: { glyph: '↻', color: '#ffb000', label: 'api retry' }, // H22
+  agent_message: { glyph: '✉', color: '#b08cff', label: 'agent → you' }, // H22
 };
 
 function preview(v: unknown, max = 280): string {
@@ -25,7 +27,7 @@ function preview(v: unknown, max = 280): string {
   return s.length > max ? s.slice(0, max) + '…' : s;
 }
 
-function EventRow({ ev, raw }: { ev: NormalizedEvent; raw: boolean }) {
+const EventRow = React.memo(function EventRow({ ev, raw }: { ev: NormalizedEvent; raw: boolean }) {
   const p: any = ev.payload ?? {};
   let m = META[ev.type] ?? { glyph: '·', color: '#5b626d', label: ev.type };
   if (ev.type === 'subagent_done' && p.isError) m = { glyph: '✕', color: '#ff5d5d', label: 'subagent failed' };
@@ -88,7 +90,7 @@ function EventRow({ ev, raw }: { ev: NormalizedEvent; raw: boolean }) {
       <div className="min-w-0 flex-1 break-words">{body}</div>
     </div>
   );
-}
+});
 
 export function Timeline({
   events,
@@ -101,7 +103,15 @@ export function Timeline({
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    // H19 — stick-to-bottom only: don't yank the viewport when the user has scrolled up
+    // to read earlier output, and scroll the CONTAINER (not the whole page).
+    const end = endRef.current;
+    if (!end) return;
+    let sc: HTMLElement | null = end.parentElement;
+    while (sc && sc.scrollHeight <= sc.clientHeight) sc = sc.parentElement;
+    if (!sc) return;
+    const nearBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 120;
+    if (nearBottom) sc.scrollTop = sc.scrollHeight;
   }, [events.length, partial]);
 
   return (

@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type {
   Run,
   RunNode,
@@ -84,6 +84,10 @@ export interface RunLiveState {
   /** nodeId → currently-streaming assistant text (token deltas). */
   partials: Record<string, string>;
   connected: boolean;
+  /** set when the stream reports a permanent error (e.g. unknown/deleted run) — H8. */
+  error: string | null;
+  /** H18 — if the snapshot tail omitted earlier events, the seq before which they were dropped. */
+  truncatedBefore?: number;
 }
 
 export function useRunStream(id: string): RunLiveState {
@@ -92,6 +96,8 @@ export function useRunStream(id: string): RunLiveState {
   const [events, setEvents] = useState<NormalizedEvent[]>([]);
   const [partials, setPartials] = useState<Record<string, string>>({});
   const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [truncatedBefore, setTruncatedBefore] = useState<number | undefined>(undefined);
   const partialRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -99,6 +105,8 @@ export function useRunStream(id: string): RunLiveState {
     setEvents([]);
     setNodeMap(new Map());
     setPartials({});
+    setError(null);
+    setTruncatedBefore(undefined);
     const es = new EventSource(`${API}/api/agents/${id}/stream`);
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
@@ -109,10 +117,18 @@ export function useRunStream(id: string): RunLiveState {
       } catch {
         return;
       }
+      // H8 — server emits {error:'not found'} for an unknown/deleted run then ends the
+      // stream; without this the EventSource auto-reconnects every ~3s forever. Close it.
+      if ((m as any).error) {
+        setError(String((m as any).error));
+        es.close();
+        return;
+      }
       if (m.kind === 'hello') {
         setRun(m.run);
         setNodeMap(new Map(m.nodes.map((n) => [n.id, n])));
         setEvents(m.events);
+        setTruncatedBefore((m as any).truncatedBefore);
       } else if (m.kind === 'run') {
         setRun(m.run);
       } else if (m.kind === 'node') {
@@ -143,9 +159,12 @@ export function useRunStream(id: string): RunLiveState {
     return () => es.close();
   }, [id]);
 
-  const nodes = [...nodeMap.values()];
-  const tree = nodes.length ? buildTree(nodes, id) : null;
-  return { run, nodes, tree, events, partials, connected };
+  // H19 — derive nodes/tree only when nodeMap actually changes (not on every render or
+  // the run page's 1s force-refresh tick). buildTree mints fresh objects, so this also
+  // gives React.memo'd rows stable refs to bail on.
+  const nodes = useMemo(() => [...nodeMap.values()], [nodeMap]);
+  const tree = useMemo(() => (nodes.length ? buildTree(nodes, id) : null), [nodes, id]);
+  return { run, nodes, tree, events, partials, connected, error, truncatedBefore };
 }
 
 // ── per-campaign live channel (Orchestration Mode) ──────────────────────────

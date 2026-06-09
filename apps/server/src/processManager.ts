@@ -3,9 +3,44 @@
  * buffered stdout parsing, stdin follow-up writes, and signal-based cascade kill.
  * Spawned `detached` so the whole process group can be killed together (§7.6).
  */
-import { spawn, type ChildProcess } from 'node:child_process';
-import { CLAUDE_BIN } from './config.js';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { CLAUDE_BIN, OTEL_ENABLED, OTLP_ENDPOINT } from './config.js';
 import type { LaunchRequest } from '@fleet/shared';
+
+/**
+ * H6 — telemetry env pointing claude's OTLP exporter at the control plane's own /v1/* receiver.
+ * JSON-encoded (no protobuf dep); NEVER the console exporter (it corrupts the stream-json stdout).
+ */
+const otelEnv = (): Record<string, string> =>
+  OTEL_ENABLED
+    ? {
+        CLAUDE_CODE_ENABLE_TELEMETRY: '1',
+        OTEL_METRICS_EXPORTER: 'otlp',
+        OTEL_LOGS_EXPORTER: 'otlp',
+        OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
+        OTEL_EXPORTER_OTLP_ENDPOINT: OTLP_ENDPOINT,
+        OTEL_METRIC_EXPORT_INTERVAL: '5000',
+        OTEL_LOGS_EXPORT_INTERVAL: '5000',
+      }
+    : {};
+
+/**
+ * H13 — best-effort: is `pid` a LIVE process that looks like one WE spawned? A persisted
+ * pid read on boot/after-restart could have been recycled by the OS onto an unrelated
+ * process group; signalling it blindly could SIGKILL an innocent process. We confirm via
+ * `ps` that the command line references claude (or the mock) before killing.
+ */
+export function looksLikeClaudePid(pid: number | null | undefined): boolean {
+  if (!pid || pid <= 1) return false;
+  try {
+    const out = spawnSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000 });
+    if (out.status !== 0 || !out.stdout) return false; // not alive / can't confirm → don't kill
+    const cmd = out.stdout.toLowerCase();
+    return cmd.includes('claude') || cmd.includes('mock-claude') || cmd.includes('--output-format') || cmd.includes('--session-id');
+  } catch {
+    return false;
+  }
+}
 
 export interface ManagedProcess {
   pid: number | undefined;
@@ -22,6 +57,10 @@ export interface ManagedProcess {
  */
 export function killProcessGroup(pid: number | null | undefined, hard = false) {
   if (!pid || pid <= 1) return;
+  // H13 — this path only runs for pids read from persisted state (boot orphan sweep +
+  // not-in-memory stop). Verify identity first so a recycled PID can't get an innocent
+  // process group SIGKILLed. (Live in-memory runs are killed via the ChildProcess handle.)
+  if (!looksLikeClaudePid(pid)) return;
   const sig: NodeJS.Signals = hard ? 'SIGKILL' : 'SIGTERM';
   try {
     process.kill(-pid, sig);
@@ -71,6 +110,13 @@ export function buildArgs(req: LaunchRequest, sessionId: string, interactive: bo
   if (req.subagentProfile) args.push('--agent', req.subagentProfile);
   if (req.appendSystemPrompt) args.push('--append-system-prompt', req.appendSystemPrompt);
   if (req.jsonSchema) args.push('--json-schema', JSON.stringify(req.jsonSchema));
+  // H10 — worktree isolation + inline agents + tool deny-list. `--disallowedTools` is variadic
+  // (like --add-dir), and `--worktree` takes an optional value — both are safe here because the
+  // one-shot prompt is always emitted last after the `--` separator below (F-11).
+  if (req.worktree) args.push('--worktree', req.worktree);
+  if (req.disallowedTools && req.disallowedTools.length) args.push('--disallowedTools', req.disallowedTools.join(','));
+  if (req.agentsJson) args.push('--agents', JSON.stringify(req.agentsJson));
+  if (req.brief) args.push('--brief'); // H22 — enable agent→user SendUserMessage tool
   // CRITICAL (verified vs real claude): in stream-json INPUT mode the positional `-p` prompt is
   // ignored — claude blocks waiting for a user message on stdin. So pass the prompt as a positional
   // ONLY for one-shot runs; interactive runs deliver the initial prompt via stdin after spawn.
@@ -103,12 +149,17 @@ export function spawnClaude(
     cwd: cwd || process.cwd(),
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true, // new process group → cascade kill (§7.6)
-    env: { ...process.env, CLAUDE_CODE_ENABLE_TELEMETRY: '1' }, // PRD §10 observability
+    env: { ...process.env, ...otelEnv() }, // H6 — real OTLP exporter env (replaces the inert flag)
   });
 
   let buf = '';
   let exited = false;
   let killTimer: NodeJS.Timeout | null = null;
+  // H17 — cap the partial-line buffer. A child emitting a very large line with no newline
+  // (a tool result echoing a huge file, or a never-terminated stream) would otherwise grow
+  // `buf` without bound and stall the event loop on JSON.parse. Set well above the largest
+  // real claude result line (structured_output / result.result are comfortably < this).
+  const MAX_PARTIAL_BYTES = 32 * 1024 * 1024;
   child.stdout?.setEncoding('utf8');
   child.stdout?.on('data', (chunk: string) => {
     buf += chunk;
@@ -122,6 +173,13 @@ export function spawnClaude(
       } catch {
         /* tolerate a partial/garbled line */
       }
+    }
+    // after draining complete lines, `buf` holds the trailing partial; if it has grown
+    // pathologically large with no newline, drop it (memory-exhaustion / DoS guard).
+    if (buf.length > MAX_PARTIAL_BYTES) {
+      // eslint-disable-next-line no-console
+      console.warn(`[fleet] dropping oversized stdout partial (${buf.length} bytes, no newline)`);
+      buf = '';
     }
   });
 

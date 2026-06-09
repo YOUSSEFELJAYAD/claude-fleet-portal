@@ -1,28 +1,67 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { api } from '@/lib/api';
+import { api, API } from '@/lib/api';
 import type { Run } from '@fleet/shared';
 import { statusMeta } from '@/lib/status';
 import { usd, tokens, dur, clock } from '@/lib/format';
 import { Kicker, Empty, Dot } from '@/components/ui';
+
+interface SavedSearch {
+  id: string;
+  name: string;
+  filter: { q?: string; status?: string };
+}
 
 export default function HistoryPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<SavedSearch[]>([]); // A8 saved searches
+
+  const loadSaved = () =>
+    fetch(`${API}/api/saved-searches`)
+      .then((r) => r.json())
+      .then(setSaved)
+      .catch(() => {});
+  useEffect(() => {
+    loadSaved();
+  }, []);
 
   useEffect(() => {
     setLoading(true);
+    setError(null);
     const h = setTimeout(() => {
-      api.listRuns({ q: q || undefined, status: status || undefined }).then((r) => {
-        setRuns(r);
-        setLoading(false);
-      });
+      api
+        .listRuns({ q: q || undefined, status: status || undefined })
+        .then((r) => setRuns(r))
+        .catch((e) => setError(e.message || 'failed to load history'))
+        .finally(() => setLoading(false));
     }, 200);
     return () => clearTimeout(h);
   }, [q, status]);
+
+  // A9 — CSV export carrying the current filters
+  const csvHref = (() => {
+    const p = new URLSearchParams();
+    if (q) p.set('q', q);
+    if (status) p.set('status', status);
+    const s = p.toString();
+    return `${API}/api/agents/export.csv${s ? `?${s}` : ''}`;
+  })();
+
+  async function saveCurrent() {
+    const name = prompt('Save current filter as:');
+    if (!name) return;
+    await fetch(`${API}/api/saved-searches`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, filter: { q, status } }),
+    }).catch(() => {});
+    loadSaved();
+  }
 
   return (
     <div>
@@ -46,9 +85,43 @@ export default function HistoryPage() {
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
+        <a
+          href={csvHref}
+          className="font-display uppercase tracking-wider text-[10px] px-3 py-2 border border-line2 text-faint hover:text-amber hover:border-amber/60 inline-flex items-center"
+        >
+          ↓ CSV
+        </a>
       </div>
 
-      {loading ? (
+      {/* A8 — saved searches */}
+      <div className="flex gap-2 mb-4 items-center flex-wrap">
+        {saved.map((s) => (
+          <span key={s.id} className="inline-flex items-center gap-1 border border-line2 text-[10px] font-mono">
+            <button
+              onClick={() => { setQ(s.filter.q ?? ''); setStatus(s.filter.status ?? ''); }}
+              className="px-2 py-1 text-dim hover:text-amber"
+            >
+              {s.name}
+            </button>
+            <button
+              title="delete saved search"
+              onClick={() => fetch(`${API}/api/saved-searches/${s.id}`, { method: 'DELETE' }).then(loadSaved).catch(() => {})}
+              className="px-1.5 py-1 text-faint hover:text-sig-failed border-l border-line2"
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+        <button onClick={saveCurrent} className="font-mono text-[10px] px-2 py-1 border border-dashed border-line2 text-faint hover:text-amber hover:border-amber/50">
+          + save search
+        </button>
+      </div>
+
+      {error ? (
+        <div className="font-mono text-sig-failed text-[12px] border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">
+          {error} · <button onClick={() => { setQ((v) => v); setStatus((v) => v); }} className="underline">retry</button>
+        </div>
+      ) : loading ? (
         <div className="font-mono text-faint text-[12px]">querying…</div>
       ) : runs.length === 0 ? (
         <Empty>No runs match.</Empty>
