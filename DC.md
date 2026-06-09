@@ -414,19 +414,37 @@ relaxes only for single build/fix); credential scrub on git/gh stderr; `+resolvi
 - **#7 fleet scheduler** (`5ef98b0`): `tryAdmit` admission gate in launchBuild (fair-share by priority,
   reserve slots, daily ceiling, no preemption) + `/fleet` page. Mutation-verified wiring test.
 
-**Post-review fix — fleet-reserve deadlock guard** (`bbede02`, advisor-flagged H9 class): the `/fleet`
-form let a user set `reserveSlotsForNonPm >= maxConcurrentRuns`, driving the PM pool to 0 so EVERY card
-stalls in Ready with no surfaced error. `validateFleetConfig` now reads `registry.config` and rejects the
-cross-config invariant at PUT time; `tryAdmit` keeps its `max(0,…)` floor so a config written straight via
-`fleetRepo.set` (bypassing validation) degrades to "admit nothing" rather than going negative. Two
-discriminating tests added (== cap and > cap reject; cap-1 boundary accept). Note: the guard only fires
-when `maxConcurrentRuns ≤ 100`, since reserve is independently clamped to ≤ 100 (the live dev config runs
-`maxConcurrentRuns: 300`, so the clamp is hit first there). Curl-smoked live against `dev:mock`: fleet
-config GET/PUT (+reject), fleet status (full `FleetStatus` shape), `git/health` (`GitHealth` shape), files
-tree, `files/edit` (`editable` correctly gated by `editingEnabled`), plans, git/status — all contracts
-green (the web pages redeclare `FleetStatus`/`GitHealth` locally, so these aren't typecheck-covered).
+**Post-review — fleet-reserve deadlock hardening** (advisor-flagged H9 class; honest scope below):
+when `reserveSlotsForNonPm >= maxConcurrentRuns` the PM pool is 0, so EVERY card stalls in Ready with no
+surfaced error. Three changes, NOT a full "fix" — the deadlock is reachable from two paths and only one is
+sealed:
+- **Guard (`bbede02`):** `validateFleetConfig` reads `registry.config` and REJECTS `reserve >= cap` at
+  `/fleet` PUT time. `tryAdmit` keeps its `max(0,…)` floor so a config written straight via `fleetRepo.set`
+  (bypassing validation) degrades to "admit nothing", not a negative pool. Tests: `==`/`>` cap reject,
+  `cap-1` accept. NOTE the guard only fires when `cap ≤ 100` (reserve is independently clamped ≤ 100; the
+  live dev config carries a STALE hand-set `maxConcurrentRuns: 300` that predates config.ts's `max:100`
+  clamp — would be re-clamped on any fresh PUT — so the guard is unreachable under the live cap and was
+  exercised only in unit tests at `cap=4`).
+- **Residual path NOT sealed:** lowering the GLOBAL `maxConcurrentRuns` (via `/api/config`) at/below an
+  existing reserve still drives pool→0; that path never touches fleet config, so the PUT guard can't catch
+  it. A symmetric guard in `validateConfig` was rejected (risk of a config↔registry↔fleet circular import).
+- **Loud, not silent (`<default-flip commit>`):** `fleetStatus.deadlocked` = `pool 0 && ≥1 demanding
+  project`; `/fleet` renders a red banner. `tryAdmit` still returns false, so on BOTH paths the H9 harm is
+  now LOUD instead of silent. Tests: deadlocked true (pool 0 + demand) / false (pool 0, no demand) / false
+  (healthy pool).
+- **Default reserve 2 → 0:** the reserve is a soft hold-back for opt-in campaign workers; a non-zero
+  default silently taxed single-project throughput (8→6) and widened the deadlock surface. Default 0 = full
+  PM pool; campaign users raise it. (fleetRepo default tests read `DEFAULT_FLEET_CONFIG` dynamically.)
 
-**Verified:** **311 server tests** (21 files), `pnpm -r typecheck` clean (3 pkgs), `next build` clean
-(**16 routes**, /fleet added). **Deferred paid E2Es** (per decision §10.3, confirm at run time): #2 PR-open
-on a throwaway repo, #4 a small real campaign, #9 a real conflict resolution. On branch
-`feat/agent-pm-kanban`, **19 commits ahead of main, NOT pushed** (no remote; user pushes only when asked).
+Curl-smoked live against `dev:mock`: fleet config GET/PUT (+reject), fleet status (full `FleetStatus` incl.
+`deadlocked`), `git/health` (`GitHealth` shape), files tree, `files/edit` (`editable` gated by
+`editingEnabled`), plans, git/status — all contracts green (web redeclares `FleetStatus`/`GitHealth`
+locally, so these aren't typecheck-covered).
+
+**Verified:** **313 server tests** (21 files), `pnpm -r typecheck` clean (3 pkgs). `next build` last clean
+at **16 routes**; the small additive `/fleet` banner (one type field + one conditional element, no new
+imports/routes) is typecheck-clean but `next build` was NOT re-run (would tear down the live dev server).
+All verification is **deterministic — NOT real-claude.** **Deferred paid E2Es** (per decision §10.3,
+confirm at run time, throwaway targets only): #2 PR-open on a throwaway repo, #4 a small real campaign,
+#9 a real conflict resolution. On branch `feat/agent-pm-kanban`, **20 commits ahead of main, NOT pushed**
+(no remote; user pushes only when asked).
