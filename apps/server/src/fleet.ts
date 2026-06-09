@@ -97,6 +97,21 @@ export function validateFleetConfig(input: unknown): FleetConfig {
     }
   }
 
+  // Cross-config invariant (deadlock guard, H9 class): the PM pool is
+  // `max(0, maxConcurrentRuns - reserveSlotsForNonPm)`. If the reserve swallows the entire global
+  // concurrency pool, the PM pool is 0 and EVERY card stays Ready forever with no surfaced error.
+  // Reject it here (validateFleetConfig can read registry.config) rather than silently deadlocking.
+  // tryAdmit still floors the pool at 0 so a config written straight via fleetRepo.set (bypassing
+  // this validator) degrades to "admit nothing" instead of going negative.
+  const maxRuns = registry.config.maxConcurrentRuns;
+  if (reserveSlotsForNonPm >= maxRuns) {
+    throw bad(
+      `reserveSlotsForNonPm (${reserveSlotsForNonPm}) must be < maxConcurrentRuns (${maxRuns}); ` +
+        'otherwise the PM scheduler pool is 0 and every card stalls in Ready. ' +
+        'Lower the reserve or raise maxConcurrentRuns.',
+    );
+  }
+
   return { reserveSlotsForNonPm, fleetSpendCeilingUsd };
 }
 

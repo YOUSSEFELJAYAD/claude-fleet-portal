@@ -198,6 +198,30 @@ describe('validateFleetConfig — validate + clamp', () => {
   it('rejects a non-finite spend ceiling', () => {
     expect(() => fleet.validateFleetConfig({ fleetSpendCeilingUsd: Number.POSITIVE_INFINITY })).toThrow();
   });
+
+  // ── deadlock guard (H9 class): reserve must leave at least 1 PM slot ─────────
+  it('rejects a reserve that swallows the whole concurrency cap (pool 0 → silent deadlock)', () => {
+    const saved = registry.config.maxConcurrentRuns;
+    registry.config.maxConcurrentRuns = 4;
+    try {
+      // reserve == cap → pool 0; reserve > cap → negative pool. Both deadlock; both rejected.
+      expect(() => fleet.validateFleetConfig({ reserveSlotsForNonPm: 4 })).toThrow(/maxConcurrentRuns/);
+      expect(() => fleet.validateFleetConfig({ reserveSlotsForNonPm: 5 })).toThrow(/maxConcurrentRuns/);
+    } finally {
+      registry.config.maxConcurrentRuns = saved;
+    }
+  });
+
+  it('accepts the largest reserve that still leaves one PM slot (cap - 1)', () => {
+    const saved = registry.config.maxConcurrentRuns;
+    registry.config.maxConcurrentRuns = 4;
+    try {
+      const v = fleet.validateFleetConfig({ reserveSlotsForNonPm: 3, fleetSpendCeilingUsd: null });
+      expect(v.reserveSlotsForNonPm).toBe(3); // 3 < 4 → pool of 1 remains → ok
+    } finally {
+      registry.config.maxConcurrentRuns = saved;
+    }
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════
