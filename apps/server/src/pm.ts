@@ -43,6 +43,7 @@ import {
   ensureWorktreeIgnored,
 } from './git.js';
 import { runValidation, VALIDATION_MAX_BUFFER } from './validation.js';
+import { brokerValidate, type BrokerConfig } from './portbroker.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -93,6 +94,48 @@ function worktreeDirFor(rootDir: string, worktreeName: string): string {
 function validationCommandFor(card: KanbanTask, project: Project): string | null {
   const cmd = card.validationCommand ?? project.defaultValidationCommand ?? null;
   return cmd && cmd.trim() ? cmd : null;
+}
+
+/** Effective server-start command (card override, else project). null/empty → pure (non-server) checks. */
+function serverStartCommandFor(card: KanbanTask, project: Project): string | null {
+  const cmd = card.serverStartCommand ?? project.serverStartCommand ?? null;
+  return cmd && cmd.trim() ? cmd : null;
+}
+
+/** Port-broker config from the merged project+card (per-card overrides = the 3 card fields; rest inherit). */
+export function brokerConfigFor(card: KanbanTask, project: Project, validationCommand: string): BrokerConfig {
+  return {
+    serverStartCommand: (card.serverStartCommand ?? project.serverStartCommand) as string,
+    validationCommand,
+    healthCheckUrl: card.healthCheckUrl ?? project.healthCheckUrl ?? undefined,
+    healthCheckRegex: card.healthCheckRegex ?? project.healthCheckRegex ?? undefined,
+    readinessTimeoutMs: project.readinessTimeoutMs ?? undefined,
+    portRangeStart: project.portRangeStart ?? undefined,
+    portRangeEnd: project.portRangeEnd ?? undefined,
+    copyEnvFrom: project.copyEnvFrom ?? undefined,
+  };
+}
+
+/**
+ * Validate a card's worktree (v2 #5). DEFAULT = v1 pure checks (runValidation, exit-code oracle).
+ * If the project/card configures a server-start command, run the validation against a LIVE server
+ * via the port broker instead (allocate port → start → health → check → teardown). A null validation
+ * command → pass (nothing to check), preserving v1 behavior. Returns {ok, output}.
+ */
+export async function validateCard(
+  wtDir: string,
+  project: Project,
+  card: KanbanTask,
+): Promise<{ ok: boolean; output: string | null }> {
+  const cmd = validationCommandFor(card, project);
+  if (serverStartCommandFor(card, project)) {
+    if (!cmd) return { ok: true, output: null }; // server configured but nothing to check → pass
+    const vr = await brokerValidate(wtDir, brokerConfigFor(card, project, cmd));
+    return { ok: vr.ok, output: vr.output || null };
+  }
+  if (!cmd) return { ok: true, output: null };
+  const vr = await runValidation(wtDir, cmd);
+  return { ok: vr.ok, output: vr.output || null };
 }
 
 /** Build the initial build prompt from the card (SPEC §5.2). */
@@ -445,16 +488,12 @@ class PmEngine {
     const wtName = card.worktreeName ?? worktreeNameFor(card);
     const wtDir = worktreeDirFor(project.rootDir, wtName);
 
-    // validate in the worktree (SPEC §5.4). No command → treat as pass (nothing to check).
+    // validate in the worktree (SPEC §5.4 / v2 #5). validateCard runs pure checks by default, or
+    // against a live server via the port broker when the project/card configures one. No command → pass.
     kanbanRepo.updateTask(cardId, { executionPhase: 'validating' });
-    const cmd = validationCommandFor(card, project);
-    let passed = true;
-    let validationOutput: string | null = null;
-    if (cmd) {
-      const vr = await runValidation(wtDir, cmd);
-      passed = vr.ok;
-      validationOutput = vr.output || null;
-    }
+    const vr = await validateCard(wtDir, project, card);
+    const passed = vr.ok;
+    const validationOutput = vr.output;
 
     if (passed) {
       await this.gate(cardId, project);
@@ -568,19 +607,17 @@ class PmEngine {
           // ensure the integration merge commit is recorded (no-op if integrate was a no-op).
           await ensureCommitted(wtDir);
 
-          const cmd = validationCommandFor(card, project);
-          if (cmd) {
-            const vr = await runValidation(wtDir, cmd);
-            if (!vr.ok) {
-              // semantic breakage from integrating base → park in Review (do NOT merge a broken tree).
-              kanbanRepo.updateTask(cardId, {
-                column: 'Review',
-                executionPhase: 'failed',
-                validationOutput: vr.output || null,
-                lastError: 'post-integration re-validation failed; not merging',
-              });
-              return;
-            }
+          // re-validate the integrated tree (v2 #5: broker-vs-pure, same selector as validateAndGate).
+          const vr = await validateCard(wtDir, project, card);
+          if (!vr.ok) {
+            // semantic breakage from integrating base → park in Review (do NOT merge a broken tree).
+            kanbanRepo.updateTask(cardId, {
+              column: 'Review',
+              executionPhase: 'failed',
+              validationOutput: vr.output,
+              lastError: 'post-integration re-validation failed; not merging',
+            });
+            return;
           }
 
           // 5. final merge --no-ff into main (assert-clean + ORIG_HEAD rollback live in git.ts).
