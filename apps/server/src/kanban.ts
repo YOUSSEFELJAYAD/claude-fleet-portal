@@ -676,4 +676,19 @@ export function registerKanbanRoutes(app: FastifyInstance) {
     void pm.requestChanges(id); // relaunch a fix run in the same worktree (threads the comment)
     return next!;
   });
+
+  // ── refresh a card's PR state from GitHub (v2 #2) ──────────────────────────────
+  // PR-mode cards park in Review with a pr_state badge; this route re-reads `gh pr view` for the
+  // card's branch and updates pr_state/pr_url (and flips the card to Done if the PR merged, under
+  // the PM merge mutex). Fire-and-forget like approve/request-changes; SSE delivers the result.
+  app.post('/api/tasks/:id/refresh-pr', async (req, reply) => {
+    const id = (req.params as any).id as string;
+    const existing = kanbanRepo.getTask(id);
+    if (!existing) {
+      reply.code(404);
+      return { error: 'not found' };
+    }
+    void pm.refreshPr(id);
+    return existing;
+  });
 }

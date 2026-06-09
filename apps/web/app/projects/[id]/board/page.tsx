@@ -162,6 +162,9 @@ export default function BoardPage({ params }: { params: { id: string } }) {
     return mutate(`/api/tasks/${task.id}`, { method: 'DELETE' });
   };
 
+  const refreshPr = (task: KanbanTask) =>
+    mutate(`/api/tasks/${task.id}/refresh-pr`, { method: 'POST', body: JSON.stringify({}) });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -284,6 +287,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
             onApprove={approveTask}
             onRequestChanges={requestChanges}
             onDelete={deleteTask}
+            onRefreshPr={refreshPr}
           />
         </div>
       )}

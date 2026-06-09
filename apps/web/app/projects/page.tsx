@@ -1,8 +1,8 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { Project, CreateProjectRequest } from '@fleet/shared';
-import { Panel, Kicker, Field, Input, Toggle, Btn, Empty } from '@/components/ui';
+import type { Project, CreateProjectRequest, MergeMode } from '@fleet/shared';
+import { Panel, Kicker, Field, Input, Select, Toggle, Btn, Empty } from '@/components/ui';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
@@ -39,6 +39,19 @@ interface UpdateProjectRequest {
   defaultValidationCommand?: string | null;
   budgetCeilingUsd?: number | null;
   paused?: boolean;
+  // ── v2 #2: full remote git ──
+  mergeMode?: MergeMode;
+  remoteName?: string;
+  pushEnabled?: boolean;
+}
+
+/** git/remote readiness response (GET /api/projects/:id/git/health, v2 #2). */
+interface GitHealth {
+  remoteUrl: string | null;
+  remoteResolves: boolean;
+  ghInstalled: boolean;
+  ghAuthOk: boolean;
+  pushEnabled: boolean;
 }
 
 const projectsApi = {
@@ -47,6 +60,7 @@ const projectsApi = {
   update: (id: string, b: UpdateProjectRequest) =>
     j<Project>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(b) }),
   remove: (id: string) => j<void>(`/api/projects/${id}`, { method: 'DELETE' }),
+  gitHealth: (id: string) => j<GitHealth>(`/api/projects/${id}/git/health`),
 };
 
 function CreateForm({ onCreated }: { onCreated: () => void }) {
@@ -132,9 +146,26 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
   const [wipLimit, setWipLimit] = useState(String(p.wipLimit));
   const [validationCmd, setValidationCmd] = useState(p.defaultValidationCommand ?? '');
   const [budget, setBudget] = useState(p.budgetCeilingUsd != null ? String(p.budgetCeilingUsd) : '');
+  // ── v2 #2: remote-git settings draft ──
+  const [mergeMode, setMergeMode] = useState<MergeMode>(p.mergeMode);
+  const [remoteName, setRemoteName] = useState(p.remoteName);
+  const [pushEnabled, setPushEnabled] = useState(p.pushEnabled);
+  const [health, setHealth] = useState<GitHealth | null>(null);
+  const [healthBusy, setHealthBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  async function checkHealth() {
+    setHealthBusy(true);
+    try {
+      setHealth(await projectsApi.gitHealth(p.id));
+    } catch {
+      setHealth(null);
+    } finally {
+      setHealthBusy(false);
+    }
+  }
 
   async function patch(body: Parameters<typeof projectsApi.update>[1], opt?: { silent?: boolean }) {
     setBusy(true);
@@ -161,6 +192,9 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
       wipLimit: Number(wipLimit) || 1,
       defaultValidationCommand: validationCmd.trim() || null,
       budgetCeilingUsd: budget.trim() ? Number(budget) : null,
+      mergeMode,
+      remoteName: remoteName.trim() || 'origin',
+      pushEnabled,
     });
   }
 
@@ -266,6 +300,50 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
               </Field>
             </div>
           </div>
+
+          {/* ── v2 #2: remote git (push / GitHub PR) ── */}
+          <div className="mt-5 pt-4 border-t hairline">
+            <Kicker>remote git</Kicker>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
+              <Field label="merge mode" hint="local merge --no-ff · or push + open a GitHub PR">
+                <Select value={mergeMode} onChange={(e) => setMergeMode(e.target.value as MergeMode)}>
+                  <option value="local">local (merge into {p.defaultBranch})</option>
+                  <option value="pr">pr (push + open PR)</option>
+                </Select>
+              </Field>
+              <Field label="remote name" hint="git remote to push / open the PR against">
+                <Input value={remoteName} onChange={(e) => setRemoteName(e.target.value)} placeholder="origin" />
+              </Field>
+              <div>
+                <Kicker>push enabled</Kicker>
+                <div className="mt-2">
+                  <Toggle on={pushEnabled} onChange={setPushEnabled} label={pushEnabled ? 'PM may push' : 'no push'} />
+                </div>
+              </div>
+            </div>
+            {mergeMode === 'pr' && !pushEnabled && (
+              <div
+                className="mt-2 font-mono text-[10px] leading-snug border px-2 py-1.5"
+                style={{ color: '#ff7a45', borderColor: '#ff7a4540', background: 'rgba(255,122,69,0.06)' }}
+              >
+                ⚠ PR mode requires push to be enabled — turn on “push enabled” before saving.
+              </div>
+            )}
+            <div className="mt-3 flex items-center gap-3 flex-wrap">
+              <Btn variant="ghost" onClick={checkHealth} disabled={healthBusy}>
+                {healthBusy ? 'Checking…' : '⟳ Check git readiness'}
+              </Btn>
+              {health && (
+                <span className="font-mono text-[10px]" style={{ color: health.remoteResolves && health.ghInstalled && health.ghAuthOk ? '#54e08a' : '#ff7a45' }}>
+                  remote {health.remoteResolves ? `✓ ${health.remoteUrl ?? 'resolves'}` : '✕ unresolved'} ·{' '}
+                  gh {health.ghInstalled ? '✓ installed' : '✕ missing'} ·{' '}
+                  auth {health.ghAuthOk ? '✓ ok' : '✕ not authenticated'} ·{' '}
+                  push {health.pushEnabled ? 'on' : 'off'}
+                </span>
+              )}
+            </div>
+          </div>
+
           <div className="mt-4 flex items-center gap-3">
             <Btn variant="solid" onClick={saveSettings} disabled={busy}>
               Save Settings

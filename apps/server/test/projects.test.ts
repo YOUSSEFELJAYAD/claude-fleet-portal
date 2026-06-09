@@ -501,6 +501,111 @@ describe('v2 foundation — new project columns round-trip + defaults', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// v2 #2: remote-git cross-field rule + git/health route.
+//   - mergeMode='pr' requires pushEnabled=true (create + PUT, stateful on PUT).
+//   - GET /api/projects/:id/git/health reports remote-resolves + gh installed/auth + push.
+// ────────────────────────────────────────────────────────────────────────────
+describe('v2 #2 — mergeMode=pr requires pushEnabled', () => {
+  it('CREATE with mergeMode=pr and no pushEnabled → 400', async () => {
+    const dir = makeGitRepo('main');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'pr-no-push', rootDir: dir, mergeMode: 'pr' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/pushEnabled/);
+  });
+
+  it('CREATE with mergeMode=pr AND pushEnabled=true → 200', async () => {
+    const dir = makeGitRepo('main');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'pr-with-push', rootDir: dir, mergeMode: 'pr', pushEnabled: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().mergeMode).toBe('pr');
+  });
+
+  it('PUT mergeMode=pr against an ALREADY push-enabled project → 200 (stateful effective check)', async () => {
+    const dir = makeGitRepo('main');
+    const id = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/projects',
+        headers: H(),
+        payload: { name: 'pr-stateful', rootDir: dir, pushEnabled: true },
+      })
+    ).json().id;
+    // pushEnabled already true on the row; PUT sets ONLY mergeMode — must be accepted.
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${id}`,
+      headers: H(),
+      payload: { mergeMode: 'pr' },
+    });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().mergeMode).toBe('pr');
+  });
+
+  it('PUT mergeMode=pr with no push (and push off on the row) → 400; PUT disabling push under pr → 400', async () => {
+    const dir = makeGitRepo('main');
+    const id = (
+      await app.inject({ method: 'POST', url: '/api/projects', headers: H(), payload: { name: 'pr-guard', rootDir: dir } })
+    ).json().id;
+    // push is off on the row → switching to pr alone must reject.
+    const bad = await app.inject({ method: 'PUT', url: `/api/projects/${id}`, headers: H(), payload: { mergeMode: 'pr' } });
+    expect(bad.statusCode).toBe(400);
+
+    // turn on pr + push together (ok), then attempt to disable push out from under pr (reject).
+    await app.inject({ method: 'PUT', url: `/api/projects/${id}`, headers: H(), payload: { mergeMode: 'pr', pushEnabled: true } });
+    const disablePush = await app.inject({ method: 'PUT', url: `/api/projects/${id}`, headers: H(), payload: { pushEnabled: false } });
+    expect(disablePush.statusCode).toBe(400);
+  });
+});
+
+describe('v2 #2 — GET /api/projects/:id/git/health', () => {
+  it('reports remoteResolves=false + pushEnabled for a repo with no configured remote', async () => {
+    const dir = makeGitRepo('main'); // fresh repo, no `git remote add`
+    const id = (
+      await app.inject({ method: 'POST', url: '/api/projects', headers: H(), payload: { name: 'health', rootDir: dir } })
+    ).json().id;
+    const res = await app.inject({ method: 'GET', url: `/api/projects/${id}/git/health`, headers: H() });
+    expect(res.statusCode).toBe(200);
+    const h = res.json();
+    expect(h.remoteResolves).toBe(false); // 'origin' is not configured
+    expect(h.remoteUrl).toBeNull();
+    expect(h.pushEnabled).toBe(false);
+    // ghInstalled/ghAuthOk are booleans (environment-dependent; never throws).
+    expect(typeof h.ghInstalled).toBe('boolean');
+    expect(typeof h.ghAuthOk).toBe('boolean');
+  });
+
+  it('resolves a configured remote URL (local path) for the project remoteName', async () => {
+    const dir = makeGitRepo('main');
+    const bareDir = makeNonGitDir();
+    execFileSync('git', ['init', '--bare'], { cwd: bareDir });
+    execFileSync('git', ['remote', 'add', 'origin', bareDir], { cwd: dir });
+    const id = (
+      await app.inject({ method: 'POST', url: '/api/projects', headers: H(), payload: { name: 'health-remote', rootDir: dir } })
+    ).json().id;
+    const res = await app.inject({ method: 'GET', url: `/api/projects/${id}/git/health`, headers: H() });
+    expect(res.statusCode).toBe(200);
+    const h = res.json();
+    expect(h.remoteResolves).toBe(true);
+    expect(h.remoteUrl).toBe(bareDir);
+  });
+
+  it('returns 404 for an unknown project', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/projects/nope/git/health', headers: H() });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // W0: update policy is executor-only. name and rootDir are IMMUTABLE — a PUT
 // supplying them must NOT change them, yet must still apply the policy fields.
 // ────────────────────────────────────────────────────────────────────────────

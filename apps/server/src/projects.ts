@@ -21,6 +21,7 @@ import path from 'node:path';
 import type { Project, CreateProjectRequest, MergeMode } from '@fleet/shared';
 import db from './db.js';
 import { initRepo } from './git.js';
+import { resolveRemote, ghAuthStatus } from './gh.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -355,6 +356,29 @@ export function registerProjectsRoutes(app: FastifyInstance) {
     return project;
   });
 
+  // ── git/remote readiness (v2 #2) ──────────────────────────────────────────────
+  // Reports whether PR mode can work for this project: does the configured remote resolve (local
+  // `git remote get-url`, network-free + credential-scrubbed), is the `gh` CLI installed and
+  // authenticated, and is push enabled. The UI shows a one-line readiness check. Never throws —
+  // every probe is the never-throw gh.ts/git.ts variety.
+  app.get('/api/projects/:id/git/health', async (req, reply) => {
+    const id = (req.params as any).id as string;
+    const project = projectsRepo.getProject(id);
+    if (!project) {
+      reply.code(404);
+      return { error: 'project not found' };
+    }
+    const remote = await resolveRemote(project.rootDir, project.remoteName);
+    const auth = await ghAuthStatus(); // one call → both installed + authenticated
+    return {
+      remoteUrl: remote.url, // scrubbed in gh.ts
+      remoteResolves: remote.resolves,
+      ghInstalled: auth.installed,
+      ghAuthOk: auth.authenticated,
+      pushEnabled: project.pushEnabled,
+    };
+  });
+
   // ── create ──────────────────────────────────────────────────────────────────
   app.post('/api/projects', async (req, reply) => {
     const body = (req.body as any) ?? {};
@@ -413,6 +437,18 @@ export function registerProjectsRoutes(app: FastifyInstance) {
     if (v2.error) {
       reply.code(400);
       return { error: v2.error };
+    }
+    // Cross-field rule (v2 #2): PR mode requires push to be enabled. Computed against the EFFECTIVE
+    // create values (parsed field, else the create-default) — checked here rather than in the shared
+    // stateless parser because PUT must compute it against the current row (see the PUT route).
+    {
+      const f = v2.fields ?? {};
+      const effMergeMode = (f.mergeMode as MergeMode | undefined) ?? 'local';
+      const effPushEnabled = (f.pushEnabled as boolean | undefined) ?? false;
+      if (effMergeMode === 'pr' && !effPushEnabled) {
+        reply.code(400);
+        return { error: "mergeMode 'pr' requires pushEnabled to be true" };
+      }
     }
 
     // ── git work-tree gate (v2 item #10: optional git init on attach) ──────────────
@@ -507,6 +543,18 @@ export function registerProjectsRoutes(app: FastifyInstance) {
       return { error: v2.error };
     }
     Object.assign(patch, v2.fields);
+
+    // Cross-field rule (v2 #2): PR mode requires push enabled. Computed against the EFFECTIVE row
+    // (current value overlaid with this patch) so a PUT that sets only `mergeMode:'pr'` against an
+    // already push-enabled project is accepted, and one that disables push out from under PR mode is
+    // rejected.
+    const current = projectsRepo.getProject(id)!;
+    const effMergeMode = (patch.mergeMode as MergeMode | undefined) ?? current.mergeMode;
+    const effPushEnabled = patch.pushEnabled !== undefined ? patch.pushEnabled : current.pushEnabled;
+    if (effMergeMode === 'pr' && !effPushEnabled) {
+      reply.code(400);
+      return { error: "mergeMode 'pr' requires pushEnabled to be true" };
+    }
 
     return projectsRepo.updateProject(id, patch);
   });

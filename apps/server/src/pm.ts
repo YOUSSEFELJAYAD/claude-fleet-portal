@@ -41,7 +41,9 @@ import {
   mergeBranch,
   cleanupWorktree,
   ensureWorktreeIgnored,
+  scrubCredentials,
 } from './git.js';
+import { fetchAndSyncDefault, pushBranch, prCreate, prView } from './gh.js';
 import { runValidation, VALIDATION_MAX_BUFFER } from './validation.js';
 import { brokerValidate, type BrokerConfig } from './portbroker.js';
 
@@ -58,14 +60,24 @@ const PM_PERMISSION_MODE = 'bypassPermissions' as const;
 const PM_DISALLOWED_TOOLS = ['Bash(git push *)', 'Bash(git remote *)'];
 
 /**
- * The ONE deny-list source every PM launch path reads (v2 §3.4): single build/fix, the campaign
- * worker (#4), and the resolve agent (#9). For now it returns the CURRENT PM_DISALLOWED_TOOLS
- * unconditionally (byte-for-byte the v1 list). The push relaxation (`push_enabled=1` → drop the
- * `git push` deny) lands with #2, and applies ONLY to single-mode build/fix — campaign workers and
- * the resolve agent never inherit it. A fresh array is returned each call so a consumer can never
- * mutate the shared constant.
+ * The ONE deny-list source every PM launch path reads (v2 §3.4). It returns the v1
+ * PM_DISALLOWED_TOOLS list (`Bash(git push *)` + `Bash(git remote *)`) by DEFAULT, and RELAXES it
+ * (drops BOTH the push and remote deny entries) ONLY when `project.pushEnabled` is true.
+ *
+ * CRITICAL (§3.4): the relaxation is for SINGLE-MODE build/fix launches ONLY — those are the agents
+ * that may legitimately need to push their own branch. Campaign workers (#4) and the resolve agent
+ * (#9) edit files only; their push is an engine-side step performed by the portal as `fleet-pm`, so
+ * they must NEVER inherit the relaxed list. Those (future) call sites must therefore pass the
+ * UNRELAXED list — e.g. `disallowedToolsForProject({ ...project, pushEnabled: false })` or the raw
+ * `PM_DISALLOWED_TOOLS` — and must NOT call this with the live project when pushEnabled is set. Do
+ * NOT change their call sites to use the relaxed form.
+ *
+ * A fresh array is returned each call so a consumer can never mutate the shared constant.
  */
-export function disallowedToolsForProject(_project: Project): string[] {
+export function disallowedToolsForProject(project: Project): string[] {
+  // Relax by DROPPING only the push/remote denies (not blanket-clearing the list) so a future
+  // non-push deny entry survives the relaxation.
+  if (project.pushEnabled) return PM_DISALLOWED_TOOLS.filter((t) => !/git\s+(push|remote)/.test(t));
   return [...PM_DISALLOWED_TOOLS];
 }
 
@@ -161,6 +173,18 @@ function fixPrompt(card: KanbanTask): string {
       `Validation output (tail):\n${card.validationOutput}`
     : '\n\nThe previous attempt did not pass. Address the remaining issues.';
   return base + evidence + vout;
+}
+
+/** PR body for `gh pr create` (v2 #2): the card's description + acceptance criteria, with a
+ *  fleet-pm attribution footer. Empty sections are omitted. */
+function prBody(card: KanbanTask): string {
+  const parts: string[] = [];
+  if (card.description.trim()) parts.push(card.description.trim());
+  if (card.acceptanceCriteria.trim()) {
+    parts.push(`## Acceptance criteria\n\n${card.acceptanceCriteria.trim()}`);
+  }
+  parts.push('---\n_Opened by the Fleet PM (card automerge gate). Review and merge on GitHub._');
+  return parts.join('\n\n');
 }
 
 // ── engine ─────────────────────────────────────────────────────────────────
@@ -526,6 +550,10 @@ class PmEngine {
     const card = kanbanRepo.getTask(taskId);
     if (!card) return;
     if (card.column !== 'Review') return; // only Review cards are approvable
+    // A PR is already open for this card (v2 #2 PR mode parks Review+idle with prState set). Re-approving
+    // would re-run push + `gh pr create`, which fails because the PR exists. Ignore — use refresh-pr to
+    // advance the card to Done when the PR merges on GitHub. prState is null in local mode (unaffected).
+    if (card.prState) return;
     const project = projectsRepo.getProject(card.projectId);
     if (!project) return;
     // mark merging so the badge reflects the in-flight merge and a concurrent tick won't re-drive it
@@ -620,7 +648,16 @@ class PmEngine {
             return;
           }
 
-          // 5. final merge --no-ff into main (assert-clean + ORIG_HEAD rollback live in git.ts).
+          // 5. SHIP. Branch on merge_mode (v2 #2). 'local' (default) → today's local merge --no-ff
+          //    into main; 'pr' (requires push_enabled) → fetch+FF-sync the default branch, push the
+          //    task branch, open a GitHub PR, and park in Review (a human merges on GitHub — locked
+          //    decision §10.1; the portal NEVER calls prMerge). Everything above this point is shared.
+          if (project.mergeMode === 'pr') {
+            await this.doMergePr(cardId, project, card, wtName, branch, base);
+            return;
+          }
+
+          // 5(local). final merge --no-ff into main (assert-clean + ORIG_HEAD rollback live in git.ts).
           const res = await mergeBranch(project.rootDir, branch);
           if (!res.ok) {
             kanbanRepo.updateTask(cardId, {
@@ -651,6 +688,127 @@ class PmEngine {
     } finally {
       this.merging.delete(cardId);
     }
+  }
+
+  /**
+   * PR-mode SHIP step (v2 #2 keystone (b)), called from doMerge AFTER the shared conflict-probe +
+   * integrate-base + re-validate steps, UNDER the per-project merge mutex (the caller already holds
+   * it). Replaces the local `merge --no-ff`:
+   *   1. fetchAndSyncDefault(root, remote, base) — FF-ONLY (§4 #2 keystone (d) / risk #3). On
+   *      !ok OR diverged → park in Review and STOP; we NEVER force-update a diverged base.
+   *   2. pushBranch(root, remote, branch) — park on failure (rejected push / auth error). Never force.
+   *   3. prCreate(root, base, branch, title, body) — park on failure.
+   *   4. success → record pr_url + pr_state='open' and park the card in REVIEW (NOT Done; the portal
+   *      does NOT call prMerge — a human merges the PR on GitHub, locked decision §10.1). The persisted
+   *      phase is 'idle' (NOT 'merging') so the safety tick's Review+merging re-drive never re-fires
+   *      this push/PR flow; the pr_state badge carries the signal.
+   *
+   * Any gh/git stderr surfaced into lastError is already credential-scrubbed by gh.ts (ghErr →
+   * scrubCredentials); we wrap with scrubCredentials again defensively (§3.5, idempotent).
+   */
+  private async doMergePr(
+    cardId: string,
+    project: Project,
+    card: KanbanTask,
+    _wtName: string,
+    branch: string,
+    base: string,
+  ): Promise<void> {
+    const root = project.rootDir;
+    const remote = project.remoteName;
+
+    // 1. fetch + FF-only sync the default branch (never force).
+    const sync = await fetchAndSyncDefault(root, remote, base);
+    if (!sync.ok || sync.diverged) {
+      kanbanRepo.updateTask(cardId, {
+        column: 'Review',
+        executionPhase: 'conflicts',
+        lastError: scrubCredentials(
+          sync.diverged
+            ? `default branch '${base}' has diverged from '${remote}/${base}'; refusing to force-update — resolve on the remote, then re-approve`
+            : `failed to sync '${base}' from '${remote}': ${sync.error ?? 'unknown'}`,
+        ),
+      });
+      return;
+    }
+
+    // 2. push the task branch (sets upstream so gh pr create resolves the head). Never force.
+    const push = await pushBranch(root, remote, branch);
+    if (!push.ok) {
+      kanbanRepo.updateTask(cardId, {
+        column: 'Review',
+        executionPhase: 'failed',
+        lastError: scrubCredentials(`push to '${remote}' failed: ${push.error ?? 'unknown'}`),
+      });
+      return;
+    }
+
+    // 3. open the PR (base = project.defaultBranch, head = the deterministic worktree-task-<id> branch).
+    const title = card.title;
+    const body = prBody(card);
+    const pr = await prCreate(root, base, branch, title, body);
+    if (!pr.ok) {
+      kanbanRepo.updateTask(cardId, {
+        column: 'Review',
+        executionPhase: 'failed',
+        lastError: scrubCredentials(`gh pr create failed: ${pr.error ?? 'unknown'}`),
+      });
+      return;
+    }
+
+    // 4. success → park in Review with the PR badge; a human merges on GitHub (NOT prMerge here).
+    //    phase 'idle' (NOT 'merging') so the safety tick never re-drives the push/PR flow.
+    kanbanRepo.updateTask(cardId, {
+      column: 'Review',
+      executionPhase: 'idle',
+      prUrl: pr.url ?? null,
+      prState: 'open',
+      lastError: null,
+    });
+  }
+
+  /**
+   * Refresh a card's PR state from GitHub (v2 #2, wired by POST /api/tasks/:id/refresh-pr). Reads the
+   * PR for the card's branch via `gh pr view` (no lock — read-only); updates pr_state/pr_url. If the
+   * PR is MERGED, marks the card Done and tears down the worktree UNDER the per-project merge mutex
+   * (the single main worktree must never be raced). `mergeSha` stays null in PR mode — the merge
+   * happened on the remote, not locally. Never throws to its caller.
+   */
+  async refreshPr(taskId: string): Promise<void> {
+    const card = kanbanRepo.getTask(taskId);
+    if (!card) return;
+    // Don't touch terminal cards or one with no branch to inspect.
+    if (PM_DONE_COLUMNS.has(card.column)) return;
+    const wtName = card.worktreeName;
+    if (!wtName) return;
+    const project = projectsRepo.getProject(card.projectId);
+    if (!project) return;
+    const branch = branchNameFor(wtName);
+
+    const pv = await prView(project.rootDir, branch);
+    if (!pv) return; // no PR for this branch (or gh/auth error) → leave the card as-is
+
+    if (pv.state === 'merged') {
+      await this.withMergeLock(project.id, async () => {
+        const fresh = kanbanRepo.getTask(taskId);
+        if (!fresh || PM_DONE_COLUMNS.has(fresh.column)) return; // already finalized
+        kanbanRepo.updateTask(taskId, {
+          column: 'Done',
+          executionPhase: 'idle',
+          prState: 'merged',
+          prUrl: pv.url || fresh.prUrl,
+          lastError: null,
+        });
+        // branch -d → -D fallback in cleanupWorktree handles the locally-unmerged branch (merged on
+        // the remote, not locally). Best-effort + idempotent; never throws.
+        await cleanupWorktree(project.rootDir, wtName, branch);
+      });
+      this.tickSoon(project.id);
+      return;
+    }
+
+    // open / closed → just reflect the latest state + url.
+    kanbanRepo.updateTask(taskId, { prState: pv.state, prUrl: pv.url || card.prUrl });
   }
 
   // ── REWORK (SPEC §5.6 + §10 guardrails) ─────────────────────────────────────────

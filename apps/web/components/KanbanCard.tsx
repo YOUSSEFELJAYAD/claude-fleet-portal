@@ -56,16 +56,28 @@ export interface KanbanCardProps {
   onApprove?: (task: KanbanTask) => void;
   onRequestChanges?: (task: KanbanTask) => void;
   onDelete?: (task: KanbanTask) => void;
+  /** Re-read the card's PR state from GitHub (v2 #2 PR mode). */
+  onRefreshPr?: (task: KanbanTask) => void;
 }
 
+// ── PR state badge color map (v2 #2) ──
+const PR_STATE_COLOR: Record<NonNullable<KanbanTask['prState']>, string> = {
+  open: '#39d4cf',
+  merged: '#b08cff',
+  closed: '#ff5d5d',
+};
+
 /** Presentational card — title, phase badge, attempt/budget evidence, move + Review actions. */
-export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, onRequestChanges, onDelete }: KanbanCardProps) {
+export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, onRequestChanges, onDelete, onRefreshPr }: KanbanCardProps) {
   const m = phaseMeta(task.executionPhase);
   const attemptHot = task.attemptCount >= task.maxAttempts;
   const isReview = task.column === 'Review';
   // once Approved the server flips phase→merging (still in Review until the PM merges to
-  // Done); hide the gate buttons so they don't linger as no-ops during the merge.
-  const awaitingGate = isReview && task.executionPhase !== 'merging';
+  // Done); hide the gate buttons so they don't linger as no-ops during the merge. Also hide
+  // them once a PR is open (v2 #2 PR mode parks Review+idle with prState set) — a second Approve
+  // would re-run push + `gh pr create` and FAIL because the PR already exists. prState is null in
+  // local mode, so local behavior is unchanged.
+  const awaitingGate = isReview && task.executionPhase !== 'merging' && !task.prState;
   const pr = Math.max(0, Math.min(4, task.priority ?? 0));
 
   // diff link → the files tab, scoped to this card's proposed-merge branch (W4 viewer).
@@ -109,6 +121,15 @@ export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, o
         {task.budgetUsd != null && (
           <span className="font-mono tnum text-[9.5px] text-faint" title="per-card budget">{usd(task.budgetUsd)}</span>
         )}
+        {task.prState && (
+          <span
+            className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border"
+            style={{ color: PR_STATE_COLOR[task.prState], borderColor: `${PR_STATE_COLOR[task.prState]}40` }}
+            title="GitHub PR state"
+          >
+            PR {task.prState}
+          </span>
+        )}
         {task.labels?.map((l) => (
           <span key={l} className="font-mono text-[9px] px-1.5 py-0.5 border border-line2 text-faint">{l}</span>
         ))}
@@ -132,6 +153,26 @@ export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, o
             <Link href={diffHref} className="font-mono text-[9.5px] text-dim hover:text-amber underline">
               view diff
             </Link>
+          )}
+          {task.prUrl && (
+            <a
+              href={task.prUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-[9.5px] text-dim hover:text-amber underline"
+            >
+              PR ↗
+            </a>
+          )}
+          {onRefreshPr && (task.prState || task.prUrl) && (
+            <button
+              onClick={() => onRefreshPr(task)}
+              disabled={busy}
+              className="font-mono text-[9.5px] text-dim hover:text-amber underline disabled:opacity-40"
+              title="re-read PR state from GitHub"
+            >
+              refresh
+            </button>
           )}
         </div>
         <span className="font-mono text-[9px] text-faint">{ago(task.updatedAt)}</span>
