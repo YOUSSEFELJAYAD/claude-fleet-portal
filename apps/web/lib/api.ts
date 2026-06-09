@@ -19,6 +19,9 @@ import type {
 
 export const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
+/** Error carrying the HTTP status + server `code` so callers can branch (e.g. 409 stale-oid). */
+export type ApiError = Error & { status?: number; code?: string };
+
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(API + path, {
     headers: { 'content-type': 'application/json' },
@@ -26,12 +29,18 @@ async function j<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!r.ok) {
     let msg = r.statusText;
+    let code: string | undefined;
     try {
-      msg = (await r.json()).error ?? msg;
+      const body = await r.json();
+      msg = body.error ?? msg;
+      code = body.code;
     } catch {
       /* ignore */
     }
-    throw new Error(msg);
+    const e = new Error(msg) as ApiError;
+    e.status = r.status;
+    e.code = code;
+    throw e;
   }
   return r.json() as Promise<T>;
 }
@@ -58,6 +67,37 @@ export interface MetaResponse {
   permissionModes: string[];
   statuses: string[];
 }
+
+// ── v2 #1: in-browser file CRUD + commit ──────────────────────────────────────
+/** Working-tree bytes of a single file for the editor (GET /files/edit). */
+export interface FileEditResult {
+  path: string;
+  content: string | null; // null when binary/too-large
+  oid: string | null; // working-tree blob hash → baseOid (null = file does not exist yet)
+  editable: boolean; // editingEnabled && text && within cap
+  binary: boolean;
+  tooLarge: boolean;
+  size?: number;
+  exists: boolean;
+}
+
+/** Commit body for POST /files/commit. delete:true → git rm; else write `content`. */
+export interface CommitFileBody {
+  path: string;
+  content?: string;
+  delete?: boolean;
+  message: string;
+  baseOid?: string | null;
+}
+
+/**
+ * Result of POST /files/commit. NOTE the dual failure channel (fileedit.ts): a path/validation/
+ * stale rejection is a real non-2xx (so `j` throws an {@link ApiError} carrying `.status`), but a
+ * git-command failure returns HTTP 200 with `{ ok:false, error }` — callers MUST check `res.ok`.
+ */
+export type CommitFileResult =
+  | { ok: true; sha: string; author: string | { name: string; email: string } }
+  | { ok: false; error: string };
 
 export const api = {
   launch: (b: LaunchRequest) => j<Run>('/api/agents', { method: 'POST', body: JSON.stringify(b) }),
@@ -98,4 +138,10 @@ export const api = {
   listPlans: (pid: string) => j<PlanDraft[]>(`/api/projects/${pid}/plans`),
   applyPlan: (id: string, tasks?: PlanTask[], targetColumn?: KanbanColumn) =>
     j<PlanDraft>(`/api/plans/${id}/apply`, { method: 'POST', body: JSON.stringify({ tasks, targetColumn }) }),
+
+  // In-browser file CRUD + commit (v2 #1) — gated server-side by project.editingEnabled.
+  getFileForEdit: (pid: string, path: string) =>
+    j<FileEditResult>(`/api/projects/${pid}/files/edit?path=${encodeURIComponent(path)}`),
+  commitFile: (pid: string, body: CommitFileBody) =>
+    j<CommitFileResult>(`/api/projects/${pid}/files/commit`, { method: 'POST', body: JSON.stringify(body) }),
 };

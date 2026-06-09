@@ -45,6 +45,36 @@ export default function ProjectFilesPage({ params }: { params: { id: string } })
 
   // browse state
   const [selected, setSelected] = useState<string | null>(null);
+  // FileTree owns its own per-row child state with no external refresh hook → remount via a key
+  // bump to reflect a browser commit (create/delete/rename of the working tree). v2 #1.
+  const [treeKey, setTreeKey] = useState(0);
+  // A pending brand-new path: when this equals the selected path, FileViewer opens straight into an
+  // empty editable buffer (oid-null → Commit sends no baseOid) instead of fetching the read view of
+  // a not-yet-existing file. Cleared on commit/cancel/selection change. v2 #1 CREATE.
+  const [newPath, setNewPath] = useState<string | null>(null);
+
+  const editingEnabled = project?.editingEnabled ?? false;
+
+  const selectFromTree = useCallback((p: string) => {
+    setNewPath(null); // a real tree click is never the new-file flow
+    setSelected(p);
+  }, []);
+
+  const onCommitted = useCallback((info: { path: string; deleted: boolean; sha: string }) => {
+    setTreeKey((k) => k + 1); // remount FileTree so the new/removed path shows
+    setNewPath((cur) => (cur === info.path ? null : cur)); // the new file now exists in the tree
+    if (info.deleted && selected === info.path) setSelected(null); // don't re-fetch a missing path
+  }, [selected]);
+
+  // "+ New file" (create affordance): prompt a repo-relative path, then open it as a new buffer.
+  const newFile = useCallback(() => {
+    const p = window.prompt('New file path (relative to the repo root)', '');
+    if (p == null) return;
+    const rel = p.trim().replace(/^\/+/, '');
+    if (!rel) return;
+    setNewPath(rel);
+    setSelected(rel);
+  }, []);
 
   // changes state
   const [status, setStatus] = useState<StatusEntry[] | null>(null);
@@ -127,11 +157,32 @@ export default function ProjectFilesPage({ params }: { params: { id: string } })
       {tab === 'browse' ? (
         <div className="grid grid-cols-[300px_1fr] gap-3" style={{ minHeight: 560 }}>
           <Panel className="overflow-auto" style={{ maxHeight: 640 }}>
-            <div className="kicker px-3 pt-2.5 pb-1">tree</div>
-            <FileTree projectId={id} selected={selected} onSelect={setSelected} />
+            <div className="px-3 pt-2.5 pb-1 flex items-center justify-between">
+              <span className="kicker">tree</span>
+              {editingEnabled && (
+                <button
+                  onClick={newFile}
+                  title="Create a new file under the repo root and commit it"
+                  className="font-mono text-[10px] text-faint hover:text-amber underline"
+                >
+                  ＋ new file
+                </button>
+              )}
+            </div>
+            <FileTree key={treeKey} projectId={id} selected={selected} onSelect={selectFromTree} />
           </Panel>
           <Panel className="overflow-hidden" style={{ maxHeight: 640 }}>
-            <FileViewer projectId={id} path={selected} />
+            <FileViewer
+              projectId={id}
+              path={selected}
+              editingEnabled={editingEnabled}
+              newFile={newPath != null && newPath === selected}
+              onCommitted={onCommitted}
+              onCancelNew={() => {
+                setNewPath(null);
+                setSelected(null);
+              }}
+            />
           </Panel>
         </div>
       ) : (

@@ -242,6 +242,15 @@ class PmEngine {
     return result;
   }
 
+  /**
+   * Public delegate to the per-project lock (v2 #1). The in-browser file edit/commit surface
+   * (fileedit.ts) runs its write→stage→commit critical section through THIS so a human commit to the
+   * MAIN worktree can never interleave with a PM merge's clean-check (both share the same mergeLocks).
+   */
+  withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+    return this.withMergeLock(projectId, fn);
+  }
+
   // ── SELECT (SPEC §5.1) ─────────────────────────────────────────────────────────
   /**
    * Evaluate one project: block cards with unmet deps, then launch Ready cards (top priority/rank

@@ -39,6 +39,10 @@ interface UpdateProjectRequest {
   defaultValidationCommand?: string | null;
   budgetCeilingUsd?: number | null;
   paused?: boolean;
+  // ── v2 #1: in-browser file CRUD + commit ──
+  editingEnabled?: boolean;
+  commitAuthorName?: string | null;
+  commitAuthorEmail?: string | null;
   // ── v2 #2: full remote git ──
   mergeMode?: MergeMode;
   remoteName?: string;
@@ -146,6 +150,10 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
   const [wipLimit, setWipLimit] = useState(String(p.wipLimit));
   const [validationCmd, setValidationCmd] = useState(p.defaultValidationCommand ?? '');
   const [budget, setBudget] = useState(p.budgetCeilingUsd != null ? String(p.budgetCeilingUsd) : '');
+  // ── v2 #1: in-browser editing settings draft ──
+  const [editingEnabled, setEditingEnabled] = useState(p.editingEnabled);
+  const [commitAuthorName, setCommitAuthorName] = useState(p.commitAuthorName ?? '');
+  const [commitAuthorEmail, setCommitAuthorEmail] = useState(p.commitAuthorEmail ?? '');
   // ── v2 #2: remote-git settings draft ──
   const [mergeMode, setMergeMode] = useState<MergeMode>(p.mergeMode);
   const [remoteName, setRemoteName] = useState(p.remoteName);
@@ -192,6 +200,9 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
       wipLimit: Number(wipLimit) || 1,
       defaultValidationCommand: validationCmd.trim() || null,
       budgetCeilingUsd: budget.trim() ? Number(budget) : null,
+      editingEnabled,
+      commitAuthorName: commitAuthorName.trim() || null,
+      commitAuthorEmail: commitAuthorEmail.trim() || null,
       mergeMode,
       remoteName: remoteName.trim() || 'origin',
       pushEnabled,
@@ -342,6 +353,42 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
                 </span>
               )}
             </div>
+          </div>
+
+          {/* ── v2 #1: in-browser file editing ── */}
+          <div className="mt-5 pt-4 border-t hairline">
+            <Kicker>in-browser editing</Kicker>
+            <div className="mt-2">
+              <Toggle
+                on={editingEnabled}
+                onChange={setEditingEnabled}
+                label={editingEnabled ? 'editing on' : 'read-only'}
+              />
+            </div>
+            <div className="mt-2 font-mono text-[10px] leading-snug text-faint">
+              Allow creating, editing, and deleting files in the main working tree from the Files page.
+              {' '}
+              <span className="text-amber">Commits go to the real git history</span> as the ambient git
+              identity (or the override below). Default off.
+            </div>
+            {editingEnabled && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                <Field label="commit author name" hint="optional · blank = ambient git identity">
+                  <Input
+                    value={commitAuthorName}
+                    onChange={(e) => setCommitAuthorName(e.target.value)}
+                    placeholder="(use git config)"
+                  />
+                </Field>
+                <Field label="commit author email" hint="optional · set both or neither">
+                  <Input
+                    value={commitAuthorEmail}
+                    onChange={(e) => setCommitAuthorEmail(e.target.value)}
+                    placeholder="(use git config)"
+                  />
+                </Field>
+              </div>
+            )}
           </div>
 
           <div className="mt-4 flex items-center gap-3">

@@ -26,6 +26,7 @@ import { registerOtelRoutes } from './otel.js'; // H6
 import { registerProjectsRoutes } from './projects.js';
 import { registerKanbanRoutes, subscribeBoard } from './kanban.js';
 import { registerFileviewRoutes } from './fileview.js';
+import { registerFileeditRoutes } from './fileedit.js'; // v2 #1 — file CRUD + commit (opt-in per project)
 import { registerPlanboardRoutes, planboard } from './planboard.js'; // v2 #3 — objective → Ready cards
 import { pm } from './pm.js';
 
@@ -130,6 +131,7 @@ export function buildServer() {
   registerProjectsRoutes(app);
   registerKanbanRoutes(app);
   registerFileviewRoutes(app);
+  registerFileeditRoutes(app); // v2 #1 — opt-in file CRUD + commit (per-project editing_enabled gate)
   registerPlanboardRoutes(app); // v2 #3 — plan-board (objective → Ready cards)
   planboard.init(); // subscribe onRunTerminal — partitioned (§3.7): acts only on its own planning runs
   pm.init(); // subscribe onRunTerminal + safety tick
