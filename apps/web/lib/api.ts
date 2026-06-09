@@ -12,6 +12,9 @@ import type {
   CreateTemplateRequest,
   Campaign,
   CreateCampaignRequest,
+  PlanDraft,
+  PlanTask,
+  KanbanColumn,
 } from '@fleet/shared';
 
 export const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
@@ -87,4 +90,12 @@ export const api = {
   campaign: (id: string) => j<Campaign>(`/api/campaigns/${id}`),
   createCampaign: (r: CreateCampaignRequest) => j<Campaign>('/api/campaigns', { method: 'POST', body: JSON.stringify(r) }),
   killCampaign: (id: string) => j(`/api/campaigns/${id}`, { method: 'DELETE' }),
+
+  // PM Plan-board (v2 #3) — objective → orchestrator plan → Ready cards.
+  createPlan: (pid: string, objective: string, targetColumn?: KanbanColumn) =>
+    j<PlanDraft>(`/api/projects/${pid}/plan`, { method: 'POST', body: JSON.stringify({ objective, targetColumn }) }),
+  getPlan: (id: string) => j<PlanDraft>(`/api/plans/${id}`),
+  listPlans: (pid: string) => j<PlanDraft[]>(`/api/projects/${pid}/plans`),
+  applyPlan: (id: string, tasks?: PlanTask[], targetColumn?: KanbanColumn) =>
+    j<PlanDraft>(`/api/plans/${id}/apply`, { method: 'POST', body: JSON.stringify({ tasks, targetColumn }) }),
 };

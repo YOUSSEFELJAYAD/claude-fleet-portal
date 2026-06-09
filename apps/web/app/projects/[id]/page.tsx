@@ -6,6 +6,7 @@ import type { Project, Run } from '@fleet/shared';
 import { statusMeta } from '@/lib/status';
 import { usd, clock } from '@/lib/format';
 import { Panel, Kicker, Stat, Gauge, Empty, Dot } from '@/components/ui';
+import { PlanModal } from '@/components/PlanModal';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
@@ -40,6 +41,7 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [planning, setPlanning] = useState(false);
 
   function reload() {
     setLoading(true);
@@ -117,6 +119,12 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
           <div className="font-mono text-[11px] text-faint mt-1.5 truncate">{p.rootDir}</div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setPlanning(true)}
+            className="font-display uppercase tracking-wider text-[11px] px-4 py-2 border border-amber/50 text-amber hover:bg-amber/10 inline-flex items-center transition-all"
+          >
+            ✦ Plan board
+          </button>
           <Tab href={`/projects/${p.id}/board`} label="Board" />
           <Tab href={`/projects/${p.id}/files`} label="Files" />
           <Tab href={`/projects/${p.id}/history`} label="History" />
@@ -205,6 +213,8 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
           </div>
         </Panel>
       )}
+
+      {planning && <PlanModal projectId={id} onClose={() => setPlanning(false)} onApplied={reload} />}
     </div>
   );
 }

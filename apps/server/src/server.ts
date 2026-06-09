@@ -26,6 +26,7 @@ import { registerOtelRoutes } from './otel.js'; // H6
 import { registerProjectsRoutes } from './projects.js';
 import { registerKanbanRoutes, subscribeBoard } from './kanban.js';
 import { registerFileviewRoutes } from './fileview.js';
+import { registerPlanboardRoutes, planboard } from './planboard.js'; // v2 #3 — objective → Ready cards
 import { pm } from './pm.js';
 
 /** H21 — a cwd query must be an absolute path with no traversal/null byte (or absent). */
@@ -129,6 +130,8 @@ export function buildServer() {
   registerProjectsRoutes(app);
   registerKanbanRoutes(app);
   registerFileviewRoutes(app);
+  registerPlanboardRoutes(app); // v2 #3 — plan-board (objective → Ready cards)
+  planboard.init(); // subscribe onRunTerminal — partitioned (§3.7): acts only on its own planning runs
   pm.init(); // subscribe onRunTerminal + safety tick
   pm.reconcile(); // boot guardrail: reset cards whose run died
   // Kanban board live stream (sse() is module-private here; subscribeBoard never returns null).

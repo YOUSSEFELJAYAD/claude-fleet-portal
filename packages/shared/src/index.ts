@@ -592,3 +592,56 @@ export const LIVE_STATUSES: RunStatus[] = [
 ];
 
 export const isLive = (s: RunStatus): boolean => LIVE_STATUSES.includes(s);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PM Plan-board (v2 #3) — objective → orchestrator plan → Ready cards.
+// A draft bridges the Campaigns planner (--json-schema + PLAN_JSON_SCHEMA) to the
+// Kanban board WITHOUT touching campaigns.ts: a single orchestrator run (campaignId
+// null, no card) decomposes the objective; on apply each PlanTask becomes a card with
+// depends_on remapped from the DAG edges. (spec docs/superpowers/specs/2026-06-09-v2-out-of-scope-design.md §4 #3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Lifecycle of a plan draft. `planning` → (`ready` | `error`) → `applied`. */
+export type PlanDraftStatus = 'planning' | 'ready' | 'error' | 'applied';
+export const PLAN_DRAFT_STATUSES: PlanDraftStatus[] = ['planning', 'ready', 'error', 'applied'];
+
+/** One node of the proposed plan DAG (the reviewable/editable unit before apply). */
+export interface PlanTask {
+  id: string; // short plan-local id (e.g. t1) — the DAG edge key, NOT a card id
+  title: string;
+  prompt: string; // becomes the card description
+  template?: string;
+  dependsOn?: string[]; // plan-local ids that must finish first
+}
+
+/** A planning attempt: an objective decomposed by the orchestrator into a task DAG. */
+export interface PlanDraft {
+  id: string;
+  projectId: string;
+  objective: string;
+  /** Kanban column the applied cards land in (default 'Ready'). */
+  targetColumn: KanbanColumn;
+  status: PlanDraftStatus;
+  /** The orchestrator (planner) run whose live progress the UI streams over /api/agents/:id/stream. */
+  orchestratorRunId: string | null;
+  /** The decomposed plan once the planner is `ready`; null while planning / on error. */
+  plan: PlanTask[] | null;
+  /** Failure reason when status is `error`. */
+  error: string | null;
+  /** Card ids created on apply (idempotency record); empty until `applied`. */
+  appliedCardIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreatePlanRequest {
+  objective: string;
+  targetColumn?: KanbanColumn;
+}
+
+export interface ApplyPlanRequest {
+  /** Optional edited task list; defaults to the draft's stored plan. */
+  tasks?: PlanTask[];
+  /** Optional column override; defaults to the draft's targetColumn. */
+  targetColumn?: KanbanColumn;
+}
