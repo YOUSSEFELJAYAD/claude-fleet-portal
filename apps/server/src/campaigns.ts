@@ -24,6 +24,32 @@ import { registry } from './registry.js';
 const TERMINAL_TASK = new Set(['completed', 'failed', 'skipped']);
 const TERMINAL_CAMPAIGN = new Set(['completed', 'failed', 'killed']);
 
+/**
+ * H20 — a dependency cycle (or self-dep) in an LLM-emitted plan would wedge the
+ * campaign in 'running' forever (no task's deps ever resolve). DFS for a back-edge.
+ */
+export function planHasCycle(tasks: { id: string; dependsOn?: string[] }[]): boolean {
+  const ids = new Set(tasks.map((t) => String(t.id)));
+  const deps = new Map(tasks.map((t) => [String(t.id), (t.dependsOn ?? []).map(String).filter((d) => ids.has(d))]));
+  const state = new Map<string, 0 | 1 | 2>(); // 0 unvisited · 1 on-stack · 2 done
+  const visit = (n: string): boolean => {
+    if (state.get(n) === 1) return true; // back-edge → cycle
+    if (state.get(n) === 2) return false;
+    state.set(n, 1);
+    for (const d of deps.get(n) ?? []) if (visit(d)) return true;
+    state.set(n, 2);
+    return false;
+  };
+  for (const id of ids) if (visit(id)) return true;
+  return false;
+}
+
+/** H20 — duplicate task ids silently drop tasks (Set-dedupe + ON CONFLICT overwrite). */
+export function planHasDupIds(tasks: { id: string }[]): boolean {
+  const ids = tasks.map((t) => String(t.id));
+  return new Set(ids).size !== ids.length;
+}
+
 function tpl(name: string | null | undefined, fallbackRole: string): AgentTemplate {
   if (name) {
     const t = repo.getTemplateByName(name);
@@ -55,6 +81,8 @@ function tpl(name: string | null | undefined, fallbackRole: string): AgentTempla
 class CampaignEngine {
   private subs = new Map<string, Set<(m: CampaignMessage) => void>>();
   private listSubs = new Set<(c: Campaign) => void>();
+  /** v2 #4 — campaign ids already delivered to onCampaignTerminal subscribers (fire-once de-dupe). */
+  private terminalSeen = new Set<string>();
 
   init() {
     registry.onRunTerminal((run) => this.handleRunTerminal(run));
@@ -76,6 +104,28 @@ class CampaignEngine {
   subscribeList(cb: (c: Campaign) => void): () => void {
     this.listSubs.add(cb);
     return () => this.listSubs.delete(cb);
+  }
+
+  /**
+   * v2 #4 — fire `cb` exactly once per campaign when it first reaches a TERMINAL status
+   * (completed / failed / killed). The PM (pm.ts) subscribes to drive a campaign-per-card's
+   * validate→gate on whole-campaign completion (NOT per-worker). Built on the existing emitCampaign
+   * broadcast (every campaign state change already flows through listSubs) — the engine itself is
+   * NOT rewritten. De-duped via `terminalSeen` so multiple terminal re-emits (e.g. a kill that also
+   * rolls up cost + re-emits) call back only once. Returns an unsubscribe fn.
+   */
+  onCampaignTerminal(cb: (c: Campaign) => void): () => void {
+    const wrapped = (c: Campaign) => {
+      if (!TERMINAL_CAMPAIGN.has(c.status)) return;
+      if (this.terminalSeen.has(c.id)) return;
+      this.terminalSeen.add(c.id);
+      try {
+        cb(c);
+      } catch {
+        /* a terminal subscriber must never break the campaign broadcast */
+      }
+    };
+    return this.subscribeList(wrapped);
   }
   private broadcast(id: string, m: CampaignMessage) {
     for (const cb of this.subs.get(id) ?? []) {
@@ -126,6 +176,14 @@ class CampaignEngine {
       startedAt: now,
       endedAt: null,
       costUsd: 0,
+      // ── v2 #4: campaign-per-card delegation ──
+      // A standalone campaign (the /api/campaigns route) passes none of these → null, preserving v1
+      // behavior (no projectId on the runs, per-template permission mode, no engine deny-list). A
+      // campaign-per-card (pm.launchBuild) sets all three so its runs carry the project, the UNRELAXED
+      // deny-list (workers never push), and a non-interactive permission mode.
+      projectId: req.projectId ?? null,
+      disallowedTools: req.disallowedTools ?? null,
+      permissionMode: req.permissionMode ?? null,
     };
     repo.upsertCampaign(campaign);
 
@@ -135,13 +193,15 @@ class CampaignEngine {
       cwd: req.cwd,
       model: campaign.model,
       effort: req.effort ?? orchT.effort,
-      permissionMode: orchT.permissionMode,
+      permissionMode: campaign.permissionMode ?? orchT.permissionMode,
       allowedTools: orchT.allowedTools,
       skills: orchT.skills,
       budgetUsd: orchT.budgetUsd,
       appendSystemPrompt: orchT.systemPrompt,
       jsonSchema: PLAN_JSON_SCHEMA,
       campaignId: campaign.id,
+      projectId: campaign.projectId,
+      disallowedTools: campaign.disallowedTools ?? undefined,
       interactive: false,
     });
     campaign.orchestratorRunId = run.id;
@@ -168,6 +228,17 @@ class CampaignEngine {
     this.tickActive();
   }
 
+  /** H20 — terminate a campaign as failed with a logged reason (no schema change). */
+  private failCampaign(campaign: Campaign, reason: string) {
+    // eslint-disable-next-line no-console
+    console.warn(`[campaign ${campaign.id}] failed: ${reason}`);
+    campaign.status = 'failed';
+    campaign.endedAt = Date.now();
+    campaign.costUsd = this.rollupCost(campaign);
+    repo.upsertCampaign(campaign);
+    this.emitCampaign(campaign);
+  }
+
   private onOrchestratorDone(campaign: Campaign, run: Run) {
     // F-8: real `--json-schema` output lands on run.structuredOutput (an object).
     // Fall back to parsing resultText (legacy/mock-as-JSON-string) only if needed.
@@ -183,13 +254,12 @@ class CampaignEngine {
       }
     }
     if (run.status !== 'completed' || !plan || !Array.isArray(plan.tasks) || plan.tasks.length === 0) {
-      campaign.status = 'failed';
-      campaign.endedAt = Date.now();
-      campaign.costUsd = this.rollupCost(campaign);
-      repo.upsertCampaign(campaign);
-      this.emitCampaign(campaign);
-      return;
+      return this.failCampaign(campaign, 'orchestrator produced no usable plan');
     }
+    // H20 — reject malformed plans up front instead of wedging/silently dropping tasks.
+    const normalized = plan.tasks.map((t, i) => ({ id: String(t.id ?? `t${i + 1}`), dependsOn: (t.dependsOn ?? []).map(String) }));
+    if (planHasDupIds(normalized)) return this.failCampaign(campaign, 'plan has duplicate task ids');
+    if (planHasCycle(normalized)) return this.failCampaign(campaign, 'plan has a dependency cycle');
     const now = Date.now();
     const valid = new Set(plan.tasks.map((t) => String(t.id)));
     plan.tasks.forEach((t, i) => {
@@ -298,12 +368,17 @@ class CampaignEngine {
       cwd: campaign.cwd,
       model: campaign.model || t.model,
       effort: t.effort,
-      permissionMode: t.permissionMode,
+      // v2 #4: a campaign-per-card forces a non-interactive permission mode (else workers stall) and
+      // carries the project + UNRELAXED deny-list (workers never push). Standalone campaigns keep the
+      // per-template behavior (campaign.permissionMode/disallowedTools null).
+      permissionMode: campaign.permissionMode ?? t.permissionMode,
       allowedTools: t.allowedTools,
       skills: t.skills,
       budgetUsd: campaign.budgetPerWorkerUsd ?? t.budgetUsd,
       appendSystemPrompt: t.systemPrompt,
       campaignId: campaign.id,
+      projectId: campaign.projectId,
+      disallowedTools: campaign.disallowedTools ?? undefined,
       interactive: false,
     });
   }
@@ -322,12 +397,14 @@ class CampaignEngine {
       cwd: campaign.cwd,
       model: campaign.model || t.model,
       effort: t.effort,
-      permissionMode: t.permissionMode,
+      permissionMode: campaign.permissionMode ?? t.permissionMode,
       allowedTools: t.allowedTools,
       skills: t.skills,
       budgetUsd: t.budgetUsd,
       appendSystemPrompt: t.systemPrompt,
       campaignId: campaign.id,
+      projectId: campaign.projectId,
+      disallowedTools: campaign.disallowedTools ?? undefined,
       interactive: false,
     });
     campaign.synthesizerRunId = run.id;
@@ -370,6 +447,15 @@ class CampaignEngine {
   kill(id: string) {
     const campaign = repo.getCampaign(id);
     if (!campaign) throw Object.assign(new Error('campaign not found'), { statusCode: 404 });
+    // Mark the campaign terminal in the DB FIRST (H2). Each registry.stop() below
+    // synchronously fires onRunTerminal → handleRunTerminal, which re-reads the
+    // campaign and only short-circuits when it is terminal. If we flipped the status
+    // afterwards, a dependency-freed worker could be scheduled mid-kill and would
+    // never be stopped (kill()'s task snapshot predates it) → a cost-spending orphan.
+    campaign.status = 'killed';
+    campaign.endedAt = Date.now();
+    repo.upsertCampaign(campaign);
+
     registry.stop(campaign.orchestratorRunId ?? '');
     registry.stop(campaign.synthesizerRunId ?? '');
     for (const t of repo.getTasks(id)) {
@@ -379,8 +465,7 @@ class CampaignEngine {
         repo.upsertTask(t);
       }
     }
-    campaign.status = 'killed';
-    campaign.endedAt = Date.now();
+    // all child runs are terminal now → roll up the final cost and re-emit.
     campaign.costUsd = this.rollupCost(campaign);
     repo.upsertCampaign(campaign);
     this.emitCampaign(campaign);

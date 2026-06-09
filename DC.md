@@ -222,4 +222,229 @@ Added `registry.deleteRun` (terminal-only guard → 409 on live runs) + `repo.de
 ## 4. Open items / to revisit
 - Real Dynamic-Workflow subtree event identifiers beyond `parent_tool_use_id` (need a live xhigh run that actually fans out to confirm subagent spawn/teardown markers) — parser written defensively around F-2.
 - Agent-Teams mailbox file format (not observed in sampled dirs) — watcher tolerates absence.
-- OpenTelemetry metrics panel (§10) — `CLAUDE_CODE_ENABLE_TELEMETRY=1` wiring deferred; cost/tokens sourced from `result`/`usage` events instead (sufficient for guardrails).
+- OpenTelemetry metrics panel (§10) — `CLAUDE_CODE_ENABLE_TELEMETRY=1` wiring deferred; cost/tokens sourced from `result`/`usage` events instead (sufficient for guardrails). (Now backlogged as **H6**, see §6.)
+
+## 6. Post-audit hardening — Wave 1 / Lane A (2026-06-08)
+
+A read-only discovery workflow (4 web-research lenses + 8 per-module code audits → synthesis) produced a 34-item backlog split into **additive (A1–A12)** vs **hardening (H1–H22)**. User chose "everything, in safe waves." **Wave 1 = the 7 proven critical correctness/security items.** Discipline: each fix is **failing-test-first**, then full suite + typecheck + `next build`; spawn/lifecycle items re-verified against a real child process. Result: **20 → 39 tests, all green; typecheck clean; build clean.**
+
+### F-12 — CC 2.1.168 splits one assistant message into N `assistant` objects sharing `message.id`, each REPEATING the message-level usage
+Discovered by audit, confirmed in-tree: `msg_01PByqSz29cDP9SuDDvz1185` appears **3×** in `fixtures/real-subagent.jsonl`. The parser's `attachUsage()` dedups only *within* one raw event, so `tree.addUsage` accrued cost/output 3× → the **live** estimate read by the budget guardrail over-counted (real fixture: $0.269 vs true $0.090, exactly 3×). Invisible to the suite because `result.total_cost_usd` overwrites the estimate at completion. Same "verify the live path, not just the mock" lesson as F-8/F-9/F-11.
+
+| # | Sev | Fix | Files | Verified |
+|---|-----|-----|-------|----------|
+| **H1** | high | Dedup usage by `message.id` (parser carries `messageId`; `RunTree.costedMessageIds` skips repeats) so a split message is costed once → no premature budget auto-kill | parser.ts, tree.ts | failing-first unit test on the 3× split; reconciled to single cost. Fixture is REAL captured claude data (F-12). |
+| **H2** | high | Campaign `kill()` now marks the campaign `killed` in the DB **before** any `registry.stop()`, so the synchronous `handleRunTerminal` guard short-circuits and can't schedule an orphan worker | campaigns.ts | invariant test: status is `killed` at first `stop()` |
+| **H3** | high | DNS-rebinding lockdown: Host-header allowlist `onRequest` hook (load-bearing) + CORS scoped to the web origin + echo validated origin in hijacked SSE (replacing `*`) | server.ts, config.ts | inject: bad Host→403, foreign Origin not reflected |
+| **H5** | high | `killReason` ('user'\|'budget') + captured child `error` (stderr/guardrail note) persisted on Run instead of discarded | registry.ts, shared, db.ts | unit (killReason) + real-child integration (stderr→error) |
+| **H4** | high | Graceful shutdown: SIGINT/SIGTERM → `app.close()` → `registry.shutdown()` kills live child process groups → `repo.checkpoint()`+`close()` (WAL truncate) | index.ts, registry.ts, db.ts | integration: spawns a real mock child, `shutdown()` reaps it |
+| **H9** | high | `validateConfig()` clamps/merges DEFAULT_CONFIG (rejects `maxConcurrentRuns<1`, non-positive/NaN budgets → 400); `/input` + `/permission` bodies validated before forwarding | config.ts, registry.ts, server.ts | inject: bad config/bodies → 400; partial merges defaults |
+| **H21** | med | Path-traversal guards: `isSafeId` for team `:id` (rejects `..`/separators) + absolute-path `cwd` guard on `/skills`,`/subagents` | teamWatcher.ts, server.ts | inject: `..` id → 400, traversing cwd → 400 |
+
+**New test files:** `campaigns.test.ts` (H2/H5/H4 — temp-DB harness via `FLEET_DATA_DIR`), `server.test.ts` (H3/H9/H21 — Fastify `inject`), `shutdown.test.ts` (H4 real child), `failure.test.ts` (H5 real failing child).
+
+**H1 verified live against a FRESH real-claude capture (2.1.168, opus, $0.42 run):** the split pattern persists (`msg_016SKpQofckAKajtcixbfpzN` appears 3×). Fed through the live pipeline: authoritative=$0.4218, **deduped live max=$0.3569** (tracks toward the real cost), vs **naive no-dedup=$0.7299** (~1.7× over — would trip a tight `--max-budget-usd` early). Confirms the fix prevents premature budget kills on real data. (Verified via a throwaway test over `/tmp/h1-live.jsonl`; the committed `fixtures/real-subagent.jsonl` remains the durable regression.)
+
+## 7. Wave 2 / Lane B — additive features (2026-06-08)
+
+12 additive items. Built the 10 self-contained ones via a **build workflow** (one agent per feature, *new files only* — each a `registerXxxRoutes(app)` module owning its own tables via the shared `db` default-export handle, plus web pages/components), then the main loop did the thin wiring (route registration in server.ts, nav in Shell.tsx, mounting components into runs/[id] + history) and central verification. **A10** (error/not-found boundaries) was built in the main loop; **A12** (OTel tool-decision overlay) is deferred — it depends on **H6** (the OTLP receiver in Lane C).
+
+| ID | Feature | Surface |
+|----|---------|---------|
+| A1 | Per-run **span waterfall** (TTFT + per-tool latency, derived from existing events) | Waterfall.tsx → runs/[id] |
+| A2 | **Aggregate metrics dashboard** (cost/tokens/success/duration by model+effort, daily sparkline) | metrics.ts + /metrics |
+| A3 | **Notifications** on terminal/threshold (feed + config + webhook), via `onRunTerminal` | notifier.ts + /notifications |
+| A4 | **Scheduler** (interval / daily-at recurring runs → registry.launch) | scheduler.ts + /schedules |
+| A5 | **MCP health panel** (`claude mcp list` shell-out) | mcp.ts + /mcp |
+| A6 | **Run comparison** (side-by-side metric deltas) | /compare |
+| A7 | **Run scoring/annotations** | scores.ts + ScorePanel |
+| A8 | **Tags + saved searches** | tags.ts + TagBar + history |
+| A9 | **Export** run JSON/MD + history CSV | exporter.ts + buttons |
+| A10 | Route **error boundary** + 404 | error.tsx, not-found.tsx |
+| A11 | **Flow-graph** view over the run tree (SVG edges) | FlowGraph.tsx → runs/[id] |
+
+**Main-loop integration fixes** (caught in central verification, not by the agents): (a) exporter.ts compared an event type to the nonexistent `'tool_call'` → corrected to `'tool_use'`; (b) **A5 used `CLAUDE_BIN`, which is the MOCK replayer under `dev:mock`** → `claude mcp list` returned replayed stream-json parsed as bogus servers. Added `CLAUDE_REAL_BIN` (falls back to `claude` on PATH when CLAUDE_BIN is the mock) + raised the `mcp list` timeout to 30s (it health-checks every server). Re-verified: all 14 real MCP servers parse with correct statuses matching the live init dump.
+
+**Verified:** 39/39 tests, all 3 typechecks clean, `next build` clean (**14 routes**, +5 pages). Live: every new endpoint returns real data (/metrics aggregates over 13 runs; /api/mcp lists 14 servers); write/validation paths smoke-pass (tag normalize, score, schedule 400/201, notification-test, saved-search); browser-confirmed /metrics + runs/[id] render all new components (tags, scoring, waterfall, flow-graph w/ SVG, export links) with no exceptions.
+
+## 8. Wave 3 / Lane C — hardening & performance (in progress; sequential main-loop TDD, no parallel mutation of verified code)
+
+**Batch C1 (mock-safe, high-value) — server items done:**
+
+| # | Fix | Verified |
+|---|-----|----------|
+| **H7** | Authoritative run tokens summed from `result.modelUsage` (camelCase keys) instead of the orchestrator-only `result.usage` — multi-agent runs no longer undercount (real fixture: 92063 ctx / 559 out vs 64088 / 422). Falls back to `result.usage` when modelUsage absent (mock). | failing-first test vs the REAL captured fixture |
+| **H15** | `synchronous=NORMAL` + `busy_timeout=5000` pragmas; **dropped the redundant `idx_events_run`** (the `(run_id,seq)` PK already covers it — was pure write amplification on the hottest insert path); migration loop now **re-throws** anything but "duplicate column". | pragma + index-absence test |
+| **H20** | Pure `planHasCycle` (DFS back-edge, incl. self-dep) + `planHasDupIds` guards wired into `onOrchestratorDone` → a cyclic/duplicate LLM plan fails fast (logged reason) instead of wedging 'running' forever or silently dropping tasks. Refactored the fail path into `failCampaign`. | pure-helper unit tests (cycle/self-dep/DAG/dangling/dup) |
+
+State: **42/42 tests, 3/3 typechecks clean.** H7 touches the parser result path but is verified against REAL captured data (modelUsage shape confirmed from `real-subagent.jsonl` + the H1 live capture).
+
+**Batch C1 web — done:**
+- **H8** — `useRunStream` now closes the EventSource + surfaces an `error` on a `{error}` envelope (unknown/deleted run) instead of reconnecting every ~3s forever; run page renders the error; LaunchModal meta-fetch gained a `.catch`; history already got error+retry in Wave 2.
+- **H19** — `useRunStream` memoizes nodes/tree derivation (no more `buildTree` on every render + the 1s tick); `EventRow` wrapped in `React.memo`; Timeline auto-scroll is now **stick-to-bottom, container-only** (no viewport hijack when scrolled up); chokidar watcher gained an `'error'` listener (a watch error no longer crashes the control plane).
+
+**Batch C2 spawn/lifecycle — done (core):**
+- **H17** — stdout partial-line buffer capped at 32MB (drops a pathological newline-less line) — memory-exhaustion/DoS guard.
+- **H13** — `killProcessGroup` now verifies via `ps -o args=` that a persisted pid is alive AND looks like one we spawned (`looksLikeClaudePid` matches `claude`/`mock-claude`/`--output-format`/`--session-id`) before SIGKILL — a reboot-recycled PID can't get an innocent process group killed. **Verified:** the shutdown integration test spawns a real child, asserts `looksLikeClaudePid(pid)===true` (and `false` for a dead pid), asserts **`repo.nonTerminalPids()` contains that pid** (the boot sweep WOULD discover it), then reaps it via `killProcessGroup`. Caveat closed: the by-pid reap of a real child + the boot-sweep discovery query are both exercised; only a literal server-restart-while-orphan-survives wasn't simulated (the constructor singleton can't be re-instantiated in-process), but every constituent step is tested.
+- **H12** — `registry.handleLine` early-returns once `lr.killed` — no more wasted DB writes / SSE noise during the post-kill SIGTERM→SIGKILL window.
+
+**Batch C3 — done (features):**
+- **H11** — Session panel (`SessionPanel.tsx`) surfaces the init payload (model / permissionMode / fast-mode / output-style / version / MCP servers / plugins / counts) — what a run ACTUALLY got. Pure UI: the full init object already flows on the init event's `payload.raw`; slash-commands/output-style are shown read-only (not headless launch levers). Browser-confirmed.
+- **H10** — launch-surface flags (all confirmed in `claude --help` 2.1.168): `-w/--worktree <name>` (isolated git worktree → safe parallel writes), `--disallowedTools` (tool deny-list, **variadic**), `--agents <json>` (inline ephemeral subagents). Added to `LaunchRequest` + `buildArgs` + LaunchModal (worktree + deny-list inputs). F-11 hazard regression-locked by a `buildArgs` argv test (prompt stays last after `--`). **Real-claude verified ($0.019 haiku run):** `claude … --worktree h10test --add-dir <repo> -- "<prompt>"` exited 0 with the correct result AND created `<repo>/.claude/worktrees/h10test` on branch `worktree-h10test` (confirmed via `git worktree list`) — the prompt was NOT swallowed by the variadic flags.
+
+**Batch C2/C3 — the remaining 5 + A12 (completed in a follow-up pass — "fix all the points"):**
+- **H22** — parser surfaces `system/api_retry` (a retrying run no longer looks frozen) + detects the `SendUserMessage` tool (`--brief`) as an `agent_message` event; `--brief` added to buildArgs + a LaunchModal toggle; new `api_retry`/`agent_message` NormalizedEventTypes + Timeline glyphs. Unit-tested.
+- **H14** — corrected control-protocol response shape via `buildPermissionControlResponse` (`subtype:'success'` wrapper, inner `behavior: allow|deny` — NOT `decision`); no more optimistic state-clear (awaitingPermission clears in handleLine only when the child advances). **`--permission-prompt-tool` correctly OMITTED** — verified it does NOT exist in `claude --help` 2.1.168 (the audit assumed wrong; adding it would've been an invalid-flag bug). Shipped best-effort (path largely dormant under headless `-p`). Wire-shape unit-tested.
+- **H16** — `repo.batchPersist` coalesces changed nodes + events + the run row into ONE outer transaction (nested per-method txns become savepoints → one fsync vs per-line). registry buffers + flushes on a 75ms timer / on terminal / **before any snapshot read** (snapshot reads events from the DB even for live runs). Guardrail unaffected (in-memory). Integration-tested (a completed mock run's events are durable) + the runaway guardrail test still trips.
+- **H18** — SSE connection cap (`MAX_SSE`, default 64 → 503); `id:<seq>` frames (Last-Event-ID groundwork); `getEventsTail` truncation marker (`tailTruncatedBefore`) surfaced through the hello → `RunLiveState.truncatedBefore` → a "earlier events omitted" note on the run page for >5000-event runs. Unit-tested.
+- **H6 — DONE + REAL-CLAUDE VERIFIED.** Local OTLP/HTTP-**JSON** receiver (`otel.ts`: `/v1/metrics` + `/v1/logs` on the existing Fastify server — no protobuf dep, no second server); on spawn the run's OTLP exporter is pointed at the control plane (`OTEL_EXPORTER_OTLP_*` env in `processManager.otelEnv`, `http/json`, NEVER the console exporter), replacing the inert hardcoded flag. Accumulates delta-temporality cost/token by `session.id` + `query_source` + model, plus `tool_decision` from logs. **Verified live (both ends AND the middle):** (1) a real haiku run POSTed 9 OTLP payloads to our endpoints; (2) feeding the real `/v1/metrics` bodies through `ingestMetrics` extracted cost $0.0205 + tokens {in 10, out 481, cacheRead 17959, cacheCreation 13043} split by source/model; (3) the full Fastify round-trip (Host-allowlist hook → JSON body-parse → `/v1/metrics` route → ingest → `GET /api/agents/:id/otel`) confirmed: POST→200, retrieve→costUsd 0.07 / bySource [main,subagent] on the synthetic payload. Default-on (disable via `FLEET_OTEL=0`).
+- **A12 — DONE.** `OtelOverlay.tsx` on the run page reads `/api/agents/:id/otel` → per-source/per-model cost+tokens, lines +/−, and tool-decision chips (accept ✓ / reject ✕); polls while live; renders nothing when no telemetry received (additive).
+
+### Final state — entire improvement program complete
+**51 server tests (was 20), 3/3 typechecks clean, `next build` clean (14 routes).** Lane A (7) + Lane B (11) + Lane C (15) + A12 all delivered & verified. New test files: campaigns/server/shutdown/failure/batch/otel.test.ts. Real-claude verifications performed this program: H1 (cost split, $0.42), H10 (worktree created, $0.019), H5 (failing-child stderr), H6 (live OTLP ingest, ~$0.02). Caveats H13 (boot-sweep discovery + identity guard) and H10 (worktree) both closed. **Operational note:** OTel telemetry is now default-on for spawned runs; `pnpm build` and `next dev` share `apps/web/.next` → stop dev before building.
+
+## 9. Agent-PM / Kanban feature (2026-06-09) — spec docs/superpowers/specs/2026-06-09-agent-pm-kanban-design.md
+
+Brainstormed → researched (5-lens workflow, 47 findings) → spec (approved) → built via a 2-phase
+build workflow (8 agents) → integrated + verified in the main loop. Five subsystems, all reusing the
+existing run/campaign/worktree/db machinery; campaigns.ts/registry.ts NOT rewritten.
+
+**Decisions:** merge gate configurable, default human-approve (per-project `auto_merge` toggle for
+full-auto — checks always run); per-task git worktree+branch → local `merge --no-ff`; read-only viewer,
+**zero new deps** (hand-rolled markdown/diff); PM commits as `fleet-pm`; human request-changes consumes
+a `max_attempts` slot; validation = pure checks (no ports) in v1; campaign-per-card deferred. §11 of the
+spec lists 10 explicit out-of-scope items.
+
+**Modules (Lane-B pattern — own tables via the `db` handle + `registerXxxRoutes`):** `projects.ts`
+(project = git-repo root, scopes everything), `kanban.ts` (`kanban_tasks` + board SSE + CRUD/reorder +
+Review actions), `pm.ts` (`PmEngine`: select Ready → build in worktree via `registry.launch` → validate
+(execFile, exit-code oracle) → gate → `merge --no-ff` under a per-project mutex → Done; rework w/
+max-attempts + no-progress diff-hash; per-project spend ceiling + pause; H2 cancel; boot reconcile),
+`git.ts` (one execFile-git wrapper + merge automation + realpath path-guard), `fileview.ts` (read-only
+tree/file/status/diff/log/show). `runs`/`campaigns` gained a `project_id` (idempotent ALTER, threaded
+through the run model). Web: `/projects`, `/projects/[id]`, `.../board`, `.../files`, `.../history` +
+KanbanBoard/Card, FileTree/Viewer/DiffView/GitLog (all hand-rolled, zero deps) + Projects nav.
+
+**Two bugs found by the LIVE real-claude E2E (the mock can't create git worktrees, so this path
+*requires* real claude — exactly the F-8/F-9/F-11 lesson):**
+1. **Default-branch assumption.** Project create hardcoded `main`; a repo on `master` (older `git init`)
+   → merge against a non-existent base → false "conflict". Fixed: `detectDefaultBranch` via
+   `git symbolic-ref --short HEAD` on create.
+2. **Precheck left main worktree dirty.** `ensureWorktreeIgnored` appended `.claude/worktrees/` to
+   `.gitignore` but didn't commit it → dirty main worktree → `mergeBranch` (correctly) refused. Fixed:
+   commit just `.gitignore` (pathspec-scoped, as fleet-pm) in the precheck.
+
+**Verified:** typecheck clean (3 pkgs), `next build` clean (**15 routes**), 51/51 server tests.
+W0/W1/W4 via curl on a real repo (project git-validation 400/200, kanban CRUD, file tree/log/status,
+**traversal guard 400**). **W2/W3 full real-claude E2E ($0.23):** a Ready card → PM autonomously built
+`hello.txt` in an isolated worktree → ensure-committed (fleet-pm) → validated → integrate-base →
+`merge --no-ff` into `master` → `Done` with `merge_sha`, worktree+branch cleaned up, `hello.txt` on
+master — `git log` shows the full fleet-pm-authored chain. Board UI browser-confirmed (columns, cards,
+Review Approve/Request-changes, SSE). The dev-only Fast-Refresh "Should have a queue" exceptions are an
+HMR artifact on the run-detail route (absent in the production build), not a feature bug.
+
+**Follow-up fix + clean re-verification (the two bug-fixes above were originally confirmed with the OLD
+server + manual git steps; an adversarial review caught that they had never actually run on the fixed
+code path).** Root cause: `ensureWorktreeIgnored` was fire-and-forget (`void …`) *before* `registry.launch`,
+so the `.gitignore` commit raced claude's `git worktree add` on the same index (`index.lock`) and could
+land after `mergeBranch`'s clean-check. Fix: `launchBuild` is now `async` and `await`s
+`ensureWorktreeIgnored` (inside the try, so a git failure parks the card instead of rejecting `tick()`)
+*before* spawning claude; the `tick()` caller `await`s `launchBuild`. **Side-fix the `await` also
+repaired:** `launchBuild` returning a `Promise` made `launched === 'ok'`/`=== 'capped'` always-false
+(TS2367) — the WIP-cap increment and the 429-`break` in `tick()` were dead code; the `await` restored both.
+**Discriminating re-verification ($0.19, zero manual steps):** booted the server on the *new* code with
+real claude + a clean `FLEET_DATA_DIR`, created a project on a fresh `master` repo with `auto_merge:true`
+(no `defaultBranch` → `detectDefaultBranch` returned `master`, fix #1 live), dropped one `Ready` card →
+PM drove it to `Done` autonomously. The resulting commit DAG is *structural* proof the ordering held: the
+work commit is rooted at the gitignore commit (`2bf0e7a`), not the initial commit — so the worktree branch
+was created *after* the gitignore commit, i.e. the race is gone by construction. Run record: `completed`,
+`claude-opus-4-8`, `$0.19` (a mock is exactly `$0`), `bypassPermissions`. Worktree+branch cleaned, main
+worktree clean. Human-approve path is transitively covered (same `doMerge` via `approve()`). `worktree`/
+`disallowedTools` read `null` in the run API by design — they are launch-only spawn args (processManager
+H10), not persisted runs-table columns.
+
+## 10. v2 program — completing the v1 "out-of-scope" items (2026-06-09)
+
+Spec: `docs/superpowers/specs/2026-06-09-v2-out-of-scope-design.md` (9-designer + integration design
+workflow). User decisions: **skip §11.8 auth** (stay localhost); **§11.2 full remote git, PM may push**;
+**§11.6 add Shiki + react-markdown**; **§11.1 full file CRUD** (create/update/delete); paid E2Es
+**deferred → deterministic-first** (confirm each throwaway-repo run at fire time). Built **spec-first, in
+3 contention-driven waves, per-item green-gate + commit**. Cross-cutting rules (binding): per-module ALTER
+loops (NOT db.ts — it runs before projects/kanban CREATE → fresh-DB boot crash); `validation.ts`
+extraction; `validateAndGate` shared sink; `disallowedToolsForProject` single deny-list source (push
+relaxes only for single build/fix); credential scrub on git/gh stderr; `+resolving` phase.
+
+**Wave 1 — DONE (independent items, serial build, all committed):**
+- **#3 plan-board** (`planboard.ts`, `plan_drafts` table, PlanModal): objective → Campaigns planner DAG →
+  preview → cards with mapped `depends_on`. Partitioned onRunTerminal (campaignId:null planning run
+  claimed by neither engine — tested). **mock-claude genuinely drives the planner** (yes-fixture; first
+  server test to exercise the real spawn→parse→terminal path).
+- **#6 rich rendering** (shiki ^4.2 + react-markdown ^10.1 + remark-gfm ^4): `lib/shiki.ts` singleton
+  highlighter, `ShikiCode`/`MarkdownView`; replaced the hand-rolled renderers; lazy/SSR-safe (Shiki only
+  in useEffect, code-split → files route 48.5kB vs 91.8kB shared); sanitization kept (skipHtml,
+  urlTransform, inert `img` placeholder — no remote-image auto-fetch).
+- **#10 git-init on attach** (`git.ts initRepo`): non-git dir + `initGit` → `git init` + `.gitignore` +
+  `git add -A` (stages EXISTING files so a non-empty attach yields a clean tree — a reviewer-caught
+  blocker; staging only `.gitignore` left source untracked → empty PM worktree + perpetual dirty main).
+  Backward-compatible (no initGit → still 400 with `code:'not_a_git_repo'`).
+
+**Wave 2 — DONE (foundation + 3 items):**
+- **Foundation** (`eabf9e7`): all `projects`(+15)/`kanban_tasks`(+8)/`campaigns`(+2) migrations in per-module
+  ALTER loops (NOT db.ts — §3.1), `validation.ts` extraction (§3.2), `validateAndGate`/`withProjectLock`/
+  `disallowedToolsForProject` pm hooks, `scrubCredentials`, `+resolving` phase. Behavior-preserving.
+- **4 scaffold modules** (`8da3013`): fileedit/gh/portbroker/fleet authored in PARALLEL (disjoint new
+  files, unit-tested); two reviewer-caught majors fixed (fileedit CREATE-rollback unlink; fleet
+  no-starve trim).
+- **#5 port-broker** (`88ab089`): `validateCard` selector routes both validate sites (validateAndGate +
+  doMerge re-validate) through brokerValidate when a server-start command is set, else pure runValidation.
+- **#2 full remote git** (`d30c565`): doMerge PR-mode (fetch/FF-sync→push→gh pr create→park Review w/
+  pr_state; never auto-merges PR, never force-pushes); `disallowedToolsForProject` relaxes push ONLY for
+  single build/fix when pushEnabled; refreshPr; git/health route; re-approve guard; credential scrub.
+- **#1 file CRUD** (`529cf54`): fileedit routes registered, `pm.withProjectLock` alias; FileViewer edit
+  mode (create/update/delete, baseOid 409 guard) gated by `editingEnabled`.
+
+**Wave 3 — DONE (serial pm.ts chain):**
+- **#4 campaign-per-card** (`135b2db`): a `mode:'campaign'` card runs a campaign sub-DAG; gate fires on
+  campaign completion via `onCampaignTerminal`→`validateAndGate`; workers get the UNRELAXED deny-list
+  (discriminating security test); single-mode unchanged, no double-gate, engine reused. cancel kills the campaign.
+- **#9 conflict-resolution agent** (`47757df`): opt-in resolve run on a merge conflict → ALWAYS re-validate
+  → merge/abort; reconcile sweeps a mid-resolve worktree. Reviewer-caught correctness FIX: the ship step
+  re-integrates the CURRENT base + re-validates INSIDE the mutex (a disjoint advance during the lock-
+  released resolve run can't ship an unvalidated tree) — discriminating stale-base test added.
+- **#7 fleet scheduler** (`5ef98b0`): `tryAdmit` admission gate in launchBuild (fair-share by priority,
+  reserve slots, daily ceiling, no preemption) + `/fleet` page. Mutation-verified wiring test.
+
+**Post-review — fleet-reserve deadlock hardening** (advisor-flagged H9 class; honest scope below):
+when `reserveSlotsForNonPm >= maxConcurrentRuns` the PM pool is 0, so EVERY card stalls in Ready with no
+surfaced error. Three changes, NOT a full "fix" — the deadlock is reachable from two paths and only one is
+sealed:
+- **Guard (`bbede02`):** `validateFleetConfig` reads `registry.config` and REJECTS `reserve >= cap` at
+  `/fleet` PUT time. `tryAdmit` keeps its `max(0,…)` floor so a config written straight via `fleetRepo.set`
+  (bypassing validation) degrades to "admit nothing", not a negative pool. Tests: `==`/`>` cap reject,
+  `cap-1` accept. NOTE the guard only fires when `cap ≤ 100` (reserve is independently clamped ≤ 100; the
+  live dev config carries a STALE hand-set `maxConcurrentRuns: 300` that predates config.ts's `max:100`
+  clamp — would be re-clamped on any fresh PUT — so the guard is unreachable under the live cap and was
+  exercised only in unit tests at `cap=4`).
+- **Residual path NOT sealed:** lowering the GLOBAL `maxConcurrentRuns` (via `/api/config`) at/below an
+  existing reserve still drives pool→0; that path never touches fleet config, so the PUT guard can't catch
+  it. A symmetric guard in `validateConfig` was rejected (risk of a config↔registry↔fleet circular import).
+- **Loud, not silent (`<default-flip commit>`):** `fleetStatus.deadlocked` = `pool 0 && ≥1 demanding
+  project`; `/fleet` renders a red banner. `tryAdmit` still returns false, so on BOTH paths the H9 harm is
+  now LOUD instead of silent. Tests: deadlocked true (pool 0 + demand) / false (pool 0, no demand) / false
+  (healthy pool).
+- **Default reserve 2 → 0:** the reserve is a soft hold-back for opt-in campaign workers; a non-zero
+  default silently taxed single-project throughput (8→6) and widened the deadlock surface. Default 0 = full
+  PM pool; campaign users raise it. (fleetRepo default tests read `DEFAULT_FLEET_CONFIG` dynamically.)
+
+Curl-smoked live against `dev:mock`: fleet config GET/PUT (+reject), fleet status (full `FleetStatus` incl.
+`deadlocked`), `git/health` (`GitHealth` shape), files tree, `files/edit` (`editable` gated by
+`editingEnabled`), plans, git/status — all contracts green (web redeclares `FleetStatus`/`GitHealth`
+locally, so these aren't typecheck-covered).
+
+**Verified:** **313 server tests** (21 files), `pnpm -r typecheck` clean (3 pkgs). `next build` last clean
+at **16 routes**; the small additive `/fleet` banner (one type field + one conditional element, no new
+imports/routes) is typecheck-clean but `next build` was NOT re-run (would tear down the live dev server).
+All verification is **deterministic — NOT real-claude.** **Deferred paid E2Es** (per decision §10.3,
+confirm at run time, throwaway targets only): #2 PR-open on a throwaway repo, #4 a small real campaign,
+#9 a real conflict resolution. On branch `feat/agent-pm-kanban`, **20 commits ahead of main, NOT pushed**
+(no remote; user pushes only when asked).

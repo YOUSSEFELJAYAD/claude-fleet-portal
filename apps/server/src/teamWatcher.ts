@@ -69,7 +69,24 @@ function readMessages(dir: string): TeamMessage[] {
   return out;
 }
 
+/**
+ * H21 — a team id is a single task-dir name; reject anything that could escape
+ * TASKS_DIR via path.join (separators, "..", null byte). Fastify decodes %2e%2e%2f
+ * into "../", so an unguarded id would read arbitrary N.json/messages files.
+ */
+export function isSafeId(id: unknown): id is string {
+  return (
+    typeof id === 'string' &&
+    id.length > 0 &&
+    !id.includes('/') &&
+    !id.includes('\\') &&
+    !id.includes('..') &&
+    !id.includes('\0')
+  );
+}
+
 export function readTeam(id: string): TeamView | null {
+  if (!isSafeId(id)) return null;
   const dir = path.join(TASKS_DIR, id);
   try {
     if (!statSync(dir).isDirectory()) return null;
@@ -108,6 +125,7 @@ export function listTeams(): Array<{ id: string; name: string; taskDir: string; 
 
 /** Watch a team's task dir; invoke cb (debounced) with a fresh TeamView on change. */
 export function watchTeam(id: string, cb: (view: TeamView) => void): () => void {
+  if (!isSafeId(id)) return () => {};
   const dir = path.join(TASKS_DIR, id);
   let timer: NodeJS.Timeout | null = null;
   const fire = () => {
@@ -121,6 +139,12 @@ export function watchTeam(id: string, cb: (view: TeamView) => void): () => void 
   try {
     watcher = chokidar.watch(dir, { ignoreInitial: true, depth: 1 });
     watcher.on('all', fire);
+    // H19 — a chokidar 'error' (EMFILE/ENOSPC/dir removed) with NO listener throws and
+    // crashes the whole control plane. Swallow it (best-effort watcher).
+    watcher.on('error', (err) => {
+      // eslint-disable-next-line no-console
+      console.warn(`[teamWatcher] watch error for ${id}:`, (err as Error)?.message ?? err);
+    });
   } catch {
     /* dir may not exist */
   }

@@ -21,8 +21,11 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [ultracode, setUltracode] = useState(false);
   const [workflows, setWorkflows] = useState(true);
   const [interactive, setInteractive] = useState(false);
+  const [brief, setBrief] = useState(false); // H22 — enable agent→user messages
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
   const [allowedTools, setAllowedTools] = useState('');
+  const [disallowedTools, setDisallowedTools] = useState(''); // H10
+  const [worktree, setWorktree] = useState(''); // H10
   const [chosenSkills, setChosenSkills] = useState<Set<string>>(new Set());
   const [subagentProfile, setSubagentProfile] = useState('');
   const [budget, setBudget] = useState('');
@@ -30,11 +33,14 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    api.meta().then((m) => {
-      setModels(m.models);
-      setEfforts(m.efforts);
-      setPermModes(m.permissionModes);
-    });
+    api
+      .meta()
+      .then((m) => {
+        setModels(m.models);
+        setEfforts(m.efforts);
+        setPermModes(m.permissionModes);
+      })
+      .catch(() => setErr('Could not load launch options — is the control plane running?')); // H8
   }, []);
   useEffect(() => {
     api.skills(cwd).then(setSkills).catch(() => setSkills([]));
@@ -61,8 +67,11 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
         ultracode,
         workflowsEnabled: workflows,
         interactive,
+        brief,
         permissionMode,
         allowedTools: allowedTools.trim() ? allowedTools.split(/[,\s]+/).filter(Boolean) : undefined,
+        disallowedTools: disallowedTools.trim() ? disallowedTools.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean) : undefined,
+        worktree: worktree.trim() || undefined,
         skills: [...chosenSkills],
         subagentProfile: subagentProfile || null,
         budgetUsd: budget.trim() ? Number(budget) : null,
@@ -120,6 +129,12 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
                   <Toggle on={interactive} onChange={setInteractive} label={interactive ? 'keep alive' : 'one-shot'} />
                 </div>
               </div>
+              <div>
+                <Kicker>brief</Kicker>
+                <div className="mt-2">
+                  <Toggle on={brief} onChange={setBrief} label={brief ? 'agent can ask' : 'off'} />
+                </div>
+              </div>
             </div>
             <Field label="effort dial" hint={ultracode ? 'locked → xhigh' : ''}>
               <Select value={effectiveEffort} disabled={ultracode} onChange={(e) => setEffort(e.target.value as EffortLevel)}>
@@ -171,6 +186,14 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
                 <Input value={allowedTools} onChange={(e) => setAllowedTools(e.target.value)} placeholder="Bash(git *), Edit, Read" />
               </Field>
             </div>
+
+            {/* H10 — worktree isolation + tool deny-list */}
+            <Field label="git worktree" hint="optional · isolated branch">
+              <Input value={worktree} onChange={(e) => setWorktree(e.target.value)} placeholder="feature-x (blank = none)" />
+            </Field>
+            <Field label="disallowed tools" hint="deny-list · comma-separated">
+              <Input value={disallowedTools} onChange={(e) => setDisallowedTools(e.target.value)} placeholder="Bash(git push *), Write" />
+            </Field>
 
             <div className="col-span-2">
               <Kicker>attach skills{skills.length ? ` · ${skills.length} available` : ' · none found'}</Kicker>

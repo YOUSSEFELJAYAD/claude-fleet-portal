@@ -24,6 +24,11 @@ mkdirSync(DATA_DIR, { recursive: true });
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+// H15 — under WAL, synchronous=NORMAL is crash-safe and avoids an fsync per commit
+// (the hot path is one commit per streamed line); busy_timeout makes any second
+// reader/writer wait rather than throwing SQLITE_BUSY.
+db.pragma('synchronous = NORMAL');
+db.pragma('busy_timeout = 5000');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS runs (
@@ -81,7 +86,9 @@ CREATE TABLE IF NOT EXISTS events (
   payload TEXT NOT NULL,
   PRIMARY KEY (run_id, seq)
 );
-CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id, seq);
+-- H15 — the (run_id,seq) PRIMARY KEY already serves every events query; a separate
+-- index on the same columns is pure write amplification. Drop it (incl. on old DBs).
+DROP INDEX IF EXISTS idx_events_run;
 
 CREATE TABLE IF NOT EXISTS teams (
   id TEXT PRIMARY KEY,
@@ -135,7 +142,10 @@ CREATE TABLE IF NOT EXISTS campaigns (
   model TEXT NOT NULL,
   started_at INTEGER NOT NULL,
   ended_at INTEGER,
-  cost_usd REAL NOT NULL DEFAULT 0
+  cost_usd REAL NOT NULL DEFAULT 0,
+  project_id TEXT,
+  disallowed_tools TEXT,
+  permission_mode TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_campaigns_started ON campaigns(started_at DESC);
 
@@ -159,11 +169,23 @@ for (const ddl of [
   'ALTER TABLE runs ADD COLUMN campaign_id TEXT',
   'ALTER TABLE runs ADD COLUMN structured_output TEXT',
   'ALTER TABLE runs ADD COLUMN pid INTEGER',
+  'ALTER TABLE runs ADD COLUMN kill_reason TEXT',
+  'ALTER TABLE runs ADD COLUMN error TEXT',
+  'ALTER TABLE runs ADD COLUMN project_id TEXT', // agent-PM feature
+  'ALTER TABLE campaigns ADD COLUMN project_id TEXT',
+  'CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)',
+  // v2 #4 — campaign-per-card delegation: workers carry a deny-list + a non-interactive
+  // permission mode so `interactive:false` workers don't stall. campaigns table is OWNED by db.ts,
+  // so (per §3.1) these campaigns-only ALTERs go in the EXISTING db.ts loop (NOT a new one).
+  'ALTER TABLE campaigns ADD COLUMN disallowed_tools TEXT',
+  'ALTER TABLE campaigns ADD COLUMN permission_mode TEXT',
 ]) {
   try {
     db.exec(ddl);
-  } catch {
-    /* column already exists */
+  } catch (e: any) {
+    // H15 — only swallow the idempotent "column already exists"; a real DDL failure
+    // must surface here, not later as an opaque "no such column" at stmt-prepare time.
+    if (!/duplicate column name/i.test(e?.message ?? '')) throw e;
   }
 }
 
@@ -181,6 +203,7 @@ function runToRow(r: Run) {
     ultracode: r.ultracode ? 1 : 0,
     team_id: r.teamId,
     campaign_id: r.campaignId,
+    project_id: r.projectId ?? null,
     pid: r.pid ?? null,
     status: r.status,
     started_at: r.startedAt,
@@ -189,6 +212,8 @@ function runToRow(r: Run) {
     tokens_out: r.tokensOut,
     cost_usd: r.costUsd,
     exit_code: r.exitCode,
+    kill_reason: r.killReason ?? null,
+    error: r.error ?? null,
     budget_usd: r.budgetUsd,
     permission_mode: r.permissionMode,
     allowed_tools: r.allowedTools,
@@ -212,6 +237,7 @@ function rowToRun(row: any): Run {
     ultracode: !!row.ultracode,
     teamId: row.team_id,
     campaignId: row.campaign_id ?? null,
+    projectId: row.project_id ?? null,
     pid: row.pid ?? null,
     status: row.status as RunStatus,
     startedAt: row.started_at,
@@ -220,6 +246,8 @@ function rowToRun(row: any): Run {
     tokensOut: row.tokens_out,
     costUsd: row.cost_usd,
     exitCode: row.exit_code,
+    killReason: row.kill_reason ?? null,
+    error: row.error ?? null,
     budgetUsd: row.budget_usd,
     permissionMode: row.permission_mode,
     allowedTools: row.allowed_tools,
@@ -258,14 +286,14 @@ function rowToEvent(row: any): NormalizedEvent {
 
 const upsertRunStmt = db.prepare(`
 INSERT INTO runs (id, session_id, task, cwd, model, fast_mode, effort, workflows_enabled, ultracode,
-  team_id, campaign_id, pid, status, started_at, ended_at, tokens_in, tokens_out, cost_usd, exit_code, budget_usd,
+  team_id, campaign_id, project_id, pid, status, started_at, ended_at, tokens_in, tokens_out, cost_usd, exit_code, kill_reason, error, budget_usd,
   permission_mode, allowed_tools, skills, subagent_profile, result_text, structured_output)
 VALUES (@id, @session_id, @task, @cwd, @model, @fast_mode, @effort, @workflows_enabled, @ultracode,
-  @team_id, @campaign_id, @pid, @status, @started_at, @ended_at, @tokens_in, @tokens_out, @cost_usd, @exit_code, @budget_usd,
+  @team_id, @campaign_id, @project_id, @pid, @status, @started_at, @ended_at, @tokens_in, @tokens_out, @cost_usd, @exit_code, @kill_reason, @error, @budget_usd,
   @permission_mode, @allowed_tools, @skills, @subagent_profile, @result_text, @structured_output)
 ON CONFLICT(id) DO UPDATE SET
   status=@status, ended_at=@ended_at, tokens_in=@tokens_in, tokens_out=@tokens_out, cost_usd=@cost_usd,
-  exit_code=@exit_code, result_text=@result_text, structured_output=@structured_output, pid=@pid
+  exit_code=@exit_code, kill_reason=@kill_reason, error=@error, result_text=@result_text, structured_output=@structured_output, pid=@pid
 `);
 
 const upsertNodeStmt = db.prepare(`
@@ -285,8 +313,39 @@ const insertSkillStmt = db.prepare(
 );
 
 export const repo = {
+  /** H4 — fold the WAL back into the main db file (call on graceful shutdown). */
+  checkpoint() {
+    try {
+      db.pragma('wal_checkpoint(TRUNCATE)');
+    } catch {
+      /* best-effort */
+    }
+  },
+  /** H4 — checkpoint + close the sqlite handle on shutdown. */
+  close() {
+    this.checkpoint();
+    try {
+      db.close();
+    } catch {
+      /* already closed */
+    }
+  },
   upsertRun(r: Run) {
     upsertRunStmt.run(runToRow(r));
+  },
+
+  /**
+   * H16 — persist a batch of changed nodes + new events + the run row in ONE outer
+   * transaction (one fsync) instead of a commit per streamed line. The inner per-method
+   * transactions become savepoints (better-sqlite3 nests), so durability is preserved.
+   */
+  batchPersist(nodes: RunNode[], events: NormalizedEvent[], run: Run | null) {
+    const tx = db.transaction(() => {
+      if (nodes.length) this.upsertNodes(nodes);
+      if (events.length) this.insertEvents(events);
+      if (run) this.upsertRun(run);
+    });
+    tx();
   },
 
   saveSkills(runId: string, skills: string[]) {
@@ -487,9 +546,11 @@ export const repo = {
   upsertCampaign(c: Campaign) {
     db.prepare(`
       INSERT INTO campaigns (id, objective, cwd, status, orchestrator_template, worker_template, synthesizer_template,
-        orchestrator_run_id, synthesizer_run_id, max_parallel, auto_synthesize, budget_per_worker_usd, model, started_at, ended_at, cost_usd)
+        orchestrator_run_id, synthesizer_run_id, max_parallel, auto_synthesize, budget_per_worker_usd, model, started_at, ended_at, cost_usd,
+        project_id, disallowed_tools, permission_mode)
       VALUES (@id,@objective,@cwd,@status,@orchestrator_template,@worker_template,@synthesizer_template,
-        @orchestrator_run_id,@synthesizer_run_id,@max_parallel,@auto_synthesize,@budget_per_worker_usd,@model,@started_at,@ended_at,@cost_usd)
+        @orchestrator_run_id,@synthesizer_run_id,@max_parallel,@auto_synthesize,@budget_per_worker_usd,@model,@started_at,@ended_at,@cost_usd,
+        @project_id,@disallowed_tools,@permission_mode)
       ON CONFLICT(id) DO UPDATE SET status=@status, orchestrator_run_id=@orchestrator_run_id,
         synthesizer_run_id=@synthesizer_run_id, ended_at=@ended_at, cost_usd=@cost_usd
     `).run({
@@ -498,6 +559,11 @@ export const repo = {
       orchestrator_run_id: c.orchestratorRunId, synthesizer_run_id: c.synthesizerRunId, max_parallel: c.maxParallel,
       auto_synthesize: c.autoSynthesize ? 1 : 0, budget_per_worker_usd: c.budgetPerWorkerUsd, model: c.model,
       started_at: c.startedAt, ended_at: c.endedAt, cost_usd: c.costUsd,
+      // v2 #4 — set at INSERT (campaign-per-card identity/launch knobs are immutable for a campaign's
+      // life, so the ON CONFLICT update intentionally leaves them untouched).
+      project_id: c.projectId ?? null,
+      disallowed_tools: c.disallowedTools ? JSON.stringify(c.disallowedTools) : null,
+      permission_mode: c.permissionMode ?? null,
     });
   },
   getCampaign(id: string): Campaign | null {
@@ -537,7 +603,21 @@ function rowToCampaign(row: any): Campaign {
     orchestratorRunId: row.orchestrator_run_id, synthesizerRunId: row.synthesizer_run_id, maxParallel: row.max_parallel,
     autoSynthesize: !!row.auto_synthesize, budgetPerWorkerUsd: row.budget_per_worker_usd, model: row.model,
     startedAt: row.started_at, endedAt: row.ended_at, costUsd: row.cost_usd,
+    // ── v2 #4 columns ──
+    projectId: row.project_id ?? null,
+    disallowedTools: row.disallowed_tools ? safeStrArray(row.disallowed_tools) : null,
+    permissionMode: (row.permission_mode ?? null) as Campaign['permissionMode'],
   };
+}
+
+/** Parse a JSON string[] column; null/garbage → null (preserve "unset" vs an empty list). */
+function safeStrArray(s: unknown): string[] | null {
+  try {
+    const v = JSON.parse(String(s));
+    return Array.isArray(v) ? v.map(String) : null;
+  } catch {
+    return null;
+  }
 }
 function rowToTask(row: any): CampaignTask {
   return {

@@ -2,31 +2,73 @@
  * Fastify control-plane HTTP surface (PRD §9.4): REST commands + SSE live streams
  * (DC.md D-010). localhost-bound, no auth in v1 (DC.md D-011).
  */
-import Fastify, { type FastifyReply } from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import { randomUUID } from 'node:crypto';
+import { ALLOWED_HOSTS, ALLOWED_ORIGINS } from './config.js';
 import { registry } from './registry.js';
 import { campaigns } from './campaigns.js';
 import { seedTemplates } from './templates.js';
 import { repo } from './db.js';
 import { listSkills, listSubagents } from './catalog.js';
-import { listTeams, readTeam, watchTeam } from './teamWatcher.js';
-import { MODELS, EFFORT_LEVELS, PERMISSION_MODES, RUN_STATUSES } from '@fleet/shared';
-import type { LaunchRequest, PortalConfig, CreateCampaignRequest, AgentTemplate, CreateTemplateRequest } from '@fleet/shared';
+import { listTeams, readTeam, watchTeam, isSafeId } from './teamWatcher.js';
+// Lane B additive features (self-contained modules; each owns its tables/routes).
+import { registerMetricsRoutes } from './metrics.js';
+import { registerScheduleRoutes, startScheduler } from './scheduler.js';
+import { registerMcpRoutes } from './mcp.js';
+import { registerNotifierRoutes, initNotifier } from './notifier.js';
+import { registerExportRoutes } from './exporter.js';
+import { registerScoreRoutes } from './scores.js';
+import { registerTagsRoutes } from './tags.js';
+import { registerOtelRoutes } from './otel.js'; // H6
+// Agent-PM / Kanban feature (spec docs/superpowers/specs/2026-06-09-agent-pm-kanban-design.md).
+// Import order matters: projects BEFORE kanban (kanban_tasks references a project; tables created on import).
+import { registerProjectsRoutes } from './projects.js';
+import { registerKanbanRoutes, subscribeBoard } from './kanban.js';
+import { registerFileviewRoutes } from './fileview.js';
+import { registerFileeditRoutes } from './fileedit.js'; // v2 #1 — file CRUD + commit (opt-in per project)
+import { registerPlanboardRoutes, planboard } from './planboard.js'; // v2 #3 — objective → Ready cards
+import { registerFleetRoutes } from './fleet.js'; // v2 #7 — cross-project fleet scheduler (admission)
+import { pm } from './pm.js';
 
-function sse(reply: FastifyReply) {
+/** H21 — a cwd query must be an absolute path with no traversal/null byte (or absent). */
+function isSafeCwd(cwd: unknown): cwd is string | undefined {
+  if (cwd === undefined) return true;
+  return typeof cwd === 'string' && cwd.startsWith('/') && !cwd.includes('..') && !cwd.includes('\0');
+}
+import { MODELS, EFFORT_LEVELS, PERMISSION_MODES, RUN_STATUSES } from '@fleet/shared';
+import type { LaunchRequest, CreateCampaignRequest, AgentTemplate, CreateTemplateRequest } from '@fleet/shared';
+
+// H18 — bound concurrent SSE connections so unbounded tabs/clients can't exhaust the
+// control plane. Over the cap → 503 (no hijack); returns null so the route bails cleanly.
+let sseOpen = 0;
+const MAX_SSE = Number(process.env.FLEET_MAX_SSE || 64);
+
+function sse(reply: FastifyReply, req: FastifyRequest): { send: (obj: unknown) => void; stop: () => void } | null {
+  if (sseOpen >= MAX_SSE) {
+    reply.code(503).send({ error: 'too many live connections' });
+    return null;
+  }
   reply.hijack();
-  reply.raw.writeHead(200, {
+  // reply.hijack() bypasses the CORS plugin, so echo the validated origin here too (H3).
+  // EventSource sends no credentials, so omitting ACAO for a disallowed origin just blocks reads.
+  const origin = req.headers.origin;
+  const headers: Record<string, string> = {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
-    'Access-Control-Allow-Origin': '*',
-  });
+  };
+  if (origin && ALLOWED_ORIGINS.has(origin)) headers['Access-Control-Allow-Origin'] = origin;
+  reply.raw.writeHead(200, headers);
   reply.raw.write(': connected\n\n');
+  sseOpen++;
   const send = (obj: unknown) => {
     try {
-      reply.raw.write(`data: ${JSON.stringify(obj)}\n\n`);
+      // H18 — emit id:<seq> for event frames so EventSource carries Last-Event-ID on reconnect.
+      const seq = (obj as any)?.event?.seq;
+      const idLine = typeof seq === 'number' ? `id: ${seq}\n` : '';
+      reply.raw.write(`${idLine}data: ${JSON.stringify(obj)}\n\n`);
     } catch {
       /* socket gone */
     }
@@ -39,16 +81,74 @@ function sse(reply: FastifyReply) {
     }
   }, 15000);
   ping.unref();
-  return { send, stop: () => clearInterval(ping) };
+  let closed = false;
+  return {
+    send,
+    stop: () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(ping);
+      sseOpen--;
+    },
+  };
 }
 
 export function buildServer() {
   const app = Fastify({ logger: false, bodyLimit: 4 * 1024 * 1024 });
-  app.register(cors, { origin: true });
+
+  // H3 — reject any request whose Host header isn't an allowlisted localhost:PORT.
+  // This is the real DNS-rebinding guard (an attacker page rebound to 127.0.0.1 still
+  // carries its own domain as Host). Runs before every route, including hijacked SSE.
+  app.addHook('onRequest', async (req, reply) => {
+    const host = req.headers.host;
+    if (!host || !ALLOWED_HOSTS.has(host)) {
+      return reply.code(403).send({ error: 'forbidden host' });
+    }
+  });
+
+  // CORS scoped to the local web app only (defense-in-depth). A request with no Origin
+  // (curl, same-origin, EventSource) is allowed — the Host allowlist above is the guard.
+  app.register(cors, {
+    origin: (origin, cb) => cb(null, !origin || ALLOWED_ORIGINS.has(origin)),
+  });
 
   // Orchestration Mode bootstrap (DC.md D-018..D-020)
   seedTemplates();
   campaigns.init();
+
+  // Lane B additive features — register routes + start background workers.
+  registerMetricsRoutes(app); // A2
+  registerScheduleRoutes(app); // A4
+  startScheduler(); // A4 — interval tick (unref'd)
+  registerMcpRoutes(app); // A5
+  registerNotifierRoutes(app); // A3
+  initNotifier(); // A3 — subscribe to run-terminal events
+  registerExportRoutes(app); // A9
+  registerScoreRoutes(app); // A7
+  registerTagsRoutes(app); // A8
+  registerOtelRoutes(app); // H6 — OTLP receiver (/v1/metrics, /v1/logs) + /api/agents/:id/otel
+
+  // Agent-PM / Kanban — projects BEFORE kanban (FK), then the viewer; then start the PM engine.
+  registerProjectsRoutes(app);
+  registerKanbanRoutes(app);
+  registerFileviewRoutes(app);
+  registerFileeditRoutes(app); // v2 #1 — opt-in file CRUD + commit (per-project editing_enabled gate)
+  registerPlanboardRoutes(app); // v2 #3 — plan-board (objective → Ready cards)
+  registerFleetRoutes(app); // v2 #7 — fleet config + status (admission gate is in pm.launchBuild)
+  planboard.init(); // subscribe onRunTerminal — partitioned (§3.7): acts only on its own planning runs
+  pm.init(); // subscribe onRunTerminal + safety tick
+  void pm.reconcile().catch(() => {}); // boot guardrail: reset cards whose run died (async: aborts mid-resolve worktrees)
+  // Kanban board live stream (sse() is module-private here; subscribeBoard never returns null).
+  app.get('/api/projects/:pid/board/stream', (req, reply) => {
+    const s = sse(reply, req);
+    if (!s) return; // 503 already sent (connection cap, H18)
+    const { send, stop } = s;
+    const unsub = subscribeBoard((req.params as any).pid, send);
+    reply.raw.on('close', () => {
+      unsub();
+      stop();
+    });
+  });
 
   app.get('/api/health', async () => ({ ok: true, ts: Date.now() }));
 
@@ -60,21 +160,33 @@ export function buildServer() {
     permissionModes: PERMISSION_MODES,
     statuses: RUN_STATUSES,
   }));
-  app.get('/api/skills', async (req) => {
+  app.get('/api/skills', async (req, reply) => {
     const cwd = (req.query as any)?.cwd as string | undefined;
+    if (!isSafeCwd(cwd)) {
+      reply.code(400);
+      return { error: 'cwd must be an absolute path' };
+    }
     return listSkills(cwd);
   });
-  app.get('/api/subagents', async (req) => {
+  app.get('/api/subagents', async (req, reply) => {
     const cwd = (req.query as any)?.cwd as string | undefined;
+    if (!isSafeCwd(cwd)) {
+      reply.code(400);
+      return { error: 'cwd must be an absolute path' };
+    }
     return listSubagents(cwd);
   });
 
   // ── config / spend ────────────────────────────────────────────────────────────
   app.get('/api/config', async () => registry.getConfig());
-  app.put('/api/config', async (req) => {
-    const cfg = req.body as PortalConfig;
-    registry.setConfig(cfg);
-    return registry.getConfig();
+  app.put('/api/config', async (req, reply) => {
+    try {
+      registry.setConfig(req.body); // H9 — validates/clamps, throws 400 on invalid
+      return registry.getConfig();
+    } catch (e: any) {
+      reply.code(e.statusCode ?? 400);
+      return { error: e.message };
+    }
   });
   app.get('/api/spend', async () => registry.spend());
 
@@ -125,7 +237,9 @@ export function buildServer() {
 
   app.get('/api/agents/:id/stream', (req, reply) => {
     const id = (req.params as any).id;
-    const { send, stop } = sse(reply);
+    const s = sse(reply, req);
+    if (!s) return; // 503 already sent (connection cap, H18)
+    const { send, stop } = s;
     const unsub = registry.subscribeRun(id, send);
     if (!unsub) {
       send({ error: 'not found' });
@@ -142,6 +256,10 @@ export function buildServer() {
   app.post('/api/agents/:id/input', async (req, reply) => {
     const id = (req.params as any).id;
     const text = (req.body as any)?.text;
+    if (typeof text !== 'string' || text.length === 0) {
+      reply.code(400); // H9 — validate before forwarding to claude stdin
+      return { error: 'text must be a non-empty string' };
+    }
     try {
       registry.sendInput(id, text);
       return { ok: true };
@@ -183,6 +301,10 @@ export function buildServer() {
   app.post('/api/agents/:id/permission', async (req, reply) => {
     const id = (req.params as any).id;
     const { requestId, decision } = (req.body as any) ?? {};
+    if (typeof requestId !== 'string' || !requestId || (decision !== 'approve' && decision !== 'deny')) {
+      reply.code(400); // H9 — validate before forwarding into the control_response
+      return { error: 'requestId (non-empty string) and decision (approve|deny) are required' };
+    }
     try {
       registry.decidePermission(id, requestId, decision);
       return { ok: true };
@@ -193,8 +315,10 @@ export function buildServer() {
   });
 
   // ── fleet-wide live stream ────────────────────────────────────────────────────
-  app.get('/api/fleet/stream', (_req, reply) => {
-    const { send, stop } = sse(reply);
+  app.get('/api/fleet/stream', (req, reply) => {
+    const s = sse(reply, req);
+    if (!s) return; // 503 already sent (connection cap, H18)
+    const { send, stop } = s;
     const unsub = registry.subscribeFleet(send);
     reply.raw.on('close', () => {
       unsub();
@@ -206,6 +330,10 @@ export function buildServer() {
   app.get('/api/teams', async () => listTeams());
   app.get('/api/teams/:id', async (req, reply) => {
     const id = (req.params as any).id;
+    if (!isSafeId(id)) {
+      reply.code(400);
+      return { error: 'invalid team id' };
+    }
     const view = readTeam(id);
     if (!view) {
       reply.code(404);
@@ -215,7 +343,13 @@ export function buildServer() {
   });
   app.get('/api/teams/:id/stream', (req, reply) => {
     const id = (req.params as any).id;
-    const { send, stop } = sse(reply);
+    if (!isSafeId(id)) {
+      reply.code(400).send({ error: 'invalid team id' });
+      return;
+    }
+    const s = sse(reply, req);
+    if (!s) return; // 503 already sent (connection cap, H18)
+    const { send, stop } = s;
     const initial = readTeam(id);
     if (initial) send({ kind: 'team', view: initial });
     const unwatch = watchTeam(id, (view) => send({ kind: 'team', view }));
@@ -302,7 +436,9 @@ export function buildServer() {
   });
   app.get('/api/campaigns/:id/stream', (req, reply) => {
     const id = (req.params as any).id;
-    const { send, stop } = sse(reply);
+    const s = sse(reply, req);
+    if (!s) return; // 503 already sent (connection cap, H18)
+    const { send, stop } = s;
     const unsub = campaigns.subscribe(id, send);
     if (!unsub) {
       send({ error: 'not found' });

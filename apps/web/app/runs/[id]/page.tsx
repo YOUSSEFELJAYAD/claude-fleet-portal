@@ -3,18 +3,24 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useRunStream } from '@/lib/live';
-import { api } from '@/lib/api';
+import { api, API } from '@/lib/api';
 import { statusMeta } from '@/lib/status';
 import { LIVE_STATUSES } from '@fleet/shared';
 import { usd, tokens, dur } from '@/lib/format';
 import { Panel, Kicker, StatusBadge, Gauge, Btn, Stat, Input } from '@/components/ui';
 import { Tree } from '@/components/Tree';
 import { Timeline } from '@/components/Timeline';
+import { Waterfall } from '@/components/Waterfall'; // A1
+import { FlowGraph } from '@/components/FlowGraph'; // A11
+import { ScorePanel } from '@/components/ScorePanel'; // A7
+import { TagBar } from '@/components/TagBar'; // A8
+import { SessionPanel } from '@/components/SessionPanel'; // H11
+import { OtelOverlay } from '@/components/OtelOverlay'; // A12
 
 export default function RunDetail({ params }: { params: { id: string } }) {
   const { id } = params;
   const router = useRouter();
-  const { run, nodes, tree, events, partials, connected } = useRunStream(id);
+  const { run, nodes, tree, events, partials, connected, error, truncatedBefore } = useRunStream(id);
   const [selected, setSelected] = useState<string>(id);
   const [raw, setRaw] = useState(false);
   const [inputText, setInputText] = useState('');
@@ -49,7 +55,15 @@ export default function RunDetail({ params }: { params: { id: string } }) {
     return (
       <div className="font-mono text-faint text-[13px]">
         <Link href="/" className="text-amber">← fleet</Link>
-        <div className="mt-8">{connected ? 'loading run…' : 'connecting to control plane…'}</div>
+        <div className="mt-8">
+          {error ? (
+            <span className="text-sig-failed">run unavailable — {error}</span>
+          ) : connected ? (
+            'loading run…'
+          ) : (
+            'connecting to control plane…'
+          )}
+        </div>
       </div>
     );
   }
@@ -113,6 +127,11 @@ export default function RunDetail({ params }: { params: { id: string } }) {
               <Btn variant="danger" onClick={() => act(() => api.permission(id, 'pending', 'deny'))}>✕ Deny</Btn>
             </div>
           )}
+          {/* A9 — export (anchors: Content-Disposition makes them download in place) */}
+          <div className="flex gap-2">
+            <a href={`${API}/api/agents/${id}/export?format=json`} className="font-display uppercase tracking-wider text-[10px] px-2 py-1 border border-line2 text-faint hover:text-amber hover:border-amber/60">↓ JSON</a>
+            <a href={`${API}/api/agents/${id}/export?format=md`} className="font-display uppercase tracking-wider text-[10px] px-2 py-1 border border-line2 text-faint hover:text-amber hover:border-amber/60">↓ MD</a>
+          </div>
         </div>
       </div>
 
@@ -147,6 +166,20 @@ export default function RunDetail({ params }: { params: { id: string } }) {
         </Panel>
       )}
 
+      {/* H11 — session/init panel (what this run actually got) */}
+      <SessionPanel events={events} />
+
+      {/* A12 — OpenTelemetry overlay (per-source cost/tokens + tool decisions, via H6 OTLP) */}
+      <OtelOverlay runId={id} live={live} />
+
+      {/* A8 tags + A7 scoring */}
+      <Panel className="p-3 mb-4">
+        <TagBar runId={id} />
+      </Panel>
+      <div className="mb-4">
+        <ScorePanel runId={id} />
+      </div>
+
       {/* split: tree | timeline */}
       <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4">
         <Panel className="overflow-hidden self-start">
@@ -175,6 +208,11 @@ export default function RunDetail({ params }: { params: { id: string } }) {
             </div>
           </div>
           <div className="px-4 py-2 max-h-[560px] overflow-y-auto">
+            {truncatedBefore != null && (
+              <div className="font-mono text-[10px] text-amber/80 border border-amber/20 bg-amber/[0.04] px-2 py-1 mb-2">
+                ⚠ earlier events (before seq {truncatedBefore}) omitted from this snapshot — showing the most-recent 5000
+              </div>
+            )}
             <Timeline events={nodeEvents} partial={partials[selected]} raw={raw} />
           </div>
           {run.status === 'awaiting-input' && (
@@ -186,6 +224,22 @@ export default function RunDetail({ params }: { params: { id: string } }) {
           )}
         </Panel>
       </div>
+
+      {/* A1 — span waterfall (own collapsible section) */}
+      <div className="mt-4">
+        <Waterfall nodes={nodes} events={events} runStartedAt={run.startedAt} />
+      </div>
+
+      {/* A11 — agent flow graph */}
+      <Panel className="overflow-hidden mt-4">
+        <div className="px-4 py-2.5 border-b hairline flex items-center justify-between">
+          <Kicker>flow graph</Kicker>
+          <span className="font-mono text-[10px] text-faint">{nodes.length} node{nodes.length === 1 ? '' : 's'}</span>
+        </div>
+        <div className="px-2 py-2">
+          <FlowGraph nodes={nodes} />
+        </div>
+      </Panel>
     </div>
   );
 }

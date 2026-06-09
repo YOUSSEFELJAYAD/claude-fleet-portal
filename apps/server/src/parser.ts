@@ -30,6 +30,13 @@ export interface ParsedEvent {
   toolResult?: { forId: string; text: string };
   /** Usage attributed to the owning node (attach only once per raw event). */
   usage?: Usage;
+  /**
+   * `message.id` of the originating assistant message (when present). CC 2.1.168
+   * splits ONE logical assistant message into multiple top-level `assistant`
+   * objects that share this id and each REPEAT the message-level usage — the tree
+   * dedups cost/output by this id so a split message is counted once (H1).
+   */
+  messageId?: string;
   /** Authoritative run cost from the `result` event. */
   costUsd?: number;
   resultText?: string;
@@ -49,6 +56,27 @@ function toUsage(u: any): Usage {
     cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
     cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
   };
+}
+
+/**
+ * H7 — the authoritative RUN total. `result.usage` is only the orchestrator's context
+ * line; the sum across `result.modelUsage[<model>]` (camelCase keys) is the true total
+ * across every agent/model, so a run with subagents isn't undercounted. Returns null
+ * when modelUsage is absent (mock / single-line runs) → caller falls back to result.usage.
+ */
+function usageFromModelUsage(modelUsage: any): Usage | null {
+  if (!modelUsage || typeof modelUsage !== 'object') return null;
+  const entries = Object.values(modelUsage) as any[];
+  if (!entries.length) return null;
+  const u = emptyUsage();
+  for (const e of entries) {
+    if (!e || typeof e !== 'object') continue;
+    u.inputTokens += e.inputTokens ?? 0;
+    u.outputTokens += e.outputTokens ?? 0;
+    u.cacheReadInputTokens += e.cacheReadInputTokens ?? 0;
+    u.cacheCreationInputTokens += e.cacheCreationInputTokens ?? 0;
+  }
+  return u;
 }
 
 function blockText(content: any[]): string {
@@ -76,7 +104,10 @@ function spawnLabel(input: any, name: string): string {
 export function normalize(raw: any): ParsedEvent[] {
   const parentToolUseId: string | null = raw?.parent_tool_use_id ?? null;
   const sessionId: string | undefined = raw?.session_id;
-  const base = { parentToolUseId, sessionId, raw: raw as Record<string, unknown> };
+  // `message.id` (assistant/user events) lets the tree dedup the repeated usage
+  // CC emits across split assistant objects (H1). Undefined for non-message events.
+  const messageId: string | undefined = raw?.message?.id;
+  const base = { parentToolUseId, sessionId, messageId, raw: raw as Record<string, unknown> };
   const out: ParsedEvent[] = [];
 
   switch (raw?.type) {
@@ -85,6 +116,10 @@ export function normalize(raw: any): ParsedEvent[] {
         out.push({ ...base, type: 'init' });
       } else if (raw.subtype === 'status') {
         out.push({ ...base, type: 'status' });
+      } else if (raw.subtype === 'api_retry') {
+        // H22 — a transient retry (rate_limit/overloaded/billing/server_error). Surface it so a
+        // long run retrying through overload doesn't look frozen. Fields live on payload.raw.
+        out.push({ ...base, type: 'api_retry' });
       } else if (raw.subtype === 'permission_request' || raw.subtype === 'can_use_tool') {
         // Best-effort: the headless permission control protocol is not fully verified on
         // this CC version (DC.md open items / review #5). Wire the path defensively so a
@@ -142,7 +177,12 @@ export function normalize(raw: any): ParsedEvent[] {
       if (text) out.push({ ...base, type: 'assistant_text', text, usage: attachUsage() });
       for (const b of content) {
         if (b?.type === 'tool_use') {
-          if (isSpawnTool(b.name)) {
+          if (b.name === 'SendUserMessage') {
+            // H22 — agent→user message (via --brief). Surface as a distinct timeline event;
+            // the user replies through the existing awaiting-input stdin box.
+            const msg = b.input?.message ?? b.input?.text ?? b.input?.content ?? b.input;
+            out.push({ ...base, type: 'agent_message', text: typeof msg === 'string' ? msg : JSON.stringify(msg), usage: attachUsage() });
+          } else if (isSpawnTool(b.name)) {
             out.push({
               ...base,
               type: 'subagent_spawned',
@@ -195,7 +235,8 @@ export function normalize(raw: any): ParsedEvent[] {
         ...base,
         type: 'result',
         costUsd: raw.total_cost_usd ?? 0,
-        usage: toUsage(raw.usage),
+        // H7 — prefer the summed modelUsage (true run total) over the orchestrator-only usage.
+        usage: usageFromModelUsage(raw.modelUsage) ?? toUsage(raw.usage),
         resultText: typeof raw.result === 'string' ? raw.result : undefined,
         structuredOutput: raw.structured_output ?? undefined, // F-8: --json-schema output
         isError: !!raw.is_error,

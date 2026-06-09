@@ -52,6 +52,13 @@ export class RunTree {
   private baseCost = 0;
   private baseTokIn = 0;
   private baseTokOut = 0;
+  /**
+   * message.ids already costed. CC 2.1.168 splits one logical assistant message
+   * into multiple `assistant` objects sharing message.id, each repeating the
+   * message-level usage — without this, cost/output would be counted N× and the
+   * live estimate would trip the budget auto-kill early (H1).
+   */
+  private costedMessageIds = new Set<string>();
 
   constructor(
     runId: string,
@@ -120,7 +127,13 @@ export class RunTree {
     return parentToolUseId;
   }
 
-  private addUsage(node: RunNode, usage: Usage) {
+  private addUsage(node: RunNode, usage: Usage, messageId?: string) {
+    // Count each assistant message's usage ONCE — CC repeats it across split
+    // `assistant` objects sharing message.id (H1). id-less usage always accrues.
+    if (messageId) {
+      if (this.costedMessageIds.has(messageId)) return;
+      this.costedMessageIds.add(messageId);
+    }
     node.tokensOut += usage.outputTokens;
     // input/cache tokens are cumulative-per-message; track the representative
     // context size (max) rather than summing (DC.md token-accounting note).
@@ -162,7 +175,7 @@ export class RunTree {
         res.spawnedLive = true;
         emitNodeId = child.id; // surface the spawn on the new child node
         payload = { childId: child.id, label: child.label, parentId: ownerId, tool: parsed.spawn!.name };
-        if (parsed.usage) this.addUsage(owner, parsed.usage); // usage belongs to the emitter (owner)
+        if (parsed.usage) this.addUsage(owner, parsed.usage, parsed.messageId); // usage belongs to the emitter (owner)
         break;
       }
 
@@ -186,14 +199,15 @@ export class RunTree {
 
       case 'tool_use':
         payload = { id: parsed.toolUse?.id, name: parsed.toolUse?.name, input: parsed.toolUse?.input };
-        if (parsed.usage) this.addUsage(owner, parsed.usage);
+        if (parsed.usage) this.addUsage(owner, parsed.usage, parsed.messageId);
         break;
 
       case 'assistant_text':
       case 'assistant_partial':
       case 'thinking':
+      case 'agent_message': // H22
         payload = { text: parsed.text ?? '' };
-        if (parsed.usage) this.addUsage(owner, parsed.usage);
+        if (parsed.usage) this.addUsage(owner, parsed.usage, parsed.messageId);
         break;
 
       case 'permission_request':
@@ -220,7 +234,7 @@ export class RunTree {
       }
 
       case 'status':
-        if (parsed.usage) this.addUsage(owner, parsed.usage);
+        if (parsed.usage) this.addUsage(owner, parsed.usage, parsed.messageId);
         emitType = 'status';
         break;
 

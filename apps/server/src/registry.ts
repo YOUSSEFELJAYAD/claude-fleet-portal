@@ -19,6 +19,7 @@ import type {
   EffortLevel,
 } from '@fleet/shared';
 import { MODELS } from '@fleet/shared';
+import { validateConfig } from './config.js';
 import { repo } from './db.js';
 import { RunTree } from './tree.js';
 import { normalize } from './parser.js';
@@ -26,6 +27,24 @@ import { spawnClaude, buildArgs, buildResumeArgs, killProcessGroup, type Managed
 
 const TERMINAL: RunStatus[] = ['completed', 'failed', 'killed'];
 const isTerminal = (s: RunStatus) => TERMINAL.includes(s);
+
+/** H18 — getEventsTail caps at the most-recent 5000 events; if it returned a full page and the
+ *  earliest returned seq is past 0, earlier events were omitted from this snapshot. */
+export function tailTruncatedBefore(events: NormalizedEvent[]): number | undefined {
+  return events.length >= 5000 && (events[0]?.seq ?? 0) > 0 ? events[0].seq : undefined;
+}
+
+/** H14 — the verified SDK control-protocol response shape for a permission decision. */
+export function buildPermissionControlResponse(requestId: string, decision: 'approve' | 'deny') {
+  return {
+    type: 'control_response',
+    response: {
+      subtype: 'success',
+      request_id: requestId,
+      response: { behavior: decision === 'approve' ? 'allow' : 'deny' },
+    },
+  };
+}
 
 interface LiveRun {
   run: Run;
@@ -37,7 +56,16 @@ interface LiveRun {
   resultSeen: boolean;
   resultError: boolean;
   awaitingPermission: boolean;
+  /** H14 — a decision was written to stdin; awaitingPermission clears only when the child
+   *  actually advances (next non-permission event), not optimistically on send. */
+  permissionSent: boolean;
   lastStderr: string;
+  /** H16 — coalesced DB writes: pending changed nodes (by id) + new events + a dirty run row,
+   *  flushed in one transaction on a short timer / on terminal / before a snapshot read. */
+  pendingNodes: Map<string, RunNode>;
+  pendingEvents: NormalizedEvent[];
+  runDirty: boolean;
+  flushTimer: NodeJS.Timeout | null;
 }
 
 function modelRates(modelId: string, fast: boolean) {
@@ -115,9 +143,12 @@ class Registry {
   getConfig(): PortalConfig {
     return this.config;
   }
-  setConfig(cfg: PortalConfig) {
-    this.config = cfg;
-    repo.setConfig(cfg);
+  setConfig(cfg: unknown) {
+    // H9 — validate/clamp + merge DEFAULT_CONFIG so a partial/invalid PUT can't disable
+    // the guardrails or leave a ceiling undefined. Throws a 400 on invalid input.
+    const valid = validateConfig(cfg);
+    this.config = valid;
+    repo.setConfig(valid);
   }
 
   // ── fleet pub/sub ───────────────────────────────────────────────────────────
@@ -150,7 +181,7 @@ class Registry {
   subscribeRun(runId: string, cb: (m: StreamMessage) => void): (() => void) | null {
     const snapshot = this.snapshot(runId);
     if (!snapshot) return null;
-    cb({ kind: 'hello', run: snapshot.run, nodes: snapshot.nodes, events: snapshot.events });
+    cb({ kind: 'hello', run: snapshot.run, nodes: snapshot.nodes, events: snapshot.events, truncatedBefore: snapshot.truncatedBefore });
     let set = this.runSubs.get(runId);
     if (!set) {
       set = new Set();
@@ -206,6 +237,7 @@ class Registry {
       ultracode,
       teamId: null,
       campaignId: req.campaignId ?? null,
+      projectId: req.projectId ?? null,
       pid: null,
       status: 'starting',
       startedAt: now,
@@ -214,6 +246,8 @@ class Registry {
       tokensOut: 0,
       costUsd: 0,
       exitCode: null,
+      killReason: null,
+      error: null,
       budgetUsd,
       permissionMode: req.permissionMode,
       allowedTools: req.allowedTools?.length ? req.allowedTools.join(',') : null,
@@ -241,6 +275,11 @@ class Registry {
       resultSeen: false,
       resultError: false,
       awaitingPermission: false,
+      permissionSent: false,
+      pendingNodes: new Map(),
+      pendingEvents: [],
+      runDirty: false,
+      flushTimer: null,
       lastStderr: '',
     };
     this.live.set(sessionId, lr);
@@ -273,6 +312,10 @@ class Registry {
   }
 
   private handleLine(lr: LiveRun, raw: any) {
+    // H12 — once a run is killed, the detached child can keep emitting for up to the
+    // SIGTERM→SIGKILL window; ignore those lines instead of running the full ingest →
+    // persist → broadcast body for an already-terminal run (wasted DB writes + SSE noise).
+    if (lr.killed) return;
     const parsedList = normalize(raw);
     if (parsedList.length === 0) return;
 
@@ -281,13 +324,13 @@ class Registry {
       const r = lr.tree.ingest(parsed, ts);
       if (r.events.length === 0) continue;
 
-      // persist nodes + non-ephemeral events
+      // H16 — buffer nodes + non-ephemeral events for a coalesced flush (instead of a
+      // commit per line). Live SSE still fans out immediately below; only the DB write is batched.
       const changedNodes = [...r.changedNodeIds]
         .map((id) => lr.tree.nodes.get(id))
         .filter((n): n is RunNode => !!n);
-      if (changedNodes.length) repo.upsertNodes(changedNodes);
-      const persistable = r.events.filter((e) => e.type !== 'assistant_partial' && e.type !== 'thinking');
-      if (persistable.length) repo.insertEvents(persistable);
+      for (const n of changedNodes) lr.pendingNodes.set(n.id, n);
+      for (const e of r.events) if (e.type !== 'assistant_partial' && e.type !== 'thinking') lr.pendingEvents.push(e);
 
       // fan out events + node updates
       for (const e of r.events) this.broadcastRun(lr.run.id, { kind: 'event', event: e });
@@ -297,6 +340,11 @@ class Registry {
       if (r.init) this.setLiveStatus(lr);
       if (r.permission) {
         lr.awaitingPermission = true;
+        lr.permissionSent = false;
+      } else if (lr.permissionSent && parsed.type !== 'noise') {
+        // H14 — the child advanced past the prompt after our decision → clear the await state.
+        lr.awaitingPermission = false;
+        lr.permissionSent = false;
       }
       if (r.result) {
         lr.resultSeen = true;
@@ -335,8 +383,32 @@ class Registry {
       return;
     }
 
-    repo.upsertRun(lr.run);
+    lr.runDirty = true; // H16 — coalesced flush instead of a per-line upsertRun
+    this.scheduleFlush(lr);
     this.emitRun(lr);
+  }
+
+  /** H16 — flush the coalesced node/event/run buffer to SQLite in one transaction. */
+  private flush(lr: LiveRun) {
+    if (lr.flushTimer) {
+      clearTimeout(lr.flushTimer);
+      lr.flushTimer = null;
+    }
+    const nodes = lr.pendingNodes.size ? [...lr.pendingNodes.values()] : [];
+    const events = lr.pendingEvents;
+    if (!nodes.length && !events.length && !lr.runDirty) return;
+    lr.pendingNodes = new Map();
+    lr.pendingEvents = [];
+    lr.runDirty = false;
+    repo.batchPersist(nodes, events, lr.run);
+  }
+  private scheduleFlush(lr: LiveRun) {
+    if (lr.flushTimer) return;
+    lr.flushTimer = setTimeout(() => {
+      lr.flushTimer = null;
+      this.flush(lr);
+    }, 75);
+    lr.flushTimer.unref();
   }
 
   /** Derive the non-terminal live status from current signals. */
@@ -350,6 +422,7 @@ class Registry {
   }
 
   private onExit(lr: LiveRun, code: number | null, _signal: NodeJS.Signals | null) {
+    this.flush(lr); // H16 — drain buffered events before writing the terminal state
     let status: RunStatus;
     if (lr.killed) status = 'killed';
     else if (code === 0 || (lr.resultSeen && !lr.resultError)) status = 'completed';
@@ -359,6 +432,13 @@ class Registry {
     lr.run.status = status;
     lr.run.endedAt = now;
     lr.run.exitCode = code;
+    // H5 — surface the captured stderr / guardrail note instead of discarding it, so a
+    // failed/killed run shows WHY (the F-8/F-9/F-11 history is all flags that fail only
+    // against real claude — a bare status='failed' hid the actual cause).
+    if (status !== 'completed') {
+      const err = lr.lastStderr.trim();
+      if (err) lr.run.error = err.slice(-2000);
+    }
     if (status === 'killed') lr.tree.killAll(now);
     const roll = lr.tree.rollups();
     lr.run.costUsd = roll.costUsd;
@@ -394,6 +474,22 @@ class Registry {
     }
   }
 
+  /**
+   * H4 — on server shutdown, terminate every live claude child process group. They are
+   * spawned detached, so without this they survive the parent and keep spending budget
+   * (the boot-time reconcileOrphans is only a reactive band-aid that leaves an orphan window).
+   */
+  shutdown() {
+    for (const lr of this.live.values()) {
+      try {
+        lr.proc?.kill();
+        killProcessGroup(lr.run.pid, true);
+      } catch {
+        /* best-effort during shutdown */
+      }
+    }
+  }
+
   stop(runId: string, reason: 'user' | 'budget' = 'user') {
     const lr = this.live.get(runId);
     if (!lr) {
@@ -404,6 +500,7 @@ class Registry {
       killProcessGroup(run.pid);
       if (!isTerminal(run.status)) {
         run.status = 'killed';
+        run.killReason = reason; // H5
         run.endedAt = Date.now();
         repo.upsertRun(run);
       }
@@ -412,10 +509,12 @@ class Registry {
       this.broadcastFleet({ kind: 'spend', spend: this.spend() });
       return;
     }
+    this.flush(lr); // H16 — drain buffered events before the terminal write
     lr.killed = true;
     const now = Date.now();
     lr.tree.killAll(now);
     lr.run.status = 'killed';
+    lr.run.killReason = reason; // H5 — distinguish user stop vs budget auto-kill
     lr.run.endedAt = now;
     lr.run.liveSubagents = 0;
     repo.upsertNodes(lr.tree.flatNodes());
@@ -424,7 +523,6 @@ class Registry {
     this.notifyTerminal(lr);
     lr.proc?.kill(); // cascades to the process group (§7.6)
     this.scheduleEvict(runId);
-    void reason;
   }
 
   /** Permanently delete a finished run from history (PRD §7.8). Live runs must be stopped first. */
@@ -494,6 +592,11 @@ class Registry {
       resultSeen: false,
       resultError: false,
       awaitingPermission: false,
+      permissionSent: false,
+      pendingNodes: new Map(),
+      pendingEvents: [],
+      runDirty: false,
+      flushTimer: null,
       lastStderr: '',
     };
     this.live.set(runId, lr);
@@ -513,17 +616,19 @@ class Registry {
   decidePermission(runId: string, requestId: string, decision: 'approve' | 'deny') {
     const lr = this.live.get(runId);
     if (!lr || !lr.proc) throw Object.assign(new Error('Run is not live'), { statusCode: 409 });
-    const msg = JSON.stringify({
-      type: 'control_response',
-      response: { request_id: requestId, decision },
-    });
+    // H14 — use the verified SDK control-protocol shape: subtype:'success' wrapper, and the
+    // inner response keyed by `behavior: allow|deny` (NOT `decision`), nested one level deeper.
+    // (best-effort: this CC version has no --permission-prompt-tool flag and CLI #469/#34046
+    // report can_use_tool may not fire under -p at all, so this path is largely dormant.)
+    const msg = JSON.stringify(buildPermissionControlResponse(requestId, decision));
     try {
       (lr.proc.child.stdin as any)?.write(msg + '\n');
     } catch {
       /* ignore */
     }
-    lr.awaitingPermission = false;
-    if (!isTerminal(lr.run.status)) this.setLiveStatus(lr);
+    // H14 — do NOT optimistically clear/flip to running; the child may reject or never proceed
+    // (masking a silent failure). awaitingPermission clears in handleLine when the child advances.
+    lr.permissionSent = true;
     this.emitRun(lr);
   }
 
@@ -562,18 +667,17 @@ class Registry {
     return assembleFromFlat(nodes, runId);
   }
 
-  private snapshot(runId: string): { run: Run; nodes: RunNode[]; events: NormalizedEvent[] } | null {
+  private snapshot(runId: string): { run: Run; nodes: RunNode[]; events: NormalizedEvent[]; truncatedBefore?: number } | null {
     const lr = this.live.get(runId);
     if (lr) {
-      return {
-        run: { ...lr.run },
-        nodes: lr.tree.flatNodes(),
-        events: repo.getEventsTail(runId), // most-recent events → continuity to live (review #9)
-      };
+      this.flush(lr); // H16 — ensure buffered events are in the DB before a snapshot read
+      const events = repo.getEventsTail(runId); // most-recent events → continuity to live (review #9)
+      return { run: { ...lr.run }, nodes: lr.tree.flatNodes(), events, truncatedBefore: tailTruncatedBefore(events) };
     }
     const run = repo.getRun(runId);
     if (!run) return null;
-    return { run, nodes: repo.getNodes(runId), events: repo.getEventsTail(runId) };
+    const events = repo.getEventsTail(runId);
+    return { run, nodes: repo.getNodes(runId), events, truncatedBefore: tailTruncatedBefore(events) };
   }
 }
 
