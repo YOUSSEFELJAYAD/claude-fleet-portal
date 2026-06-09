@@ -31,7 +31,7 @@
  * `registerFleetRoutes(app)`. It only READS pm/registry/projects/kanban helpers.
  */
 import type { FastifyInstance } from 'fastify';
-import type { FleetConfig, Project } from '@fleet/shared';
+import type { FleetConfig, FleetProjectStatus, FleetStatus, Project } from '@fleet/shared';
 import db, { repo } from './db.js';
 import { registry } from './registry.js';
 import { projectsRepo } from './projects.js';
@@ -358,39 +358,11 @@ function spendToday(): number {
 }
 
 // ── status snapshot ─────────────────────────────────────────────────────────────
-export interface FleetProjectStatus {
-  projectId: string;
-  name: string;
-  priority: number;
-  paused: boolean;
-  weight: number; // priority + 1 (0 when not demanding)
-  liveRuns: number; // live PM runs
-  readyCards: number;
-  quota: number; // fair-share quota under the current pool (0 when not demanding)
-  demanding: boolean;
-  wipLimit: number; // the project's per-project WIP cap (pm.ts gate, surfaced read-only for the /fleet UI)
-  inProgress: number; // cards currently in the InProgress column (kanbanRepo.inProgressCount)
-  projectSpend: number; // cumulative USD across every run scoped to this project (pm.ts projectSpend)
-}
-
-export interface FleetStatus {
-  config: FleetConfig;
-  maxConcurrentRuns: number;
-  pool: number; // slots available to PM runs (maxConcurrentRuns - reserveSlotsForNonPm, floored at 0)
-  pmLiveTotal: number; // total live PM runs across the fleet
-  spendTodayUsd: number;
-  spendCeilingUsd: number | null;
-  spendExceeded: boolean;
-  /**
-   * Loud H9 signal: the PM pool is 0 (reserve >= maxConcurrentRuns) WHILE ≥1 project is demanding it,
-   * so every Ready card stalls with no admission and no other surfaced error. validateFleetConfig
-   * rejects this for a /fleet PUT, but it is still reachable by lowering the GLOBAL maxConcurrentRuns
-   * (via /api/config) at/below the fleet reserve — that path never touches fleet config. Surfacing it
-   * here lets the /fleet page show the operator WHY nothing launches instead of failing silently.
-   */
-  deadlocked: boolean;
-  projects: FleetProjectStatus[];
-}
+// FleetStatus / FleetProjectStatus moved to @fleet/shared so the web client imports the same
+// contract instead of redeclaring it (it had drifted out of typecheck coverage — DC §10).
+// `deadlocked` semantics: pool 0 (reserve >= maxConcurrentRuns) while ≥1 project demands it.
+// Both PUT paths now reject that state (validateFleetConfig here; assertCapAboveReserve for
+// /api/config), so the flag remains the loud backstop for direct repo writes only.
 
 /** Live allocation snapshot for GET /api/fleet/status and the /fleet UI page. */
 export function fleetStatus(): FleetStatus {

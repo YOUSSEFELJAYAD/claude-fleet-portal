@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { Project, CreateProjectRequest, MergeMode } from '@fleet/shared';
+import type { Project, CreateProjectRequest, MergeMode, GitHealth } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Select, Toggle, Btn, Empty } from '@/components/ui';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
@@ -49,15 +49,6 @@ interface UpdateProjectRequest {
   pushEnabled?: boolean;
   // ── v2 #9: conflict-resolution agent ──
   resolveConflicts?: boolean;
-}
-
-/** git/remote readiness response (GET /api/projects/:id/git/health, v2 #2). */
-interface GitHealth {
-  remoteUrl: string | null;
-  remoteResolves: boolean;
-  ghInstalled: boolean;
-  ghAuthOk: boolean;
-  pushEnabled: boolean;
 }
 
 const projectsApi = {

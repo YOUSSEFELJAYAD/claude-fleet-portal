@@ -16,7 +16,12 @@ import type {
   PlanTask,
   KanbanColumn,
   FleetConfig,
+  FleetStatus,
+  FleetProjectStatus,
 } from '@fleet/shared';
+
+// Re-export for page components that take these via the api layer.
+export type { FleetStatus, FleetProjectStatus };
 
 export const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
@@ -100,36 +105,7 @@ export type CommitFileResult =
   | { ok: true; sha: string; author: string | { name: string; email: string } }
   | { ok: false; error: string };
 
-// ── v2 #7: fleet cross-project scheduler status (mirrors server src/fleet.ts) ──
-/** Per-project allocation row in the fleet status snapshot. Mirrors FleetProjectStatus in
- *  apps/server/src/fleet.ts EXACTLY (the server type isn't exported from @fleet/shared). */
-export interface FleetProjectStatus {
-  projectId: string;
-  name: string;
-  priority: number;
-  paused: boolean;
-  weight: number; // priority + 1 (0 when not demanding)
-  liveRuns: number; // live PM runs
-  readyCards: number;
-  quota: number; // fair-share quota under the current pool (0 when not demanding)
-  demanding: boolean;
-  wipLimit: number; // per-project WIP cap (read-only here)
-  inProgress: number; // cards in the InProgress column
-  projectSpend: number; // cumulative USD across runs scoped to this project
-}
-
-/** Live fleet allocation snapshot (GET /api/fleet/status). Mirrors FleetStatus in src/fleet.ts. */
-export interface FleetStatus {
-  config: FleetConfig;
-  maxConcurrentRuns: number;
-  pool: number; // PM slots = max(0, maxConcurrentRuns - reserveSlotsForNonPm)
-  pmLiveTotal: number;
-  spendTodayUsd: number;
-  spendCeilingUsd: number | null;
-  spendExceeded: boolean;
-  deadlocked: boolean; // pool is 0 while ≥1 project demands it → every Ready card stalls silently
-  projects: FleetProjectStatus[];
-}
+// v2 #7 fleet status types now come from @fleet/shared (no local mirror — DC §10 gap closed).
 
 export const api = {
   launch: (b: LaunchRequest) => j<Run>('/api/agents', { method: 'POST', body: JSON.stringify(b) }),

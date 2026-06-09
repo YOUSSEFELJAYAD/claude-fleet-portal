@@ -18,7 +18,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { Project, CreateProjectRequest, MergeMode } from '@fleet/shared';
+import type { Project, CreateProjectRequest, MergeMode, GitHealth } from '@fleet/shared';
 import db from './db.js';
 import { initRepo } from './git.js';
 import { resolveRemote, ghAuthStatus } from './gh.js';
@@ -370,13 +370,14 @@ export function registerProjectsRoutes(app: FastifyInstance) {
     }
     const remote = await resolveRemote(project.rootDir, project.remoteName);
     const auth = await ghAuthStatus(); // one call → both installed + authenticated
-    return {
+    const health: GitHealth = {
       remoteUrl: remote.url, // scrubbed in gh.ts
       remoteResolves: remote.resolves,
       ghInstalled: auth.installed,
       ghAuthOk: auth.authenticated,
       pushEnabled: project.pushEnabled,
     };
+    return health;
   });
 
   // ── create ──────────────────────────────────────────────────────────────────

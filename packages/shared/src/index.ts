@@ -304,6 +304,45 @@ export interface FleetConfig {
   fleetSpendCeilingUsd: number | null;
 }
 
+/** Per-project allocation row in the fleet status snapshot (v2 #7). */
+export interface FleetProjectStatus {
+  projectId: string;
+  name: string;
+  priority: number;
+  paused: boolean;
+  weight: number; // priority + 1 (0 when not demanding)
+  liveRuns: number; // live PM runs
+  readyCards: number;
+  quota: number; // fair-share quota under the current pool (0 when not demanding)
+  demanding: boolean;
+  wipLimit: number; // the project's per-project WIP cap (pm.ts gate, surfaced read-only)
+  inProgress: number; // cards currently in the InProgress column
+  projectSpend: number; // cumulative USD across every run scoped to this project
+}
+
+/** Live fleet allocation snapshot (GET /api/fleet/status, v2 #7). */
+export interface FleetStatus {
+  config: FleetConfig;
+  maxConcurrentRuns: number;
+  pool: number; // slots available to PM runs (maxConcurrentRuns - reserveSlotsForNonPm, floored at 0)
+  pmLiveTotal: number; // total live PM runs across the fleet
+  spendTodayUsd: number;
+  spendCeilingUsd: number | null;
+  spendExceeded: boolean;
+  /** Loud H9 signal: the PM pool is 0 WHILE ≥1 project demands it → every Ready card stalls. */
+  deadlocked: boolean;
+  projects: FleetProjectStatus[];
+}
+
+/** git/remote readiness for PR mode (GET /api/projects/:id/git/health, v2 #2). */
+export interface GitHealth {
+  remoteUrl: string | null; // credential-scrubbed
+  remoteResolves: boolean;
+  ghInstalled: boolean;
+  ghAuthOk: boolean;
+  pushEnabled: boolean;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE stream envelope (PRD §9.4 /stream)
 // ─────────────────────────────────────────────────────────────────────────────
