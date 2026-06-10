@@ -29,6 +29,7 @@ jobs:
 
   release:
     needs: test
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +42,10 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Claude Fleet Portal $TAG" --generate-notes
 
   desktop:
-    needs: release
+    needs: [test, release]
+    # tag pushes wait for the release job (so auto-notes land first); manual dispatch runs
+    # skip the release job and upload to the existing release for this version.
+    if: always() && needs.test.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:

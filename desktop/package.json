@@ -67,7 +67,8 @@
     "publish": {
       "provider": "github",
       "owner": "YOUSSEFELJAYAD",
-      "repo": "claude-fleet-portal"
+      "repo": "claude-fleet-portal",
+      "releaseType": "release"
     },
     "extraResources": [
       {
@@ -79,5 +80,10 @@
         "to": "mock"
       }
     ]
+  },
+  "homepage": "https://github.com/YOUSSEFELJAYAD/claude-fleet-portal",
+  "author": {
+    "name": "YOUSSEFELJAYAD",
+    "email": "eljayadyoussef@gmail.com"
   }
 }
