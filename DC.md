@@ -690,3 +690,26 @@ repo-state-dependent cases `skipIf(hasOrigin)`), 3/3 typecheck, `next build` cle
 live demo against `FLEET_GITHUB_REPO=anthropics/claude-code`: latest v2.1.172 detected,
 updateAvailable true, sidebar badge lit, 20-release changelog rendered, honest "no origin —
 pull manually" state (no update button); restarted clean without the env (quiet not-linked state).
+
+## 16. Installer, production start point + startup banner; published to GitHub (2026-06-11)
+
+- **Published:** private repo **github.com/YOUSSEFELJAYAD/claude-fleet-portal** (gh account
+  switched yeljayad → YOUSSEFELJAYAD), all of §11–§15 committed on main (`c7e5492`), tagged +
+  released **v0.1.0**. The /releases page now reports "up to date" against it.
+- **§15 addendum — private-repo update checks:** unauthenticated GitHub API 404s private repos,
+  so the release checker falls back to `gh auth token` when GITHUB_TOKEN is unset (same trust
+  surface as PR mode's gh dependency; 10-min token cache so `gh auth switch` applies without a
+  server restart). Verified live: latest v0.1.0 detected on the private repo, updateAvailable
+  false, canSelfUpdate true.
+- **`install.sh`** — fresh-clone installer: prereq checks (node ≥20 w/ version gate, pnpm w/
+  corepack fallback, git required, claude + gh optional w/ honest notes), `pnpm install`,
+  `pnpm build`, data dir, chmod, next-steps card. Idempotent.
+- **`start.sh`** — the production "point of start": octopus + Claude-mark ANSI startup banner,
+  `--mock` flag (free deterministic runs), build-exists + claude-exists + ports-free guards,
+  starts server (`tsx src/index.ts`) + web (`next start`), one Ctrl-C stops both. Root
+  `pnpm start` added; web `start` honors FLEET_WEB_PORT. README "Install & run" rewritten
+  around clone → ./install.sh → ./start.sh.
+
+**Verified end-to-end:** ./install.sh ran clean on this checkout (build 18 routes), ./start.sh
+--mock booted production mode (banner rendered, both ports healthy, 12 templates served, mock
+run launched + record deleted), dev mode restored after.

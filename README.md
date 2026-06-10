@@ -63,23 +63,33 @@ external infra — `pnpm dev` just runs. Schema mirrors the PRD and stays Postgr
 - **Claude Code ≥ 2.1.154**, authenticated (`claude --version`) — only needed for *real* runs
 - No database server needed (SQLite is embedded)
 
-## Run it
+## Install & run
 
 ```bash
-pnpm install            # first run: builds the better-sqlite3 native binding
+git clone https://github.com/YOUSSEFELJAYAD/claude-fleet-portal.git
+cd claude-fleet-portal
+./install.sh            # checks prereqs → pnpm install → production build
 
-# A) against the REAL claude binary (spends real tokens):
-pnpm dev                #  web → http://127.0.0.1:4318   control plane → :4319
-
-# B) against the free, deterministic mock (no tokens, great for a tour):
-chmod +x tools/mock-claude.mjs
-pnpm dev:mock
+./start.sh              # production →  web http://127.0.0.1:4318 · control plane :4319
+./start.sh --mock       # same, against the FREE deterministic mock (no tokens — great first tour)
 ```
 
 Open **http://127.0.0.1:4318**, hit **＋ Launch Agent**, and watch it stream.
 
-Env knobs: `CLAUDE_BIN` (real vs mock), `FLEET_SERVER_PORT` (4319), `MOCK_FIXTURE`
-(`workflow-fanout` | `real-subagent` | `real-pong`), `MOCK_DELAY_MS`.
+For development (hot reload):
+
+```bash
+pnpm dev                # against the REAL claude binary (spends real tokens)
+pnpm dev:mock           # against the mock
+```
+
+Once the repo has an `origin` remote, **/releases** in the app checks GitHub for newer
+releases (sidebar badge) and can **self-update** with one click (`git pull --ff-only` +
+`pnpm install`; refuses over uncommitted changes).
+
+Env knobs: `CLAUDE_BIN` (real vs mock), `FLEET_WEB_PORT` (4318), `FLEET_SERVER_PORT` (4319),
+`FLEET_DATA_DIR` (./data), `MOCK_FIXTURE` (`workflow-fanout` | `real-subagent` | `real-pong`),
+`MOCK_DELAY_MS`, `FLEET_GITHUB_REPO` / `GITHUB_TOKEN` (release checks).
 
 ## Tests
 

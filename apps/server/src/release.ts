@@ -95,12 +95,30 @@ export function __setFetcherForTests(f: Fetcher | null) {
   cache = null;
 }
 
-function ghHeaders(): Record<string, string> {
+// PRIVATE repos are invisible to unauthenticated API calls (404), so auth resolves from
+// GITHUB_TOKEN, falling back to the gh CLI's stored token — the portal already relies on
+// an authenticated `gh` for PR mode, so this is the same trust surface. Cached briefly
+// (account switches via `gh auth switch` should take effect without a server restart).
+let ghTokenCache: { token: string | null; at: number } | null = null;
+async function resolveGhToken(): Promise<string | null> {
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+  if (ghTokenCache && Date.now() - ghTokenCache.at < CACHE_TTL_MS) return ghTokenCache.token;
+  try {
+    const { stdout } = await execFileAsync('gh', ['auth', 'token'], { timeout: 10000 });
+    ghTokenCache = { token: stdout.trim() || null, at: Date.now() };
+  } catch {
+    ghTokenCache = { token: null, at: Date.now() };
+  }
+  return ghTokenCache.token;
+}
+
+async function ghHeaders(): Promise<Record<string, string>> {
   const h: Record<string, string> = {
     accept: 'application/vnd.github+json',
     'user-agent': 'claude-fleet-portal',
   };
-  if (process.env.GITHUB_TOKEN) h.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const token = await resolveGhToken();
+  if (token) h.authorization = `Bearer ${token}`;
   return h;
 }
 
@@ -117,7 +135,7 @@ function toReleaseInfo(r: any): ReleaseInfo {
 
 async function fetchReleases(slug: string): Promise<ReleaseInfo[]> {
   const res = await fetcher(`https://api.github.com/repos/${slug}/releases?per_page=20`, {
-    headers: ghHeaders(),
+    headers: await ghHeaders(),
     signal: AbortSignal.timeout(GH_TIMEOUT_MS),
   });
   if (res.status === 404) return []; // repo exists but has no releases (or repo not found) → empty, not an error

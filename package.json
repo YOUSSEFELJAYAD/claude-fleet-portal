@@ -2,19 +2,23 @@
   "name": "claude-fleet-portal",
   "version": "0.1.0",
   "private": true,
-  "description": "Locally-hosted web portal to launch, monitor and control a fleet of local Claude Code agents — Dynamic Workflows, subagents, Agent Teams, and Skills.",
+  "description": "Locally-hosted web portal to launch, monitor and control a fleet of local Claude Code agents \u2014 Dynamic Workflows, subagents, Agent Teams, and Skills.",
   "packageManager": "pnpm@10.19.0",
   "scripts": {
     "dev": "concurrently -n server,web -c blue,magenta \"pnpm --filter @fleet/server dev\" \"pnpm --filter @fleet/web dev\"",
     "dev:mock": "concurrently -n server,web -c blue,magenta \"CLAUDE_BIN=$PWD/tools/mock-claude.mjs pnpm --filter @fleet/server dev\" \"pnpm --filter @fleet/web dev\"",
     "build": "pnpm --filter @fleet/web build",
     "test": "pnpm --filter @fleet/server test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "start": "concurrently -n server,web -c blue,magenta \"pnpm --filter @fleet/server start\" \"pnpm --filter @fleet/web start\""
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
   }
 }
