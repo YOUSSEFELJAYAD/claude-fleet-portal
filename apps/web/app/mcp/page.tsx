@@ -17,7 +17,7 @@ interface McpResponse {
 /** map a normalized status token to a signal color + display label */
 function statusColor(status: string): string {
   const s = status.toLowerCase();
-  if (s.includes('connect') && !s.includes('fail')) return '#54e08a';
+  if (s.includes('connect') && !s.includes('fail') && !s.includes('not') && !s.includes('disconnect')) return '#54e08a';
   if (s.includes('fail') || s.includes('error')) return '#ff5d5d';
   if (s.includes('auth') || s.includes('pending') || s.includes('connecting')) return '#ffb000';
   return '#7b828c';

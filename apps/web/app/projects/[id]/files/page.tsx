@@ -173,6 +173,7 @@ export default function ProjectFilesPage({ params }: { params: { id: string } })
           </Panel>
           <Panel className="overflow-hidden" style={{ maxHeight: 640 }}>
             <FileViewer
+              key={selected ?? 'none'}
               projectId={id}
               path={selected}
               editingEnabled={editingEnabled}

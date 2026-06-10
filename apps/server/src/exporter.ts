@@ -154,7 +154,9 @@ function buildMarkdown(run: Run, nodes: RunNode[], events: NormalizedEvent[]): s
 
 // ── CSV ─────────────────────────────────────────────────────────────────────────
 function csvCell(v: unknown): string {
-  const s = v == null ? '' : String(v);
+  let s = v == null ? '' : String(v);
+  // neutralize spreadsheet formula injection (CWE-1236)
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
   return s;
 }
@@ -192,7 +194,8 @@ export function registerExportRoutes(app: FastifyInstance) {
   // it is a distinct path depth (/api/agents/export.csv) so there is no collision.
   app.get('/api/agents/export.csv', async (req, reply) => {
     const q = req.query as any;
-    const runs = repo.listRuns({ status: q?.status, effort: q?.effort, q: q?.q });
+    // Uncapped — the UI list's 500-row cap would silently drop older runs from the export.
+    const runs = repo.listRunsForExport({ status: q?.status, effort: q?.effort, q: q?.q });
     attach(reply, 'text/csv; charset=utf-8', 'fleet-history.csv');
     return reply.send(buildCsv(runs));
   });

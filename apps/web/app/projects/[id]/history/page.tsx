@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { API } from '@/lib/api';
 import type { Project } from '@fleet/shared';
@@ -44,19 +44,17 @@ interface GitShowResult {
   error?: string;
 }
 
-const PAGE = 200;
-
 export default function ProjectHistoryPage({ params }: { params: { id: string } }) {
   const { id } = params;
   const [project, setProject] = useState<Project | null>(null);
   const [entries, setEntries] = useState<GitLogEntry[] | null>(null);
   const [logErr, setLogErr] = useState<string | null>(null);
   const [logLoading, setLogLoading] = useState(false);
-  const [max, setMax] = useState(PAGE);
 
   const [selected, setSelected] = useState<string | null>(null);
   const [show, setShow] = useState<GitShowResult | null>(null);
   const [showLoading, setShowLoading] = useState(false);
+  const latestHashRef = useRef<string | null>(null);
 
   useEffect(() => {
     fetch(`${API}/api/projects/${id}`)
@@ -68,7 +66,7 @@ export default function ProjectHistoryPage({ params }: { params: { id: string } 
   const loadLog = useCallback(() => {
     setLogLoading(true);
     setLogErr(null);
-    fetch(`${API}/api/projects/${id}/git/log?max=${max}`)
+    fetch(`${API}/api/projects/${id}/git/log`)
       .then((r) => r.json())
       .then((d: { entries: GitLogEntry[]; error?: string }) => {
         if (d.error) setLogErr(d.error);
@@ -76,7 +74,7 @@ export default function ProjectHistoryPage({ params }: { params: { id: string } 
       })
       .catch((e) => setLogErr(e?.message || 'failed to load log'))
       .finally(() => setLogLoading(false));
-  }, [id, max]);
+  }, [id]);
 
   useEffect(() => {
     loadLog();
@@ -84,19 +82,24 @@ export default function ProjectHistoryPage({ params }: { params: { id: string } 
 
   const selectCommit = useCallback(
     (hash: string) => {
+      latestHashRef.current = hash;
       setSelected(hash);
       setShow(null);
       setShowLoading(true);
       fetch(`${API}/api/projects/${id}/git/show?hash=${encodeURIComponent(hash)}`)
         .then((r) => r.json())
-        .then((d: GitShowResult) => setShow(d))
-        .catch((e) => setShow({ text: '', truncated: false, error: e?.message || 'failed' }))
-        .finally(() => setShowLoading(false));
+        .then((d: GitShowResult) => {
+          if (latestHashRef.current === hash) setShow(d);
+        })
+        .catch((e) => {
+          if (latestHashRef.current === hash) setShow({ text: '', truncated: false, error: e?.message || 'failed' });
+        })
+        .finally(() => {
+          if (latestHashRef.current === hash) setShowLoading(false);
+        });
     },
     [id],
   );
-
-  const reachedPage = entries != null && entries.length >= max;
 
   return (
     <div>
@@ -126,14 +129,6 @@ export default function ProjectHistoryPage({ params }: { params: { id: string } 
           ) : (
             <div className="overflow-auto" style={{ maxHeight: 600 }}>
               <GitLog entries={entries ?? []} selected={selected} onSelect={selectCommit} />
-              {reachedPage && (
-                <button
-                  onClick={() => setMax((m) => m + PAGE)}
-                  className="w-full mt-2 font-mono text-[10px] text-faint hover:text-amber border border-dashed border-line2 hover:border-amber/40 py-2"
-                >
-                  load older commits
-                </button>
-              )}
             </div>
           )}
         </div>

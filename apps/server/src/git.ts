@@ -178,12 +178,22 @@ export async function ensureWorktreeIgnored(root: string): Promise<void> {
     await fs.appendFile(gi, `${prefix}${wanted}\n`, 'utf8');
     // Commit JUST .gitignore (pathspec-scoped, as fleet-pm) so this precheck doesn't leave the
     // main worktree dirty — a dirty main worktree makes mergeBranch refuse (found by the live E2E).
-    await gitExec(root, ['add', '--', '.gitignore']);
-    await gitExec(root, [
-      '-c', `user.name=${FLEET_PM_AUTHOR.name}`,
-      '-c', `user.email=${FLEET_PM_AUTHOR.email}`,
-      'commit', '-m', 'chore: ignore agent worktrees (.claude/worktrees)', '--', '.gitignore',
-    ]);
+    // gpgsign off + --no-verify (as initRepo) so a signing setup / failing hook can't break it; if
+    // the commit still fails, roll the edit back so the main worktree is left clean.
+    const add = await gitExec(root, ['add', '--', '.gitignore']);
+    const commit = !add.ok
+      ? add
+      : await gitExec(root, [
+          '-c', `user.name=${FLEET_PM_AUTHOR.name}`,
+          '-c', `user.email=${FLEET_PM_AUTHOR.email}`,
+          '-c', 'commit.gpgsign=false',
+          'commit', '--no-verify', '-m', 'chore: ignore agent worktrees (.claude/worktrees)', '--', '.gitignore',
+        ]);
+    if (!commit.ok) {
+      if (exists) await fs.writeFile(gi, content, 'utf8');
+      else await fs.unlink(gi);
+      await gitExec(root, ['reset', '--', '.gitignore']);
+    }
   } catch {
     /* best-effort; a missing ignore is caught again by pathspec-scoped staging */
   }
@@ -253,6 +263,7 @@ export async function initRepo(dir: string, branch: string): Promise<InitRepoRes
     '-c',
     'commit.gpgsign=false',
     'commit',
+    '--no-verify',
     '-m',
     'chore: initialize repository (fleet attach)',
   ]);
@@ -282,6 +293,12 @@ export interface LsTreeEntry {
  * `<mode> SP <type> SP <oid> SP* <size> TAB <path>\0`.
  */
 export async function lsTree(root: string, rev: string, dir: string): Promise<{ entries: LsTreeEntry[]; error?: string }> {
+  // Unborn HEAD (attached repo with zero commits): an empty tree, not a raw git fatal
+  // that would wedge the Files panel until someone makes a first commit out-of-band.
+  if (rev === 'HEAD') {
+    const head = await gitExec(root, ['-C', root, 'rev-parse', '--verify', '-q', 'HEAD']);
+    if (!head.ok) return { entries: [] };
+  }
   const spec = dir && dir !== '.' ? dir.replace(/\/+$/, '') + '/' : '';
   const args = ['-C', root, 'ls-tree', '-l', '-z', rev];
   args.push('--');
@@ -402,13 +419,37 @@ export interface ChangedDiff {
 }
 
 /**
- * Unified working-tree diff for a single file, capped at ~600 lines / ~64KB with a truncation
+ * Unified diff vs HEAD for a single file (covers both staged and unstaged changes), with an
+ * all-additions fallback for untracked files, capped at ~600 lines / ~64KB with a truncation
  * marker. Short-circuits to `{ binary:true }` when git reports "Binary files ... differ".
  */
 export async function changedDiff(root: string, relpath: string): Promise<ChangedDiff> {
-  const r = await gitExec(root, ['-C', root, 'diff', '--', relpath]);
+  // `diff HEAD` sees staged + unstaged changes in one pass; fall back to a plain working-tree
+  // diff when HEAD is unborn (fresh repo with no commits yet).
+  let r = await gitExec(root, ['-C', root, 'diff', 'HEAD', '--', relpath]);
+  if (!r.ok) r = await gitExec(root, ['-C', root, 'diff', '--', relpath]);
   if (!r.ok) return { diff: '', truncated: false, binary: false, error: gitErr(r) };
-  const raw = r.stdout;
+  let raw = r.stdout;
+  if (!raw.trim()) {
+    // Neither HEAD nor the index knows the file — untracked entries ('??') need an
+    // all-additions diff synthesized via --no-index, which exits 1 when the files differ.
+    const tracked = await gitExec(root, ['-C', root, 'ls-files', '--error-unmatch', '--', relpath]);
+    if (!tracked.ok) {
+      // Status collapses an untracked DIRECTORY to one '?? dir/' entry; --no-index can't
+      // diff a directory (fs.stat follows symlinks, matching --no-index's behavior).
+      try {
+        const st = await fs.stat(path.join(root, relpath));
+        if (st.isDirectory()) {
+          return { diff: '', truncated: false, binary: false, error: 'untracked directory — open individual files inside it to see their diffs' };
+        }
+      } catch {
+        /* path gone — fall through to --no-index, whose error is surfaced below */
+      }
+      const nx = await gitExec(root, ['-C', root, 'diff', '--no-index', '--', '/dev/null', relpath]);
+      if (nx.stdout) raw = nx.stdout;
+      else if (!nx.ok) return { diff: '', truncated: false, binary: false, error: gitErr(nx) };
+    }
+  }
   if (/^Binary files .* differ$/m.test(raw)) {
     return { diff: '', truncated: false, binary: true };
   }
@@ -432,9 +473,16 @@ export interface GitLogEntry {
  */
 export async function gitLog(root: string, opts: { branch?: string; max?: number } = {}): Promise<{ entries: GitLogEntry[]; error?: string }> {
   const max = Number.isInteger(opts.max) && (opts.max as number) > 0 ? Math.min(opts.max as number, 2000) : 200;
-  // The revision (branch) follows the format flag; no pathspec, so no `--` separator needed.
+  // Unborn HEAD (zero commits): an empty log, not a raw git fatal in the History panel.
+  if (!opts.branch) {
+    const head = await gitExec(root, ['-C', root, 'rev-parse', '--verify', '-q', 'HEAD']);
+    if (!head.ok) return { entries: [] };
+  }
+  // Trailing `--` disambiguates the revision from a same-named file in the work tree
+  // ("fatal: ambiguous argument ...: both revision and filename" otherwise).
   const args = ['-C', root, 'log', `--max-count=${max}`, '--format=%H%x00%an%x00%at%x00%P%x00%s'];
   if (opts.branch) args.push(opts.branch);
+  args.push('--');
   const r = await gitExec(root, args);
   if (!r.ok) return { entries: [], error: gitErr(r) };
   const entries: GitLogEntry[] = [];
@@ -469,7 +517,7 @@ export async function gitShow(root: string, hash: string): Promise<GitShowResult
   if (typeof hash !== 'string' || !/^[0-9a-f]{7,40}$/.test(hash)) {
     return { text: '', truncated: false, error: 'invalid commit hash' };
   }
-  const r = await gitExec(root, ['-C', root, 'show', hash]);
+  const r = await gitExec(root, ['-C', root, 'show', hash, '--']);
   if (!r.ok) return { text: '', truncated: false, error: gitErr(r) };
   const capped = capDiff(r.stdout);
   return { text: capped.diff, truncated: capped.truncated };
@@ -508,7 +556,10 @@ export async function ensureCommitted(worktreeDir: string): Promise<EnsureCommit
       `user.name=${FLEET_PM_AUTHOR.name}`,
       '-c',
       `user.email=${FLEET_PM_AUTHOR.email}`,
+      '-c',
+      'commit.gpgsign=false',
       'commit',
+      '--no-verify',
       '-m',
       'fleet-pm: commit work for validation',
     ]);
@@ -576,7 +627,10 @@ export async function integrateAndReport(worktreeDir: string, baseBranch: string
     `user.name=${FLEET_PM_AUTHOR.name}`,
     '-c',
     `user.email=${FLEET_PM_AUTHOR.email}`,
+    '-c',
+    'commit.gpgsign=false',
     'merge',
+    '--no-verify',
     '--no-edit',
     baseBranch,
   ]);
@@ -621,7 +675,10 @@ export async function startResolveMerge(worktreeDir: string, baseBranch: string)
     `user.name=${FLEET_PM_AUTHOR.name}`,
     '-c',
     `user.email=${FLEET_PM_AUTHOR.email}`,
+    '-c',
+    'commit.gpgsign=false',
     'merge',
+    '--no-verify',
     '--no-edit',
     baseBranch,
   ]);
@@ -656,15 +713,16 @@ export async function isMergeInProgress(worktreeDir: string): Promise<boolean> {
 
 /**
  * v2 #9 — true when leftover conflict markers (`<<<<<<<` / `=======` / `>>>>>>>`) remain in the
- * WORKING TREE. Uses `git diff --check`, which reports leftover conflict markers and exits non-zero
- * when any are present (exit 0 = clean). This is the authoritative "did the resolve agent finish?"
- * check: unlike the index unmerged-paths probe ({@link conflictedFiles}), it reflects the agent's
- * on-disk edits even though the agent never ran `git add` (the engine stages on commit). Never throws.
+ * WORKING TREE. Uses `git diff HEAD --check`, which reports leftover conflict markers and exits
+ * non-zero when any are present (exit 0 = clean). This is the authoritative "did the resolve agent
+ * finish?" check: unlike the index unmerged-paths probe ({@link conflictedFiles}), it reflects the
+ * agent's on-disk edits whether or not the agent ran `git add` (diffing against HEAD covers both
+ * staged and unstaged markers). Never throws.
  */
 export async function hasConflictMarkers(worktreeDir: string): Promise<boolean> {
-  const r = await gitExec(worktreeDir, ['-C', worktreeDir, 'diff', '--check']);
-  // diff --check: exit 0 = no markers/whitespace issues; non-zero (typically 2) = issues reported on
-  // stdout. We only care about the conflict-marker lines git emits ("leftover conflict marker").
+  const r = await gitExec(worktreeDir, ['-C', worktreeDir, 'diff', 'HEAD', '--check']);
+  // diff HEAD --check: exit 0 = no markers/whitespace issues; non-zero (typically 2) = issues reported
+  // on stdout. We only care about the conflict-marker lines git emits ("leftover conflict marker").
   if (r.code === 0) return false;
   return /leftover conflict marker/.test(r.stdout) || /leftover conflict marker/.test(r.stderr);
 }
@@ -693,7 +751,20 @@ export interface MergeResult {
  *      main is byte-for-byte restored, and return the error.
  * Returns the new merge commit sha on success.
  */
-export async function mergeBranch(root: string, branch: string): Promise<MergeResult> {
+export async function mergeBranch(root: string, branch: string, expectedBase?: string): Promise<MergeResult> {
+  // `git merge` lands on whatever is checked out in the root — the human's own working
+  // copy. If they switched branches (or detached HEAD), refuse rather than silently merge
+  // the task branch into the wrong place.
+  if (expectedBase) {
+    const cur = await gitExec(root, ['-C', root, 'symbolic-ref', '--short', '-q', 'HEAD']);
+    const curBranch = cur.ok ? cur.stdout.trim() : '';
+    if (!curBranch || curBranch !== expectedBase) {
+      return {
+        ok: false,
+        error: `root has '${curBranch || 'detached HEAD'}' checked out, expected '${expectedBase}'; refusing to merge`,
+      };
+    }
+  }
   const st = await gitExec(root, ['-C', root, 'status', '--porcelain']);
   if (!st.ok) return { ok: false, error: gitErr(st) };
   if (st.stdout.trim() !== '') return { ok: false, error: 'main worktree is not clean; refusing to merge' };
@@ -712,7 +783,10 @@ export async function mergeBranch(root: string, branch: string): Promise<MergeRe
     `user.name=${FLEET_PM_AUTHOR.name}`,
     '-c',
     `user.email=${FLEET_PM_AUTHOR.email}`,
+    '-c',
+    'commit.gpgsign=false',
     'merge',
+    '--no-verify',
     '--no-ff',
     '--no-edit',
     branch,
@@ -752,16 +826,26 @@ export interface CreateWorktreeResult {
 }
 export async function createWorktree(root: string, worktreeName: string, branch: string): Promise<CreateWorktreeResult> {
   const wtPath = path.join(root, '.claude', 'worktrees', worktreeName);
-  // already a registered worktree? (re-launch / retry) → reuse it.
+  // already a registered worktree? (re-launch / retry) → reuse it. `worktree list --porcelain`
+  // prints REALPATH'd locations, so compare against the realpath of wtPath too (root may contain
+  // a symlink component, e.g. /tmp → /private/tmp).
   const list = await gitExec(root, ['-C', root, 'worktree', 'list', '--porcelain']);
-  if (list.ok && list.stdout.split(/\r?\n/).some((l) => l === `worktree ${wtPath}`)) {
-    return { ok: true, dir: wtPath };
+  if (list.ok) {
+    let realWtPath = wtPath;
+    try {
+      realWtPath = await fs.realpath(wtPath);
+    } catch {
+      /* not on disk yet → no match possible via realpath */
+    }
+    if (list.stdout.split(/\r?\n/).some((l) => l === `worktree ${wtPath}` || l === `worktree ${realWtPath}`)) {
+      return { ok: true, dir: wtPath };
+    }
   }
   const add = await gitExec(root, ['-C', root, 'worktree', 'add', wtPath, '-b', branch]);
   if (!add.ok) {
     // branch may already exist from a prior partial run → retry without -b (check out the branch).
     const retry = await gitExec(root, ['-C', root, 'worktree', 'add', wtPath, branch]);
-    if (!retry.ok) return { ok: false, dir: wtPath, error: (add.stderr || retry.stderr || 'worktree add failed').trim() };
+    if (!retry.ok) return { ok: false, dir: wtPath, error: (retry.stderr || add.stderr || 'worktree add failed').trim() };
   }
   return { ok: true, dir: wtPath };
 }

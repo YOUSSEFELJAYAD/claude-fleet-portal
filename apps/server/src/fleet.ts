@@ -168,7 +168,17 @@ function startOfToday(): number {
 }
 
 // ── counting ─────────────────────────────────────────────────────────────────────
-const TERMINAL = new Set(['completed', 'failed', 'killed']);
+// Uncapped SQL over the runs table (NOT registry.listRuns(), whose UI-oriented query is
+// `ORDER BY started_at DESC LIMIT 500` — accounting must span EVERY run, db.ts:430).
+const pmLiveCountForStmt = db.prepare(
+  "SELECT COUNT(*) AS c FROM runs WHERE project_id = ? AND campaign_id IS NULL AND status NOT IN ('completed','failed','killed')",
+);
+const pmLiveCountsStmt = db.prepare(
+  "SELECT project_id, COUNT(*) AS c FROM runs WHERE project_id IS NOT NULL AND campaign_id IS NULL AND status NOT IN ('completed','failed','killed') GROUP BY project_id",
+);
+const projectSpendStmt = db.prepare(
+  'SELECT project_id, COALESCE(SUM(cost_usd), 0) AS s FROM runs WHERE project_id IS NOT NULL GROUP BY project_id',
+);
 
 /**
  * Count of non-terminal PM runs for a project: runs with this projectId and campaignId === null
@@ -176,31 +186,25 @@ const TERMINAL = new Set(['completed', 'failed', 'killed']);
  * design and are accounted for only via reserveSlotsForNonPm (spec §8 #7).
  */
 function pmLiveCountFor(projectId: string): number {
-  let n = 0;
-  for (const r of registry.listRuns()) {
-    if (r.projectId === projectId && r.campaignId == null && !TERMINAL.has(r.status)) n++;
-  }
-  return n;
+  const row = pmLiveCountForStmt.get(projectId) as { c: number };
+  return row.c;
 }
 
-/** Map of projectId → live PM run count, over every run the registry currently knows. */
+/** Map of projectId → live PM run count, over every run in the runs table. */
 function pmLiveCounts(): Map<string, number> {
   const m = new Map<string, number>();
-  for (const r of registry.listRuns()) {
-    if (r.projectId != null && r.campaignId == null && !TERMINAL.has(r.status)) {
-      m.set(r.projectId, (m.get(r.projectId) ?? 0) + 1);
-    }
+  for (const row of pmLiveCountsStmt.all() as Array<{ project_id: string; c: number }>) {
+    m.set(row.project_id, row.c);
   }
   return m;
 }
 
 /** Map of projectId → cumulative spend (USD) across EVERY run scoped to it (PM + campaign, live +
- *  terminal). Mirrors pm.ts's private projectSpend(): one pass over registry.listRuns() — surfaced
- *  read-only on the /fleet status snapshot. */
+ *  terminal) — surfaced read-only on the /fleet status snapshot. */
 function projectSpendCounts(): Map<string, number> {
   const m = new Map<string, number>();
-  for (const r of registry.listRuns()) {
-    if (r.projectId != null) m.set(r.projectId, (m.get(r.projectId) ?? 0) + (r.costUsd || 0));
+  for (const row of projectSpendStmt.all() as Array<{ project_id: string; s: number }>) {
+    m.set(row.project_id, row.s);
   }
   return m;
 }
@@ -252,7 +256,9 @@ function computeQuotas(rows: DemandRow[], pool: number): Map<string, number> {
     if (guaranteeFloor && floorVal < 1) floorVal = 1; // floor of 1 so a demander isn't starved
     base.set(r.project.id, floorVal);
     assigned += floorVal;
-    remainder.push({ id: r.project.id, frac: exact - Math.floor(exact), priority: r.project.priority ?? 0 });
+    // frac is relative to the GRANTED floor (goes negative for floor-bumped rows, so a project
+    // whose bump already over-satisfied its exact share sorts last for leftover slots).
+    remainder.push({ id: r.project.id, frac: exact - floorVal, priority: r.project.priority ?? 0 });
   }
 
   // If the guaranteed floors over-committed the pool (pool barely ≥ #demanders but weights skew),

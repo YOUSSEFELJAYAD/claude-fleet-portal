@@ -96,6 +96,7 @@ case "$1 $2" in
   "pr create")      echo "https://github.com/acme/widgets/pull/42"; exit 0 ;;
   "pr view")
     if [ "$3" = "no-pr" ]; then echo "no pull requests found" 1>&2; exit 1; fi
+    if [ "$3" = "auth-fail" ]; then echo "HTTP 401: Bad credentials" 1>&2; exit 1; fi
     echo '{"state":"OPEN","url":"https://github.com/acme/widgets/pull/42"}'; exit 0 ;;
   "pr merge")       exit 0 ;;
   *) echo "fake-gh: unhandled $*" 1>&2; exit 1 ;;
@@ -330,19 +331,29 @@ describe('prCreate / prView / prMerge (fake gh on PATH)', () => {
     const bare = mkBare();
     const root = mkRootWired(bare);
     const v = await gh.prView(root, 'worktree-task-7');
-    expect(v).not.toBeNull();
-    expect(v!.state).toBe('open');
-    expect(v!.url).toBe('https://github.com/acme/widgets/pull/42');
+    expect(v.error).toBeUndefined();
+    expect(v.pr).not.toBeNull();
+    expect(v.pr!.state).toBe('open');
+    expect(v.pr!.url).toBe('https://github.com/acme/widgets/pull/42');
 
     const viewed = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'view');
     expect(viewed).toEqual(['pr', 'view', 'worktree-task-7', '--json', 'state,url']);
   });
 
-  it('prView returns null when there is NO PR for the branch (gh exits nonzero)', async () => {
+  it('prView returns {pr:null} with NO error for the genuine no-PR case', async () => {
     const bare = mkBare();
     const root = mkRootWired(bare);
-    const v = await gh.prView(root, 'no-pr'); // fake gh exits 1 for this sentinel branch
-    expect(v).toBeNull();
+    const v = await gh.prView(root, 'no-pr'); // fake gh: "no pull requests found", exit 1
+    expect(v.pr).toBeNull();
+    expect(v.error).toBeUndefined();
+  });
+
+  it('prView surfaces a real gh failure (auth/network) as {error}, NOT as "no PR"', async () => {
+    const bare = mkBare();
+    const root = mkRootWired(bare);
+    const v = await gh.prView(root, 'auth-fail'); // fake gh: "HTTP 401", exit 1
+    expect(v.pr).toBeNull();
+    expect(v.error).toBeTruthy();
   });
 
   it('prMerge → ok:true (defined+exported, though the portal never auto-calls it)', async () => {

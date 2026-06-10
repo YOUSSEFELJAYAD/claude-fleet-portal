@@ -73,6 +73,7 @@ export function killProcessGroup(pid: number | null | undefined, hard = false) {
   }
   if (!hard) {
     setTimeout(() => {
+      if (!looksLikeClaudePid(pid)) return;
       try {
         process.kill(-pid, 'SIGKILL');
       } catch {
@@ -108,7 +109,21 @@ export function buildArgs(req: LaunchRequest, sessionId: string, interactive: bo
   }
   if (req.cwd) args.push('--add-dir', req.cwd);
   if (req.subagentProfile) args.push('--agent', req.subagentProfile);
-  if (req.appendSystemPrompt) args.push('--append-system-prompt', req.appendSystemPrompt);
+  // Selected skills are made REAL here: claude has no --skills flag, so without this block
+  // they were write-only run metadata. The agent invokes them itself via its Skill tool.
+  // A run whose prompt STARTS ON a slash-command already gets that command's instructions
+  // auto-loaded by claude — injecting the same name as a skill would double-load it.
+  const promptCommand = (req.prompt ?? '').trim().match(/^\/([A-Za-z0-9_:-]+)/)?.[1];
+  const noteSkills = (req.skills ?? []).filter((s) => s !== promptCommand);
+  const skillsNote = noteSkills.length
+    ? 'SKILLS: the operator pre-selected these skills for this task: ' +
+      noteSkills.join(', ') +
+      '. Before starting work, invoke the Skill tool for each one that matches the task at hand ' +
+      'and follow the loaded skill instructions over your defaults. If a listed skill is ' +
+      'unavailable, proceed without it and note that in your final report.'
+    : '';
+  const appendSys = [req.appendSystemPrompt, skillsNote].filter(Boolean).join('\n\n');
+  if (appendSys) args.push('--append-system-prompt', appendSys);
   if (req.jsonSchema) args.push('--json-schema', JSON.stringify(req.jsonSchema));
   // H10 — worktree isolation + inline agents + tool deny-list. `--disallowedTools` is variadic
   // (like --add-dir), and `--worktree` takes an optional value — both are safe here because the
@@ -131,7 +146,9 @@ export function buildResumeArgs(req: LaunchRequest, sessionId: string, interacti
   const args = buildArgs(req, sessionId, interactive);
   const idx = args.indexOf('--session-id');
   if (idx >= 0) args.splice(idx, 2); // remove flag + its value
-  args.push('--resume', sessionId);
+  const dd = args.indexOf('--');
+  if (dd >= 0) args.splice(dd, 0, '--resume', sessionId);
+  else args.push('--resume', sessionId);
   return args;
 }
 
@@ -150,6 +167,9 @@ export function spawnClaude(
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true, // new process group → cascade kill (§7.6)
     env: { ...process.env, ...otelEnv() }, // H6 — real OTLP exporter env (replaces the inert flag)
+  });
+  child.stdin?.on('error', () => {
+    /* EPIPE from a dying child — swallowed so it can't crash the server */
   });
 
   let buf = '';

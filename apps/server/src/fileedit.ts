@@ -288,7 +288,22 @@ export function registerFileeditRoutes(app: FastifyInstance) {
 
       // ── apply (stage) ───────────────────────────────────────────────────────────
       if (isDelete) {
-        const rm = await gitExec(root, ['-C', root, 'rm', '--', relpath]);
+        // The user explicitly confirmed deletion and the stale-oid gate above already ran,
+        // so an UNTRACKED file is just unlinked (git rm exits 128 for it, and there is
+        // nothing staged to commit) …
+        const tracked = await gitExec(root, ['-C', root, 'ls-files', '--error-unmatch', '--', relpath]);
+        if (!tracked.ok) {
+          try {
+            await fs.unlink(abs);
+          } catch (e: any) {
+            return { ok: false, error: `failed to delete file: ${scrubCredentials(String(e?.message ?? e))}` };
+          }
+          const head = await gitExec(root, ['-C', root, 'rev-parse', 'HEAD']);
+          return { ok: true, sha: head.ok ? head.stdout.trim() : '', author: resolveAuthor(project) ?? 'ambient' };
+        }
+        // … and a tracked file is removed with -f: plain `git rm` refuses any file whose
+        // working tree differs from the index (exactly the files agents/humans just edited).
+        const rm = await gitExec(root, ['-C', root, 'rm', '-f', '--', relpath]);
         if (!rm.ok) return { ok: false, error: gitErrText(rm) };
       } else {
         try {

@@ -70,7 +70,7 @@ function parseDiff(diff: string): DiffLine[] {
       out.push({ kind: 'meta', text: line, oldNo: null, newNo: null });
       continue;
     }
-    if (line.startsWith('… ') || line.startsWith('[truncated') || line.includes('… truncated')) {
+    if (line.startsWith('... [diff truncated') || line.startsWith('… ') || line.startsWith('[truncated') || line.includes('… truncated')) {
       out.push({ kind: 'trunc', text: line, oldNo: null, newNo: null });
       continue;
     }

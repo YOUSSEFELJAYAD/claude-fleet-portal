@@ -20,6 +20,7 @@ import type {
 import { PLAN_JSON_SCHEMA } from '@fleet/shared';
 import { repo } from './db.js';
 import { registry } from './registry.js';
+import { onProjectDeleted } from './projects.js';
 
 const TERMINAL_TASK = new Set(['completed', 'failed', 'skipped']);
 const TERMINAL_CAMPAIGN = new Set(['completed', 'failed', 'killed']);
@@ -86,6 +87,19 @@ class CampaignEngine {
 
   init() {
     registry.onRunTerminal((run) => this.handleRunTerminal(run));
+    // Deleting a project kills its still-live campaigns (orchestrator + workers stop
+    // spending). Terminal campaign rows are kept — the orchestrate page is global history.
+    onProjectDeleted((projectId) => {
+      for (const c of repo.listCampaigns()) {
+        if (c.projectId === projectId && !TERMINAL_CAMPAIGN.has(c.status)) {
+          try {
+            this.kill(c.id);
+          } catch {
+            /* already terminal / gone */
+          }
+        }
+      }
+    });
   }
 
   // ── pub/sub ─────────────────────────────────────────────────────────────────
@@ -188,22 +202,28 @@ class CampaignEngine {
     repo.upsertCampaign(campaign);
 
     // launch the orchestrator → it returns a structured plan (D-019)
-    const run = registry.launch({
-      prompt: `OBJECTIVE:\n${req.objective}\n\nDecompose this objective into a minimal dependency-ordered plan of worker subtasks. Return ONLY the structured plan.`,
-      cwd: req.cwd,
-      model: campaign.model,
-      effort: req.effort ?? orchT.effort,
-      permissionMode: campaign.permissionMode ?? orchT.permissionMode,
-      allowedTools: orchT.allowedTools,
-      skills: orchT.skills,
-      budgetUsd: orchT.budgetUsd,
-      appendSystemPrompt: orchT.systemPrompt,
-      jsonSchema: PLAN_JSON_SCHEMA,
-      campaignId: campaign.id,
-      projectId: campaign.projectId,
-      disallowedTools: campaign.disallowedTools ?? undefined,
-      interactive: false,
-    });
+    let run: Run;
+    try {
+      run = registry.launch({
+        prompt: `OBJECTIVE:\n${req.objective}\n\nDecompose this objective into a minimal dependency-ordered plan of worker subtasks. Return ONLY the structured plan.`,
+        cwd: req.cwd,
+        model: campaign.model,
+        effort: req.effort ?? orchT.effort,
+        permissionMode: campaign.permissionMode ?? orchT.permissionMode,
+        allowedTools: orchT.allowedTools,
+        skills: orchT.skills,
+        budgetUsd: orchT.budgetUsd,
+        appendSystemPrompt: orchT.systemPrompt,
+        jsonSchema: PLAN_JSON_SCHEMA,
+        campaignId: campaign.id,
+        projectId: campaign.projectId,
+        disallowedTools: campaign.disallowedTools ?? undefined,
+        interactive: false,
+      });
+    } catch (e: any) {
+      this.failCampaign(campaign, `orchestrator launch failed: ${e?.message ?? e}`);
+      throw e;
+    }
     campaign.orchestratorRunId = run.id;
     repo.upsertCampaign(campaign);
     this.emitCampaign(campaign);
@@ -340,7 +360,21 @@ class CampaignEngine {
     const anyCompleted = fresh.some((t) => t.status === 'completed');
     if (allTerminal) {
       if (campaign.autoSynthesize && campaign.synthesizerTemplate && !campaign.synthesizerRunId && anyCompleted) {
-        this.launchSynthesizer(campaign, fresh);
+        try {
+          this.launchSynthesizer(campaign, fresh);
+        } catch (e: any) {
+          if (e?.statusCode === 429) {
+            // capped: synthesizerRunId is still null → tickActive retries on the next terminal
+            campaign.status = 'running';
+            campaign.costUsd = this.rollupCost(campaign);
+            repo.upsertCampaign(campaign);
+            this.emitCampaign(campaign);
+          } else {
+            // anything else (bad cwd, corrupt template) would otherwise wedge the campaign
+            // in 'running' forever — every task is already terminal, so no retry will come.
+            this.failCampaign(campaign, `synthesizer launch failed: ${e?.message ?? e}`);
+          }
+        }
       } else {
         this.finalize(campaign);
       }
@@ -439,7 +473,13 @@ class CampaignEngine {
 
   private tickActive() {
     for (const c of repo.listCampaigns()) {
-      if (c.status === 'spawning' || c.status === 'running') this.schedule(c);
+      if (c.status === 'spawning' || c.status === 'running') {
+        try {
+          this.schedule(c);
+        } catch {
+          /* one bad campaign must not starve scheduling for the rest */
+        }
+      }
     }
   }
 
@@ -447,6 +487,7 @@ class CampaignEngine {
   kill(id: string) {
     const campaign = repo.getCampaign(id);
     if (!campaign) throw Object.assign(new Error('campaign not found'), { statusCode: 404 });
+    if (TERMINAL_CAMPAIGN.has(campaign.status)) return;
     // Mark the campaign terminal in the DB FIRST (H2). Each registry.stop() below
     // synchronously fires onRunTerminal → handleRunTerminal, which re-reads the
     // campaign and only short-circuits when it is terminal. If we flipped the status
@@ -456,10 +497,18 @@ class CampaignEngine {
     campaign.endedAt = Date.now();
     repo.upsertCampaign(campaign);
 
-    registry.stop(campaign.orchestratorRunId ?? '');
-    registry.stop(campaign.synthesizerRunId ?? '');
+    const stopLive = (runId: string | null) => {
+      if (!runId) return;
+      const r = registry.getRun(runId);
+      // Skip only KNOWN-terminal runs (don't rewrite finished history to 'killed');
+      // unknown runs still go through registry.stop, which has its own guards.
+      if (r && ['completed', 'failed', 'killed'].includes(r.status)) return;
+      registry.stop(runId);
+    };
+    stopLive(campaign.orchestratorRunId);
+    stopLive(campaign.synthesizerRunId);
     for (const t of repo.getTasks(id)) {
-      if (t.runId) registry.stop(t.runId);
+      stopLive(t.runId);
       if (!TERMINAL_TASK.has(t.status)) {
         t.status = 'skipped';
         repo.upsertTask(t);

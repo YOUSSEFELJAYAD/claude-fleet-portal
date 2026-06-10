@@ -21,7 +21,7 @@ export interface McpServer {
 function normalizeStatus(raw: string): string {
   const s = raw.toLowerCase().replace(/[✓✗✔✘!~•·\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!s) return 'pending';
-  if (s.includes('connect') && !s.includes('fail') && !s.includes('not')) return 'connected';
+  if (s.includes('connect') && !s.includes('fail') && !s.includes('not') && !s.includes('disconnect')) return 'connected';
   if (s.includes('fail') || s.includes('error') || s.includes('cannot') || s.includes('unreachable') || s.includes('disconnect'))
     return 'failed';
   if (s.includes('auth') || s.includes('login') || s.includes('token')) return 'needs-auth';

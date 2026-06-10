@@ -21,6 +21,7 @@ import { registerExportRoutes } from './exporter.js';
 import { registerScoreRoutes } from './scores.js';
 import { registerTagsRoutes } from './tags.js';
 import { registerOtelRoutes } from './otel.js'; // H6
+import { registerReleaseRoutes } from './release.js';
 // Agent-PM / Kanban feature (spec docs/superpowers/specs/2026-06-09-agent-pm-kanban-design.md).
 // Import order matters: projects BEFORE kanban (kanban_tasks references a project; tables created on import).
 import { registerProjectsRoutes } from './projects.js';
@@ -93,8 +94,77 @@ function sse(reply: FastifyReply, req: FastifyRequest): { send: (obj: unknown) =
   };
 }
 
+// Validated, whitelisted template fields (create + PUT). Only keys PRESENT on the body are
+// emitted; bad types are a 400 instead of a stored time bomb (a non-array allowedTools used
+// to crash registry.launch later, mid-campaign).
+const TEMPLATE_ROLES = new Set(['orchestrator', 'worker', 'reviewer', 'synthesizer']);
+function validateTemplateFields(body: any): { fields: Partial<AgentTemplate> } | { error: string } {
+  const f: Partial<AgentTemplate> = {};
+  const strArray = (v: unknown): string[] | null =>
+    Array.isArray(v) && v.every((x) => typeof x === 'string')
+      ? (v as string[])
+      : typeof v === 'string' // defensive: the UI collects these as comma-separated text
+        ? v.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
+        : null;
+  if (body.role !== undefined) {
+    if (!TEMPLATE_ROLES.has(body.role)) return { error: `role must be one of ${[...TEMPLATE_ROLES].join(', ')}` };
+    f.role = body.role;
+  }
+  if (body.description !== undefined) {
+    if (typeof body.description !== 'string') return { error: 'description must be a string' };
+    f.description = body.description;
+  }
+  if (body.systemPrompt !== undefined) {
+    if (typeof body.systemPrompt !== 'string') return { error: 'systemPrompt must be a string' };
+    f.systemPrompt = body.systemPrompt;
+  }
+  if (body.model !== undefined) {
+    if (!MODELS.some((m) => m.id === body.model)) return { error: 'unknown model id' };
+    f.model = body.model;
+  }
+  if (body.fastMode !== undefined) f.fastMode = !!body.fastMode;
+  if (body.effort !== undefined) {
+    if (!EFFORT_LEVELS.includes(body.effort)) return { error: `effort must be one of ${EFFORT_LEVELS.join(', ')}` };
+    f.effort = body.effort;
+  }
+  if (body.allowedTools !== undefined) {
+    const a = strArray(body.allowedTools);
+    if (!a) return { error: 'allowedTools must be an array of strings' };
+    f.allowedTools = a;
+  }
+  if (body.skills !== undefined) {
+    const a = strArray(body.skills);
+    if (!a) return { error: 'skills must be an array of strings' };
+    f.skills = a;
+  }
+  if (body.permissionMode !== undefined) {
+    if (!PERMISSION_MODES.includes(body.permissionMode)) return { error: `permissionMode must be one of ${PERMISSION_MODES.join(', ')}` };
+    f.permissionMode = body.permissionMode;
+  }
+  if (body.budgetUsd !== undefined) {
+    if (body.budgetUsd !== null && !(typeof body.budgetUsd === 'number' && Number.isFinite(body.budgetUsd) && body.budgetUsd >= 0)) {
+      return { error: 'budgetUsd must be a non-negative number or null' };
+    }
+    f.budgetUsd = body.budgetUsd;
+  }
+  return { fields: f };
+}
+
 export function buildServer() {
-  const app = Fastify({ logger: false, bodyLimit: 4 * 1024 * 1024 });
+  // forceCloseConnections — hijacked SSE responses are ACTIVE connections, so the default
+  // 'idle' close would let app.close() hang until every dashboard tab disconnects (H4).
+  const app = Fastify({ logger: false, bodyLimit: 4 * 1024 * 1024, forceCloseConnections: true });
+
+  // The web client sets `content-type: application/json` on every call, including body-less
+  // DELETEs/POSTs. Fastify's default parser rejects an EMPTY body for that content-type with
+  // FST_ERR_CTP_EMPTY_JSON_BODY — which 400'd every UI delete before the route ran. Treat an
+  // empty body as "no body" (routes already `?? {}`), delegating anything else to the default
+  // secure parser (keeps proto-poisoning protection).
+  const defaultJsonParser = app.getDefaultJsonParser('error', 'error');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    if (typeof body === 'string' && body.trim() === '') return done(null, undefined);
+    return defaultJsonParser(req as any, body as string, done);
+  });
 
   // H3 — reject any request whose Host header isn't an allowlisted localhost:PORT.
   // This is the real DNS-rebinding guard (an attacker page rebound to 127.0.0.1 still
@@ -127,6 +197,7 @@ export function buildServer() {
   registerScoreRoutes(app); // A7
   registerTagsRoutes(app); // A8
   registerOtelRoutes(app); // H6 — OTLP receiver (/v1/metrics, /v1/logs) + /api/agents/:id/otel
+  registerReleaseRoutes(app); // §15 — release page + GitHub update check / self-update
 
   // Agent-PM / Kanban — projects BEFORE kanban (FK), then the viewer; then start the PM engine.
   registerProjectsRoutes(app);
@@ -365,6 +436,14 @@ export function buildServer() {
 
   // ── agent templates (Orchestration Mode, PRD-extension) ─────────────────────
   app.get('/api/templates', async () => repo.listTemplates());
+  app.get('/api/templates/:id', async (req, reply) => {
+    const t = repo.getTemplate((req.params as any).id);
+    if (!t) {
+      reply.code(404);
+      return { error: 'not found' };
+    }
+    return t;
+  });
   app.post('/api/templates', async (req, reply) => {
     const body = req.body as CreateTemplateRequest;
     if (!body?.name?.trim()) {
@@ -375,20 +454,26 @@ export function buildServer() {
       reply.code(409);
       return { error: 'a template with that name already exists' };
     }
+    const v = validateTemplateFields(body);
+    if ('error' in v) {
+      reply.code(400);
+      return { error: v.error };
+    }
     const t: AgentTemplate = {
       id: randomUUID(),
       isBuiltin: false,
       createdAt: Date.now(),
-      role: body.role || 'worker',
-      description: body.description || '',
-      systemPrompt: body.systemPrompt || '',
-      model: body.model || 'claude-opus-4-8',
-      fastMode: !!body.fastMode,
-      effort: body.effort || 'high',
-      allowedTools: body.allowedTools || [],
-      skills: body.skills || [],
-      permissionMode: body.permissionMode || 'default',
-      budgetUsd: body.budgetUsd ?? null,
+      role: 'worker',
+      description: '',
+      systemPrompt: '',
+      model: 'claude-opus-4-8',
+      fastMode: false,
+      effort: 'high',
+      allowedTools: [],
+      skills: [],
+      permissionMode: 'default',
+      budgetUsd: null,
+      ...v.fields,
       name: body.name,
     };
     repo.upsertTemplate(t);
@@ -401,13 +486,30 @@ export function buildServer() {
       reply.code(404);
       return { error: 'not found' };
     }
-    const body = req.body as Partial<AgentTemplate>;
-    const next: AgentTemplate = { ...existing, ...body, id: existing.id, isBuiltin: existing.isBuiltin, createdAt: existing.createdAt, name: existing.name };
+    const body = (req.body as any) ?? {};
+    // Whitelist + validate — a blind `{ ...existing, ...body }` persisted arbitrary types
+    // (e.g. a string allowedTools), which later crashed registry.launch mid-campaign.
+    const v = validateTemplateFields(body);
+    if ('error' in v) {
+      reply.code(400);
+      return { error: v.error };
+    }
+    const next: AgentTemplate = { ...existing, ...v.fields, id: existing.id, isBuiltin: existing.isBuiltin, createdAt: existing.createdAt, name: existing.name };
     repo.upsertTemplate(next);
     return next;
   });
-  app.delete('/api/templates/:id', async (req) => {
-    repo.deleteTemplate((req.params as any).id);
+  app.delete('/api/templates/:id', async (req, reply) => {
+    const existing = repo.getTemplate((req.params as any).id);
+    if (!existing) {
+      reply.code(404);
+      return { error: 'not found' };
+    }
+    if (existing.isBuiltin) {
+      // campaigns/planboard resolve their orchestrator/worker/synthesizer from these.
+      reply.code(409);
+      return { error: 'built-in templates cannot be deleted' };
+    }
+    repo.deleteTemplate(existing.id);
     return { ok: true };
   });
 

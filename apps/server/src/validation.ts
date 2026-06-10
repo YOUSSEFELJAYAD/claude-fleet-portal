@@ -8,10 +8,7 @@
  * typecheck` etc.), the runner NEVER throws (it salvages stdout/stderr/exit-code into a result
  * object — exit 0 == pass), and the combined output is tail-capped for fix-prompt threading.
  */
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
+import { spawn } from 'node:child_process';
 
 // ── tunables (moved verbatim from pm.ts) ────────────────────────────────────────
 export const VALIDATION_TIMEOUT_MS = 10 * 60_000; // 10 min cap for a pure-check validation command
@@ -33,23 +30,77 @@ export interface ValidationResult {
  */
 export async function runValidation(worktreeDir: string, cmd: string): Promise<ValidationResult> {
   try {
-    const { stdout, stderr } = await execFileAsync('bash', ['-lc', cmd], {
-      cwd: worktreeDir,
-      timeout: VALIDATION_TIMEOUT_MS,
-      maxBuffer: VALIDATION_MAX_BUFFER,
-      encoding: 'utf8',
+    return await new Promise<ValidationResult>((resolve) => {
+      // Spawned `detached` (own process group) with a MANUAL timeout that signals the whole
+      // group — execFile's built-in timeout only kills the bash wrapper, leaking grandchildren
+      // (e.g. a hung `npm test`) that keep running in the worktree under the next fix run.
+      const child = spawn('bash', ['-lc', cmd], { cwd: worktreeDir, detached: true });
+      let stdout = '';
+      let stderr = '';
+      let bytes = 0;
+      let exited = false;
+      let killed = false;
+      let killTimer: NodeJS.Timeout | null = null;
+      const killGroup = (sig: NodeJS.Signals) => {
+        if (exited || child.pid == null) return;
+        killed = true;
+        try {
+          process.kill(-child.pid, sig); // negative pid → whole group (pid === pgid, detached)
+        } catch {
+          try {
+            child.kill(sig);
+          } catch {
+            /* already dead */
+          }
+        }
+      };
+      const timer = setTimeout(() => {
+        killGroup('SIGTERM');
+        // escalate if it ignores SIGTERM, like processManager.ts
+        killTimer = setTimeout(() => killGroup('SIGKILL'), 3000);
+        killTimer.unref();
+      }, VALIDATION_TIMEOUT_MS);
+      const onChunk = (sink: (s: string) => void) => (chunk: Buffer) => {
+        bytes += chunk.length;
+        sink(chunk.toString('utf8'));
+        if (bytes > VALIDATION_MAX_BUFFER && !killed) killGroup('SIGTERM');
+      };
+      child.stdout?.on(
+        'data',
+        onChunk((s) => {
+          stdout += s;
+        }),
+      );
+      child.stderr?.on(
+        'data',
+        onChunk((s) => {
+          stderr += s;
+        }),
+      );
+      const finish = (result: ValidationResult) => {
+        if (exited) return;
+        exited = true;
+        clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
+        resolve(result);
+      };
+      child.on('error', (e: any) => {
+        const code = e?.code === 'ENOENT' ? 127 : -1;
+        finish({ ok: false, output: capOutput(stdout, stderr) || (e?.message ?? ''), code });
+      });
+      child.on('close', (exitCode, signal) => {
+        let code: number;
+        if (killed || signal) code = 124;
+        else if (typeof exitCode === 'number') code = exitCode;
+        else code = -1;
+        const out =
+          capOutput(stdout, stderr) ||
+          (code === 0 ? '' : signal ? `killed by ${signal}` : `command failed (exit ${code})`);
+        finish({ ok: code === 0, output: out, code });
+      });
     });
-    return { ok: true, output: capOutput(stdout, stderr), code: 0 };
   } catch (e: any) {
-    const stdout = typeof e?.stdout === 'string' ? e.stdout : '';
-    const stderr = typeof e?.stderr === 'string' ? e.stderr : '';
-    let code: number;
-    if (typeof e?.code === 'number') code = e.code;
-    else if (e?.code === 'ENOENT') code = 127;
-    else if (e?.killed || e?.code === 'ETIMEDOUT' || e?.signal) code = 124;
-    else code = -1;
-    const out = capOutput(stdout, stderr) || (e?.message ?? '');
-    return { ok: false, output: out, code };
+    return { ok: false, output: e?.message ?? '', code: -1 };
   }
 }
 

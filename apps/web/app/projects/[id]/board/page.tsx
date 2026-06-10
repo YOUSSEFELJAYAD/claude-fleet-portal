@@ -1,10 +1,11 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { KanbanTask, KanbanColumn, KanbanBoardMessage, Project } from '@fleet/shared';
 import { API } from '@/lib/api';
 import { Kicker, Panel, Btn, Field, Input, Textarea, Select, Empty } from '@/components/ui';
 import { KanbanBoard } from '@/components/KanbanBoard';
+import { DiffView } from '@/components/DiffView';
 
 // ── inlined per-project board SSE hook ──────────────────────────────────────────
 // lib/live.ts is off-limits to edit, so this lives here. Mirrors `useCampaign`:
@@ -56,6 +57,13 @@ function useBoard(projectId: string): { tasks: KanbanTask[]; connected: boolean;
   return { tasks: [...taskMap.values()], connected, error };
 }
 
+interface BranchDiff {
+  diff: string;
+  truncated: boolean;
+  binary: boolean;
+  error?: string;
+}
+
 const PRIORITIES: { v: number; label: string }[] = [
   { v: 0, label: 'none' },
   { v: 1, label: 'low' },
@@ -99,11 +107,16 @@ export default function BoardPage({ params }: { params: { id: string } }) {
   }, [projectId]);
 
   // ── mutations (rely on SSE for state — no optimistic updates) ──────────────────
-  async function mutate(path: string, init: RequestInit) {
+  async function mutate(path: string, init: RequestInit): Promise<boolean> {
     setBusy(true);
     setActionError(null);
     try {
-      const r = await fetch(`${API}${path}`, { headers: { 'content-type': 'application/json' }, ...init });
+      // json content-type only when a body is sent — Fastify 400s an empty JSON-typed
+      // body, which broke the body-less DELETE behind the card's ✕.
+      const r = await fetch(`${API}${path}`, {
+        ...(init.body != null ? { headers: { 'content-type': 'application/json' } } : {}),
+        ...init,
+      });
       if (!r.ok) {
         let msg = r.statusText;
         try {
@@ -113,8 +126,10 @@ export default function BoardPage({ params }: { params: { id: string } }) {
         }
         throw new Error(msg);
       }
+      return true;
     } catch (e: any) {
       setActionError(e.message || 'request failed');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -123,7 +138,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
   async function createTask(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
-    await mutate(`/api/projects/${projectId}/tasks`, {
+    const ok = await mutate(`/api/projects/${projectId}/tasks`, {
       method: 'POST',
       body: JSON.stringify({
         title: title.trim(),
@@ -137,6 +152,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
         mode,
       }),
     });
+    if (!ok) return;
     // reset (SSE delivers the new card)
     setTitle('');
     setDescription('');
@@ -169,6 +185,26 @@ export default function BoardPage({ params }: { params: { id: string } }) {
 
   const refreshPr = (task: KanbanTask) =>
     mutate(`/api/tasks/${task.id}/refresh-pr`, { method: 'POST', body: JSON.stringify({}) });
+
+  // ── per-card proposed-merge diff (GET .../git/diff?branch=<worktree>) ───────────
+  const [diffTask, setDiffTask] = useState<KanbanTask | null>(null);
+  const [diffData, setDiffData] = useState<BranchDiff | null>(null);
+  const diffSeq = useRef(0);
+
+  const viewDiff = (task: KanbanTask) => {
+    if (!task.worktreeName) return;
+    const seq = ++diffSeq.current;
+    setDiffTask(task);
+    setDiffData(null);
+    fetch(`${API}/api/projects/${projectId}/git/diff?branch=${encodeURIComponent(task.worktreeName)}`)
+      .then((r) => r.json())
+      .then((d: BranchDiff) => {
+        if (diffSeq.current === seq) setDiffData(d);
+      })
+      .catch((e) => {
+        if (diffSeq.current === seq) setDiffData({ diff: '', truncated: false, binary: false, error: e?.message || 'failed to load diff' });
+      });
+  };
 
   return (
     <div>
@@ -250,7 +286,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
               </Field>
             </div>
             <div className="grid grid-cols-3 gap-3">
-              <Field label="budget usd" hint="optional cap">
+              <Field label="budget usd" hint="per-run cap (each build/fix attempt)">
                 <Input value={budgetUsd} onChange={(e) => setBudgetUsd(e.target.value)} placeholder="unbounded" inputMode="decimal" />
               </Field>
               <Field label="max attempts">
@@ -299,7 +335,39 @@ export default function BoardPage({ params }: { params: { id: string } }) {
             onRequestChanges={requestChanges}
             onDelete={deleteTask}
             onRefreshPr={refreshPr}
+            onViewDiff={viewDiff}
           />
+        </div>
+      )}
+
+      {diffTask && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-10 px-4"
+          style={{ background: 'rgba(4,5,7,0.78)' }}
+          onClick={() => setDiffTask(null)}
+        >
+          <Panel className="w-full max-w-[900px] my-auto">
+            <div onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+                <div className="min-w-0">
+                  <Kicker>proposed-merge diff</Kicker>
+                  <div className="font-mono text-[11px] text-dim mt-1 truncate">
+                    {diffTask.title} · {diffTask.worktreeName}
+                  </div>
+                </div>
+                <button onClick={() => setDiffTask(null)} className="text-faint hover:text-ink font-mono text-lg leading-none">
+                  ✕
+                </button>
+              </div>
+              <div className="p-4">
+                {diffData == null ? (
+                  <div className="font-mono text-[11px] text-faint py-2">loading diff…</div>
+                ) : (
+                  <DiffView diff={diffData.diff} truncated={diffData.truncated} binary={diffData.binary} error={diffData.error} />
+                )}
+              </div>
+            </div>
+          </Panel>
         </div>
       )}
     </div>

@@ -58,6 +58,8 @@ export interface KanbanCardProps {
   onDelete?: (task: KanbanTask) => void;
   /** Re-read the card's PR state from GitHub (v2 #2 PR mode). */
   onRefreshPr?: (task: KanbanTask) => void;
+  /** Open the card's proposed-merge branch diff (GET .../git/diff?branch=). */
+  onViewDiff?: (task: KanbanTask) => void;
 }
 
 // ── PR state badge color map (v2 #2) ──
@@ -68,20 +70,23 @@ const PR_STATE_COLOR: Record<NonNullable<KanbanTask['prState']>, string> = {
 };
 
 /** Presentational card — title, phase badge, attempt/budget evidence, move + Review actions. */
-export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, onRequestChanges, onDelete, onRefreshPr }: KanbanCardProps) {
+export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, onRequestChanges, onDelete, onRefreshPr, onViewDiff }: KanbanCardProps) {
   const m = phaseMeta(task.executionPhase);
   const attemptHot = task.attemptCount >= task.maxAttempts;
   const isReview = task.column === 'Review';
   // once Approved the server flips phase→merging (still in Review until the PM merges to
   // Done); hide the gate buttons so they don't linger as no-ops during the merge. Also hide
-  // them once a PR is open (v2 #2 PR mode parks Review+idle with prState set) — a second Approve
-  // would re-run push + `gh pr create` and FAIL because the PR already exists. prState is null in
-  // local mode, so local behavior is unchanged.
-  const awaitingGate = isReview && task.executionPhase !== 'merging' && !task.prState;
+  // them while a PR is LIVE (v2 #2 PR mode parks Review+idle with prState set) — a second Approve
+  // would re-run push + `gh pr create` and FAIL because the PR already exists. A CLOSED
+  // (rejected) PR keeps the gate: re-approving pushes a fresh PR. prState is null in local
+  // mode, so local behavior is unchanged.
+  const awaitingGate =
+    isReview &&
+    task.executionPhase !== 'merging' &&
+    task.executionPhase !== 'resolving' &&
+    task.prState !== 'open' &&
+    task.prState !== 'merged';
   const pr = Math.max(0, Math.min(4, task.priority ?? 0));
-
-  // diff link → the files tab, scoped to this card's proposed-merge branch (W4 viewer).
-  const diffHref = `/projects/${projectId}/files${task.worktreeName ? `?branch=${encodeURIComponent(task.worktreeName)}` : ''}`;
 
   return (
     <div
@@ -119,7 +124,7 @@ export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, o
           {task.attemptCount}/{task.maxAttempts} att
         </span>
         {task.budgetUsd != null && (
-          <span className="font-mono tnum text-[9.5px] text-faint" title="per-card budget">{usd(task.budgetUsd)}</span>
+          <span className="font-mono tnum text-[9.5px] text-faint" title="per-run budget (each build / fix / resolve attempt gets this cap)">{usd(task.budgetUsd)}</span>
         )}
         {task.prState && (
           <span
@@ -165,11 +170,16 @@ export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, o
               campaign ↗
             </Link>
           )}
-          {(isReview || task.worktreeName) && (
-            <Link href={diffHref} className="font-mono text-[9.5px] text-dim hover:text-amber underline">
-              view diff
-            </Link>
-          )}
+          {(isReview || task.worktreeName) &&
+            (task.worktreeName && onViewDiff ? (
+              <button onClick={() => onViewDiff(task)} className="font-mono text-[9.5px] text-dim hover:text-amber underline">
+                view diff
+              </button>
+            ) : (
+              <Link href={`/projects/${projectId}/files`} className="font-mono text-[9.5px] text-dim hover:text-amber underline">
+                view diff
+              </Link>
+            ))}
           {task.prUrl && (
             <a
               href={task.prUrl}

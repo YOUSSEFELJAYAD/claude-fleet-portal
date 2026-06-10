@@ -299,10 +299,26 @@ export const projectsRepo = {
 
   deleteProject(id: string): void {
     // Only the projects row is owned here; kanban_tasks/runs/campaigns belong to
-    // other modules and are intentionally not cascaded from this module (spec §3).
+    // other modules and are intentionally not cascaded from this module (spec §3) —
+    // they clean their own rows by subscribing via onProjectDeleted below.
     deleteProjectStmt.run(id);
+    for (const cb of projectDeletedListeners) {
+      try {
+        cb(id);
+      } catch {
+        /* one subscriber failing must not block the others */
+      }
+    }
   },
 };
+
+// ── project-deleted subscription ──────────────────────────────────────────────
+// pm/planboard/campaigns import this module (never the reverse), so cascades hang
+// off a listener registry here — same pattern as registry.onRunTerminal.
+const projectDeletedListeners: Array<(id: string) => void> = [];
+export function onProjectDeleted(cb: (id: string) => void): void {
+  projectDeletedListeners.push(cb);
+}
 
 /** The repo's current branch (HEAD short name), e.g. 'main' or 'master'. Fallback 'main'.
  *  Used so a new project's merge target matches the repo's ACTUAL default branch (older
@@ -313,6 +329,28 @@ async function detectDefaultBranch(dir: string): Promise<string> {
     return stdout.trim() || 'main';
   } catch {
     return 'main';
+  }
+}
+
+/**
+ * Null when `branch` is usable as the project's base in `dir`, else a 400-able message.
+ * Unborn-HEAD edge: a commit-less repo has no refs yet, so the branch is accepted iff it
+ * matches the symbolic HEAD name (the branch the first commit will land on).
+ */
+async function validateBranchExists(dir: string, branch: string): Promise<string | null> {
+  try {
+    const head = await execFileAsync('git', ['-C', dir, 'rev-parse', '--verify', '-q', 'HEAD'], { timeout: 10000 }).then(
+      () => true,
+      () => false,
+    );
+    if (!head) {
+      const cur = await detectDefaultBranch(dir);
+      return branch === cur ? null : `defaultBranch "${branch}" does not match the repository's unborn branch "${cur}"`;
+    }
+    await execFileAsync('git', ['-C', dir, 'rev-parse', '--verify', '-q', `refs/heads/${branch}`], { timeout: 10000 });
+    return null;
+  } catch {
+    return `defaultBranch "${branch}" does not exist in this repository`;
   }
 }
 
@@ -476,6 +514,16 @@ export function registerProjectsRoutes(app: FastifyInstance) {
     // If no branch was given, DETECT the repo's actual current branch (main vs master vs anything)
     // instead of assuming 'main'. Runs AFTER the gate so it reads the just-init'd repo.
     if (defaultBranch === undefined) defaultBranch = await detectDefaultBranch(rootDir);
+    else {
+      // A client-provided branch must actually exist — the web form prefills 'main', so
+      // attaching a 'master' repo would otherwise record a phantom base and every
+      // branch-based git function (diff/probe/merge) would fail with 'unknown revision'.
+      const err = await validateBranchExists(rootDir, defaultBranch);
+      if (err) {
+        reply.code(400);
+        return { error: err };
+      }
+    }
 
     const createReq: CreateProjectRequest = {
       name,
@@ -506,6 +554,11 @@ export function registerProjectsRoutes(app: FastifyInstance) {
       if (!b) {
         reply.code(400);
         return { error: 'defaultBranch must be a non-empty string' };
+      }
+      const err = await validateBranchExists(projectsRepo.getProject(id)!.rootDir, b);
+      if (err) {
+        reply.code(400);
+        return { error: err };
       }
       patch.defaultBranch = b;
     }
@@ -561,8 +614,12 @@ export function registerProjectsRoutes(app: FastifyInstance) {
   });
 
   // ── delete ──────────────────────────────────────────────────────────────────
-  app.delete('/api/projects/:id', async (req) => {
+  app.delete('/api/projects/:id', async (req, reply) => {
     const id = (req.params as any).id as string;
+    if (!projectsRepo.getProject(id)) {
+      reply.code(404);
+      return { error: 'not found' };
+    }
     projectsRepo.deleteProject(id);
     return { ok: true };
   });
@@ -615,7 +672,7 @@ function parseProjectV2Fields(body: any): { fields: Record<string, unknown>; err
     if (typeof body.remoteName !== 'string' || !body.remoteName.trim()) {
       return { error: 'remoteName must be a non-empty string' };
     }
-    f.remoteName = body.remoteName;
+    f.remoteName = body.remoteName.trim();
   }
   if (body.pushEnabled !== undefined) f.pushEnabled = !!body.pushEnabled;
 

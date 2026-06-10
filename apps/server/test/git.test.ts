@@ -388,6 +388,29 @@ describe('mergeBranch', () => {
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('a\nMASTER\nc\n');
     expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(false);
   });
+
+  it('REFUSES when the root has a DIFFERENT branch checked out than the expected base', async () => {
+    const root = mkRepo();
+    const wt = addWorktree(root, 'wt-wrongbase', 'task-wrongbase');
+    writeFileSync(join(wt, 'feature.txt'), 'feature\n');
+    g(wt, 'add', 'feature.txt');
+    g(wt, 'commit', '-m', 'feature work');
+
+    // The human checked out their own feature branch in the project root.
+    g(root, 'checkout', '-b', 'humans-own-branch');
+    const pre = head(root);
+
+    const res = await git.mergeBranch(root, 'task-wrongbase', 'master');
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/humans-own-branch/);
+    expect(res.error).toMatch(/master/);
+    expect(head(root)).toBe(pre); // nothing merged anywhere
+
+    // Back on the right branch the same merge goes through.
+    g(root, 'checkout', 'master');
+    const ok = await git.mergeBranch(root, 'task-wrongbase', 'master');
+    expect(ok.ok).toBe(true);
+  });
 });
 
 // ── cleanupWorktree (SPEC §6.6) ───────────────────────────────────────────────
@@ -593,6 +616,24 @@ describe('read helpers — changedDiff', () => {
     expect(typeof r.error).toBe('string');
     expect(r.error!.length).toBeGreaterThan(0);
   });
+
+  it('synthesizes an all-additions diff for an UNTRACKED file', async () => {
+    const root = mkRepo();
+    writeFileSync(join(root, 'brand-new.txt'), 'fresh content\n');
+    const r = await git.changedDiff(root, 'brand-new.txt');
+    expect(r.binary).toBe(false);
+    expect(r.diff).toMatch(/\+fresh content/);
+    expect(r.error).toBeUndefined();
+  });
+
+  it('returns an explanatory error (not an empty "No changes") for an untracked DIRECTORY', async () => {
+    const root = mkRepo();
+    mkdirSync(join(root, 'newdir'));
+    writeFileSync(join(root, 'newdir', 'inside.txt'), 'hi\n');
+    const r = await git.changedDiff(root, 'newdir/'); // status emits the collapsed '?? newdir/' form
+    expect(r.diff).toBe('');
+    expect(r.error).toMatch(/untracked directory/i);
+  });
 });
 
 describe('read helpers — gitLog', () => {
@@ -631,6 +672,34 @@ describe('read helpers — gitLog', () => {
     expect(r.entries).toEqual([]);
     expect(typeof r.error).toBe('string');
     expect(r.error!.length).toBeGreaterThan(0);
+  });
+
+  it('returns an empty log (no error) for an unborn HEAD instead of a raw git fatal', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fleet-git-unborn-'));
+    tmpDirs.push(dir);
+    g(dir, 'init', '-b', 'main'); // zero commits → unborn HEAD
+    const r = await git.gitLog(dir);
+    expect(r.entries).toEqual([]);
+    expect(r.error).toBeUndefined();
+  });
+
+  it('still logs a branch when a same-named FILE exists in the work tree (`--` disambiguator)', async () => {
+    const root = mkRepo();
+    writeFileSync(join(root, 'master'), 'a file literally named master\n'); // branch is 'master'
+    const r = await git.gitLog(root, { branch: 'master' });
+    expect(r.error).toBeUndefined();
+    expect(r.entries.length).toBeGreaterThan(0);
+  });
+});
+
+describe('read helpers — lsTree (unborn HEAD)', () => {
+  it('returns an empty tree (no error) for a commit-less repo', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fleet-git-unborn2-'));
+    tmpDirs.push(dir);
+    g(dir, 'init', '-b', 'main');
+    const r = await git.lsTree(dir, 'HEAD', '');
+    expect(r.entries).toEqual([]);
+    expect(r.error).toBeUndefined();
   });
 });
 

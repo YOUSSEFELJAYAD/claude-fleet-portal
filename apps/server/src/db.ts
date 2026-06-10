@@ -312,6 +312,29 @@ const insertSkillStmt = db.prepare(
   `INSERT OR IGNORE INTO run_skills (run_id, skill_name, scope) VALUES (?, ?, ?)`,
 );
 
+function queryRuns(filter: { status?: string; effort?: string; q?: string } | undefined, limit: number | null): Run[] {
+  let sql = 'SELECT * FROM runs';
+  const where: string[] = [];
+  const params: any[] = [];
+  if (filter?.status) {
+    where.push('status = ?');
+    params.push(filter.status);
+  }
+  if (filter?.effort) {
+    where.push('effort = ?');
+    params.push(filter.effort);
+  }
+  if (filter?.q) {
+    where.push('(task LIKE ? OR cwd LIKE ? OR result_text LIKE ?)');
+    const like = `%${filter.q}%`;
+    params.push(like, like, like);
+  }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  sql += ' ORDER BY started_at DESC';
+  if (limit != null) sql += ` LIMIT ${limit}`;
+  return (db.prepare(sql).all(...params) as any[]).map(rowToRun);
+}
+
 export const repo = {
   /** H4 — fold the WAL back into the main db file (call on graceful shutdown). */
   checkpoint() {
@@ -410,25 +433,13 @@ export const repo = {
   },
 
   listRuns(filter?: { status?: string; effort?: string; q?: string }): Run[] {
-    let sql = 'SELECT * FROM runs';
-    const where: string[] = [];
-    const params: any[] = [];
-    if (filter?.status) {
-      where.push('status = ?');
-      params.push(filter.status);
-    }
-    if (filter?.effort) {
-      where.push('effort = ?');
-      params.push(filter.effort);
-    }
-    if (filter?.q) {
-      where.push('(task LIKE ? OR cwd LIKE ? OR result_text LIKE ?)');
-      const like = `%${filter.q}%`;
-      params.push(like, like, like);
-    }
-    if (where.length) sql += ' WHERE ' + where.join(' AND ');
-    sql += ' ORDER BY started_at DESC LIMIT 500';
-    return (db.prepare(sql).all(...params) as any[]).map(rowToRun);
+    return queryRuns(filter, 500);
+  },
+
+  /** UNCAPPED variant for the CSV exporter — a spend/usage reconciliation must span EVERY
+   *  run, not the UI's 500 most-recent (same caveat as fleet.ts's accounting queries). */
+  listRunsForExport(filter?: { status?: string; effort?: string; q?: string }): Run[] {
+    return queryRuns(filter, null);
   },
 
   getNodes(runId: string): RunNode[] {

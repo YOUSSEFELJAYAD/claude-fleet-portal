@@ -53,9 +53,9 @@ export default function OrchestratePage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const reload = () => api.campaigns().then(setCampaigns);
+  const reload = () => api.campaigns().then(setCampaigns).catch(() => {});
   useEffect(() => {
-    api.templates().then(setTemplates);
+    api.templates().then(setTemplates).catch(() => {});
     reload();
     const t = setInterval(reload, 2500);
     return () => clearInterval(t);

@@ -105,9 +105,9 @@ export function Waterfall({
         matched.add(key);
         tools.push({ name: u.name, ms: Math.max(0, e.ts - u.ts), pending: false });
       }
-      // tool_use without a matching result → still running.
+      // tool_use without a matching result → still running (clamped to node end if it ended).
       for (const [key, u] of uses) {
-        if (!matched.has(key)) tools.push({ name: u.name, ms: Math.max(0, now - u.ts), pending: true });
+        if (!matched.has(key)) tools.push({ name: u.name, ms: Math.max(0, (node.endedAt ?? now) - u.ts), pending: node.endedAt == null });
       }
       tools.sort((a, b) => b.ms - a.ms);
 

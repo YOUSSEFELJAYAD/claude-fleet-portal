@@ -161,10 +161,9 @@ export async function brokerValidate(worktreeDir: string, cfg: BrokerConfig): Pr
 // ── port allocation ────────────────────────────────────────────────────────────
 
 /**
- * Find a free TCP port in [start,end] by attempting to bind a net.Server on 127.0.0.1. Skips ports
- * another in-flight broker has reserved. Returns the port (the probe server is CLOSED before
- * returning, so the child can bind it) or null if none is free. Tries port 0 (OS-assigned) first as
- * a fast path when the range is the default ephemeral range.
+ * Find a free TCP port in [start,end] by bind-probing both the wildcard address and 127.0.0.1.
+ * Skips ports another in-flight broker has reserved. Returns the port (the probe servers are
+ * CLOSED before returning, so the child can bind it) or null if none is free.
  */
 async function allocatePort(start: number, end: number): Promise<number | null> {
   const lo = Math.max(1, Math.min(start, end));
@@ -176,17 +175,28 @@ async function allocatePort(start: number, end: number): Promise<number | null> 
   return null;
 }
 
-/** Bind-probe a single port: resolves true if 127.0.0.1:p was free (server is closed before resolve). */
-function tryBind(port: number): Promise<boolean> {
+/**
+ * Bind-probe a single port. A port is usable only if BOTH the wildcard address (what a project
+ * server's bare `listen(PORT)` binds) and 127.0.0.1 (what the health probe dials) accept a bind:
+ * on macOS, SO_REUSEADDR lets a specific-address bind succeed while another process holds the
+ * wildcard (e.g. rapportd on 49152), so a loopback-only probe reports false-free ports and the
+ * spawned server dies with EADDRINUSE.
+ */
+async function tryBind(port: number): Promise<boolean> {
+  return (await bindProbe(port, null)) && bindProbe(port, '127.0.0.1');
+}
+
+/** Single bind attempt on `host` (null → wildcard); the probe server is closed before resolve. */
+function bindProbe(port: number, host: string | null): Promise<boolean> {
   return new Promise((resolve) => {
     const srv = createNetServer();
     srv.once('error', () => {
       // EADDRINUSE / EACCES / etc. → not usable.
       resolve(false);
     });
-    srv.listen(port, '127.0.0.1', () => {
-      srv.close(() => resolve(true));
-    });
+    const onListen = () => srv.close(() => resolve(true));
+    if (host == null) srv.listen(port, onListen);
+    else srv.listen(port, host, onListen);
   });
 }
 
@@ -274,12 +284,20 @@ function httpHealthOk(url: string): Promise<boolean> {
  */
 function teardownServer(child: ChildProcess): Promise<void> {
   return new Promise((resolve) => {
-    // Already dead (exitCode/signalCode set, no live pid)? nothing to do.
-    if (child.exitCode != null || child.signalCode != null || child.pid == null) {
+    // Never spawned (no pid)? nothing to signal.
+    if (child.pid == null) {
       resolve();
       return;
     }
     const pid = child.pid;
+    // Direct child already dead: detached group members (e.g. a backgrounded server) can outlive
+    // it, so best-effort sweep the group anyway (signalGroup never throws if it's fully gone).
+    if (child.exitCode != null || child.signalCode != null) {
+      signalGroup(pid, 'SIGTERM');
+      setTimeout(() => signalGroup(pid, 'SIGKILL'), KILL_GRACE_MS).unref();
+      resolve();
+      return;
+    }
     let escalation: NodeJS.Timeout | null = null;
 
     const finish = () => {

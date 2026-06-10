@@ -27,6 +27,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [disallowedTools, setDisallowedTools] = useState(''); // H10
   const [worktree, setWorktree] = useState(''); // H10
   const [chosenSkills, setChosenSkills] = useState<Set<string>>(new Set());
+  const [command, setCommand] = useState(''); // optional /command the run starts on
   const [subagentProfile, setSubagentProfile] = useState('');
   const [budget, setBudget] = useState('');
   const [busy, setBusy] = useState(false);
@@ -43,23 +44,31 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
       .catch(() => setErr('Could not load launch options — is the control plane running?')); // H8
   }, []);
   useEffect(() => {
-    api.skills(cwd).then(setSkills).catch(() => setSkills([]));
-    api.subagents(cwd).then(setSubagents).catch(() => setSubagents([]));
+    let alive = true;
+    api.skills(cwd).then((s) => alive && setSkills(s)).catch(() => alive && setSkills([]));
+    api.subagents(cwd).then((s) => alive && setSubagents(s)).catch(() => alive && setSubagents([]));
+    return () => {
+      alive = false;
+    };
   }, [cwd]);
 
   const selectedModel = models.find((m) => m.id === model);
   const effectiveEffort = ultracode ? 'xhigh' : effort;
 
+  // A picked /command becomes the head of the prompt — headless claude executes
+  // slash commands passed as the -p prompt; the textarea then carries its arguments.
+  const effectivePrompt = command ? `/${command}${prompt.trim() ? ' ' + prompt.trim() : ''}` : prompt;
+
   async function submit() {
-    if (!prompt.trim()) {
-      setErr('A prompt is required.');
+    if (!effectivePrompt.trim()) {
+      setErr('A prompt or a /command is required.');
       return;
     }
     setBusy(true);
     setErr(null);
     try {
       const run = await api.launch({
-        prompt,
+        prompt: effectivePrompt,
         cwd,
         model,
         fastMode,
@@ -69,10 +78,11 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
         interactive,
         brief,
         permissionMode,
-        allowedTools: allowedTools.trim() ? allowedTools.split(/[,\s]+/).filter(Boolean) : undefined,
+        allowedTools: allowedTools.trim() ? allowedTools.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean) : undefined,
         disallowedTools: disallowedTools.trim() ? disallowedTools.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean) : undefined,
         worktree: worktree.trim() || undefined,
-        skills: [...chosenSkills],
+        // the picked /command's instructions auto-load with the command — never double-inject
+        skills: [...chosenSkills].filter((s) => s !== command),
         subagentProfile: subagentProfile || null,
         budgetUsd: budget.trim() ? Number(budget) : null,
       });
@@ -98,9 +108,55 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
 
           <div className="p-6 grid grid-cols-2 gap-5">
             <div className="col-span-2">
-              <Field label="task prompt">
-                <Textarea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the task for the agent…" autoFocus />
+              <Field label="run a /command" hint="optional · the agent starts on this slash-command; the prompt becomes its arguments">
+                <Select value={command} onChange={(e) => setCommand(e.target.value)}>
+                  <option value="">— none (free-form prompt) —</option>
+                  <optgroup label="built-in (claude)">
+                    {skills
+                      .filter((s) => s.scope === 'builtin')
+                      .map((s) => (
+                        <option key={s.path} value={s.name} title={s.description}>
+                          /{s.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                  <optgroup label="commands (plugins · user · project)">
+                    {skills
+                      .filter((s) => s.kind === 'command' && s.scope !== 'builtin')
+                      .map((s) => (
+                        <option key={s.path} value={s.name} title={s.description}>
+                          /{s.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                  <optgroup label="skills (also run as /name)">
+                    {skills
+                      .filter((s) => s.kind !== 'command')
+                      .map((s) => (
+                        <option key={s.path} value={s.name} title={s.description}>
+                          /{s.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                </Select>
               </Field>
+            </div>
+
+            <div className="col-span-2">
+              <Field label={command ? `arguments for /${command}` : 'task prompt'}>
+                <Textarea
+                  rows={3}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder={command ? 'optional arguments / extra context for the command…' : 'Describe the task for the agent…'}
+                  autoFocus
+                />
+              </Field>
+              {command && (
+                <div className="font-mono text-[10px] text-faint mt-1 truncate">
+                  will run: <span className="text-amber">{effectivePrompt}</span>
+                </div>
+              )}
             </div>
 
             <Field label="working directory" hint="cwd">

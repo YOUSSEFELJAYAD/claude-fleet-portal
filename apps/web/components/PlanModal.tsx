@@ -23,6 +23,7 @@ export function PlanModal({ projectId, onClose, onApplied }: { projectId: string
   const [err, setErr] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const aliveRef = useRef(true);
 
   function teardown() {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -30,7 +31,13 @@ export function PlanModal({ projectId, onClose, onApplied }: { projectId: string
     esRef.current?.close();
     esRef.current = null;
   }
-  useEffect(() => () => teardown(), []);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      teardown();
+    };
+  }, []);
 
   async function startPlanning() {
     if (!objective.trim()) {
@@ -42,6 +49,7 @@ export function PlanModal({ projectId, onClose, onApplied }: { projectId: string
     setProgress('');
     try {
       const d = await api.createPlan(projectId, objective.trim());
+      if (!aliveRef.current) return;
       setDraft(d);
       // stream the planner run's live progress over the existing per-run SSE.
       if (d.orchestratorRunId) openStream(d.orchestratorRunId);

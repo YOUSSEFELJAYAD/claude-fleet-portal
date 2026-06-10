@@ -128,6 +128,8 @@ export function useRunStream(id: string): RunLiveState {
         setRun(m.run);
         setNodeMap(new Map(m.nodes.map((n) => [n.id, n])));
         setEvents(m.events);
+        partialRef.current = {};
+        setPartials({});
         setTruncatedBefore((m as any).truncatedBefore);
       } else if (m.kind === 'run') {
         setRun(m.run);

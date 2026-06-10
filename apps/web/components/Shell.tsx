@@ -1,8 +1,9 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useFleet } from '@/lib/live';
+import { api } from '@/lib/api';
 import { usd } from '@/lib/format';
 import { Gauge, Btn, Dot } from './ui';
 import { LaunchModal } from './LaunchModal';
@@ -21,12 +22,18 @@ const NAV = [
   { href: '/mcp', label: 'MCP', glyph: '⊕' },
   { href: '/notifications', label: 'Notifications', glyph: '◬' },
   { href: '/guardrails', label: 'Guardrails', glyph: '⊘' },
+  { href: '/releases', label: 'Releases', glyph: '⇪' },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { spend, connected, runs } = useFleet();
   const [launchOpen, setLaunchOpen] = useState(false);
+  // amber dot on the Releases nav entry when GitHub has a newer release (server-cached check)
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  useEffect(() => {
+    api.releaseStatus().then((s) => setUpdateAvailable(s.updateAvailable)).catch(() => {});
+  }, []);
   const active = runs.filter((r) => ['starting', 'running', 'orchestrating', 'awaiting-input', 'awaiting-permission'].includes(r.status));
   const dailyCap = 50; // soft visual reference for the daily-spend gauge
 
@@ -62,6 +69,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   {n.glyph}
                 </span>
                 <span className="font-display text-[12px] tracking-wide uppercase group-hover:text-ink">{n.label}</span>
+                {n.href === '/releases' && updateAvailable && (
+                  <span
+                    title="update available"
+                    className="ml-auto animate-pulseGlow"
+                    style={{ width: 7, height: 7, borderRadius: 999, background: '#ffb000', display: 'inline-block' }}
+                  />
+                )}
               </Link>
             );
           })}

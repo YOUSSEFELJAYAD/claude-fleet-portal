@@ -240,6 +240,43 @@ describe('POST /files/commit performs atomic CRUD commits (ambient author)', () 
     expect(tracked).toBe(false);
     expect(git(['status', '--porcelain'], editRepo).trim()).toBe('');
   });
+
+  it('DELETE: a tracked file WITH uncommitted modifications still deletes (git rm -f)', async () => {
+    // Seed a tracked file, then dirty it on disk — plain `git rm` refuses this state.
+    await app.inject({
+      method: 'POST',
+      url: `/api/projects/${editPid}/files/commit`,
+      payload: { path: 'mod-then-delete.txt', content: 'v1\n', message: 'seed' },
+    });
+    writeFileSync(join(editRepo, 'mod-then-delete.txt'), 'v2 uncommitted\n');
+    const baseOid = oidOf(editRepo, 'mod-then-delete.txt');
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${editPid}/files/commit`,
+      payload: { path: 'mod-then-delete.txt', delete: true, message: 'rm modified', baseOid },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().ok).toBe(true);
+    expect(existsSync(join(editRepo, 'mod-then-delete.txt'))).toBe(false);
+    expect(git(['status', '--porcelain'], editRepo).trim()).toBe('');
+  });
+
+  it('DELETE: an UNTRACKED file is unlinked and reports ok (no phantom commit)', async () => {
+    writeFileSync(join(editRepo, 'never-tracked.txt'), 'scratch\n');
+    const headBefore = git(['rev-parse', 'HEAD'], editRepo).trim();
+    const baseOid = oidOf(editRepo, 'never-tracked.txt');
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${editPid}/files/commit`,
+      payload: { path: 'never-tracked.txt', delete: true, message: 'rm untracked', baseOid },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().ok).toBe(true);
+    expect(existsSync(join(editRepo, 'never-tracked.txt'))).toBe(false);
+    // Nothing was tracked → no commit happened; HEAD is unchanged and the tree stays clean.
+    expect(git(['rev-parse', 'HEAD'], editRepo).trim()).toBe(headBefore);
+    expect(git(['status', '--porcelain'], editRepo).trim()).toBe('');
+  });
 });
 
 // ── stale-oid + delete-of-missing → 409 ──────────────────────────────────────────

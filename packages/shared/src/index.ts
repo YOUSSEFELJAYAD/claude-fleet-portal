@@ -250,9 +250,12 @@ export interface TeamView {
 
 export interface SkillInfo {
   name: string;
-  scope: 'user' | 'project' | 'plugin';
+  scope: 'user' | 'project' | 'plugin' | 'builtin';
   path: string;
   description?: string;
+  /** 'skill' = SKILL.md folder (Skill-tool invocable); 'command' = commands/*.md slash-command
+   *  (also usable as a launch prompt: `claude -p "/<name> …"`). Absent on older payloads. */
+  kind?: 'skill' | 'command';
 }
 
 export interface SubagentInfo {
@@ -660,14 +663,88 @@ export type KanbanBoardMessage =
   | { kind: 'task-removed'; taskId: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Release / self-update (release page + GitHub version check)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ReleaseInfo {
+  tag: string;
+  name: string;
+  body: string;
+  url: string;
+  publishedAt: string | null;
+  prerelease: boolean;
+}
+
+export interface ReleaseStatus {
+  /** version from the repo root package.json */
+  currentVersion: string;
+  /** short HEAD sha of the local checkout (null outside a git repo) */
+  currentSha: string | null;
+  /** `owner/repo` resolved from FLEET_GITHUB_REPO or the git origin remote; null = not configured */
+  repo: string | null;
+  latest: ReleaseInfo | null;
+  /** latest release tag is semver-newer than currentVersion */
+  updateAvailable: boolean;
+  /** a git origin remote exists, so POST /api/release/update can pull */
+  canSelfUpdate: boolean;
+  checkedAt: number | null;
+  error: string | null;
+}
+
+export interface SelfUpdateStep {
+  step: string;
+  ok: boolean;
+  output: string;
+}
+
+export interface SelfUpdateResult {
+  ok: boolean;
+  steps: SelfUpdateStep[];
+  note: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Static reference data
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Model catalog. Pricing per PRD §6; cost truth still comes from `result.total_cost_usd`. */
+/** Model catalog. Pricing per platform.claude.com (2026-06); cost truth still comes from
+ *  `result.total_cost_usd`. Ordered most→least capable. Fast mode (2× pricing) is the
+ *  Claude Code Opus-tier toggle (Opus 4.6/4.7/4.8). */
 export const MODELS: ModelInfo[] = [
+  {
+    id: 'claude-fable-5',
+    label: 'Claude Fable 5',
+    inputPerM: 10,
+    outputPerM: 50,
+    contextWindow: 1_000_000,
+    maxOutput: 128_000,
+    fastModeCapable: false,
+  },
   {
     id: 'claude-opus-4-8',
     label: 'Claude Opus 4.8',
+    inputPerM: 5,
+    outputPerM: 25,
+    fastInputPerM: 10,
+    fastOutputPerM: 50,
+    contextWindow: 1_000_000,
+    maxOutput: 128_000,
+    fastModeCapable: true,
+  },
+  {
+    id: 'claude-opus-4-7',
+    label: 'Claude Opus 4.7',
+    inputPerM: 5,
+    outputPerM: 25,
+    fastInputPerM: 10,
+    fastOutputPerM: 50,
+    contextWindow: 1_000_000,
+    maxOutput: 128_000,
+    fastModeCapable: true,
+  },
+  {
+    id: 'claude-opus-4-6',
+    label: 'Claude Opus 4.6',
     inputPerM: 5,
     outputPerM: 25,
     fastInputPerM: 10,
@@ -690,6 +767,34 @@ export const MODELS: ModelInfo[] = [
     label: 'Claude Haiku 4.5',
     inputPerM: 1,
     outputPerM: 5,
+    contextWindow: 200_000,
+    maxOutput: 64_000,
+    fastModeCapable: false,
+  },
+  // ── legacy (still active on the API; pinnable for older workflows) ───────────
+  {
+    id: 'claude-opus-4-5',
+    label: 'Claude Opus 4.5 (legacy)',
+    inputPerM: 5,
+    outputPerM: 25,
+    contextWindow: 200_000,
+    maxOutput: 64_000,
+    fastModeCapable: false,
+  },
+  {
+    id: 'claude-opus-4-1',
+    label: 'Claude Opus 4.1 (legacy)',
+    inputPerM: 15,
+    outputPerM: 75,
+    contextWindow: 200_000,
+    maxOutput: 32_000,
+    fastModeCapable: false,
+  },
+  {
+    id: 'claude-sonnet-4-5',
+    label: 'Claude Sonnet 4.5 (legacy)',
+    inputPerM: 3,
+    outputPerM: 15,
     contextWindow: 200_000,
     maxOutput: 64_000,
     fastModeCapable: false,

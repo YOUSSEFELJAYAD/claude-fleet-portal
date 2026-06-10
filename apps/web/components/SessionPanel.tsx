@@ -19,7 +19,7 @@ function statusColor(status: string): string {
 }
 
 export function SessionPanel({ events }: { events: NormalizedEvent[] }) {
-  const init = events.find((e) => e.type === 'init');
+  const init = [...events].reverse().find((e) => e.type === 'init');
   const raw: any = (init?.payload as any)?.raw;
   if (!raw) return null;
 

@@ -8,8 +8,10 @@ const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
 /** raw fetch helper that surfaces the server's {error} message (mirrors lib/api.ts j<T>). */
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
+  // json content-type only when a body is sent — Fastify 400s an empty JSON-typed body,
+  // which broke the body-less DELETE behind "✕ Delete Project".
   const r = await fetch(API + path, {
-    headers: { 'content-type': 'application/json' },
+    ...(init?.body != null ? { headers: { 'content-type': 'application/json' } } : {}),
     ...init,
   });
   if (!r.ok) {
@@ -63,7 +65,10 @@ const projectsApi = {
 function CreateForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState('');
   const [rootDir, setRootDir] = useState('');
-  const [defaultBranch, setDefaultBranch] = useState('main');
+  // Empty = let the server detect the repo's ACTUAL branch (main vs master vs anything).
+  // A hardcoded 'main' prefill used to record a phantom base on master repos, breaking
+  // every branch-based git function downstream.
+  const [defaultBranch, setDefaultBranch] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -81,7 +86,8 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
     const payload: CreateProjectRequest = {
       name: name.trim(),
       rootDir: rootDir.trim(),
-      defaultBranch: defaultBranch.trim() || 'main',
+      // omit when blank → the server detects the repo's actual current branch
+      ...(defaultBranch.trim() ? { defaultBranch: defaultBranch.trim() } : {}),
     };
     try {
       try {
@@ -90,7 +96,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
         // The dir exists but isn't a git repo — offer to initialize it and re-submit (v2 #10).
         if (
           e?.code === 'not_a_git_repo' &&
-          confirm(`"${payload.rootDir}" is not a git repository.\n\nInitialize it as a git repo (git init on branch "${payload.defaultBranch}") and attach it?`)
+          confirm(`"${payload.rootDir}" is not a git repository.\n\nInitialize it as a git repo (git init on branch "${payload.defaultBranch ?? 'main'}") and attach it?`)
         ) {
           await projectsApi.create({ ...payload, initGit: true });
         } else {
@@ -99,7 +105,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
       }
       setName('');
       setRootDir('');
-      setDefaultBranch('main');
+      setDefaultBranch('');
       onCreated();
     } catch (e: any) {
       setErr(e.message || 'failed to create project');
@@ -118,8 +124,8 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
         <Field label="root dir" hint="absolute path · must be a git repo">
           <Input value={rootDir} onChange={(e) => setRootDir(e.target.value)} placeholder="/Users/you/code/acme" />
         </Field>
-        <Field label="default branch">
-          <Input value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} placeholder="main" />
+        <Field label="default branch" hint="blank → auto-detect">
+          <Input value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} placeholder="auto-detect" />
         </Field>
       </div>
       <div className="mt-4 flex items-center gap-3">
@@ -190,19 +196,23 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
   }
 
   async function saveSettings() {
-    await patch({
-      autoMerge,
-      wipLimit: Number(wipLimit) || 1,
-      defaultValidationCommand: validationCmd.trim() || null,
-      budgetCeilingUsd: budget.trim() ? Number(budget) : null,
-      editingEnabled,
-      commitAuthorName: commitAuthorName.trim() || null,
-      commitAuthorEmail: commitAuthorEmail.trim() || null,
-      mergeMode,
-      remoteName: remoteName.trim() || 'origin',
-      pushEnabled,
-      resolveConflicts,
-    });
+    try {
+      await patch({
+        autoMerge,
+        wipLimit: Number(wipLimit) || 1,
+        defaultValidationCommand: validationCmd.trim() || null,
+        budgetCeilingUsd: budget.trim() ? Number(budget) : null,
+        editingEnabled,
+        commitAuthorName: commitAuthorName.trim() || null,
+        commitAuthorEmail: commitAuthorEmail.trim() || null,
+        mergeMode,
+        remoteName: remoteName.trim() || 'origin',
+        pushEnabled,
+        resolveConflicts,
+      });
+    } catch {
+      /* error surfaced via err */
+    }
   }
 
   async function togglePause() {

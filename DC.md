@@ -499,3 +499,194 @@ State: **316 server tests** (21 files, +3 guard tests), `pnpm -r typecheck` clea
 Not actioned (unchanged scope): validation-with-teeth real-claude E2E (deterministic suite covers
 gating; paid run only on request) and the throwaway repo `yeljayad/fleet-pm-e2e-throwaway` (deletion
 offered, awaiting user say-so).
+
+## 11. Production-readiness pass — full E2E + 20-bug fix batch (2026-06-10)
+
+**Trigger:** user-reported "git functions sometimes not working" and "delete doesn't work"; asked for
+end-to-end production-readiness testing. Method: live API e2e (curl, isolated `FLEET_DATA_DIR`) + full
+Playwright UI walk + a 53-agent ultracode bug-hunt workflow (6 finders → adversarial verification;
+29 confirmed findings, 4 refuted as already-fixed-on-disk).
+
+**ROOT CAUSE of "delete doesn't work" (critical):** the web's `j()`/`mutate()` helpers set
+`content-type: application/json` on EVERY request; Fastify rejects an EMPTY body with that header
+(`FST_ERR_CTP_EMPTY_JSON_BODY` → 400) BEFORE the route runs. Every body-less DELETE in the UI failed:
+kill run, delete run record, delete project, delete card, delete template, kill campaign. curl/inject
+never sends the header, which is why 316 tests + API e2e all passed while every UI delete 400'd.
+Fixed BOTH sides: server.ts empty-body-tolerant JSON parser (delegates non-empty to
+`getDefaultJsonParser('error','error')` — proto-poisoning protection intact, pinned by test) + all
+three client helpers now send the header only when a body exists. 4 regression tests.
+
+**Second critical:** deleted-run resurrection — `stop()` flips a run terminal instantly but the
+detached child dies up to ~3s later; deleting the record in that window let the late `onExit` re-INSERT
+the deleted rows + re-broadcast the ghost run + double-fire `notifyTerminal`. Fixed: `lr.deleted` flag +
+`live.get(id) !== lr` identity check at the top of `onExit` (also seals the stop→resume overwrite variant).
+
+**Fix batch (all verifier-confirmed; 332 server tests, was 316):**
+- git: `mergeBranch(root, branch, expectedBase)` refuses when the root has the wrong branch / detached
+  HEAD checked out (was: merged into WHATEVER was checked out); `commit.gpgsign=false` + `--no-verify`
+  on ensureCommitted/integrate/resolve/merge/initRepo (a signing setup or failing hook broke every
+  engine commit — fixtures had masked it); unborn-HEAD → empty tree/log instead of raw git fatals;
+  `--` rev/path disambiguators in gitLog/gitShow; untracked-DIRECTORY diff returns an explanatory
+  error instead of an empty "No changes".
+- view-diff (board): UI sends the WORKTREE name (`task-<id>`) but the branch is `worktree-task-<id>` —
+  the per-card diff ALWAYS failed. Fixed server-side in the git/diff route: resolve branch param
+  against [branch, worktree-<branch>, refs/fleet-backup/…] so the convention stays in one place.
+- fileedit delete: `git rm -f` (plain rm refused any file with uncommitted modifications — i.e. exactly
+  the files agents just edited); untracked files are unlinked with NO phantom commit.
+- projects: DELETE 404s on unknown id and CASCADES via new `onProjectDeleted` listener registry
+  (pm cancels+deletes every card → stops runs/campaigns + tears down worktrees; planboard stops live
+  planners + drops drafts; campaigns kills live project-scoped campaigns) — the UI confirm's promise
+  is now true; defaultBranch must EXIST on create/PUT (web form now blank→auto-detect, killing the
+  'main'-prefill-on-master-repo phantom-base class).
+- kanban/pm: column-move liveness guard (raw move of a card with a live run 409s; → Canceled routes
+  through pm.cancel); approve/request-changes 409 while resolving/merging (stale client could clobber
+  a live resolve and merge conflict markers); prState='closed' no longer wedges the card (approve
+  re-opens a fresh PR; request-changes clears prState/prUrl; UI gate buttons follow).
+- campaigns: synthesizer launch wrapped (429→retry by tick, else failCampaign — was a permanent
+  'running' wedge after all tasks terminal); tickActive guards per-campaign.
+- registry: resume() validates cwd exists (400 instead of silent insta-fail); permission decide on a
+  one-shot run → honest 409 (stdin closed at spawn; write was silently dropped, child waited forever);
+  stop() on a not-in-memory run only signals the persisted pid while the record is LIVE (recycled-pid
+  could kill an unrelated fleet run).
+- gh/pm: prView discriminates genuine no-PR (`no pull requests found`) from auth/network/missing-gh
+  errors; refreshPr persists the error to lastError instead of silently pretending "no PR".
+- templates: create/PUT whitelist+validate (blind `{...existing, ...body}` persisted e.g. a string
+  allowedTools that later crashed registry.launch mid-campaign); DELETE 404s unknown + 409s builtins.
+- exporter: history CSV uses new uncapped `repo.listRunsForExport` (was silently truncated to the UI's
+  500-row LIMIT).
+- web polish: app/icon.svg (favicon 404 on every page); delete/kill error surfacing on RunCard ✕,
+  template delete, Kill Campaign (404 = benign refresh; everything else now visible); card budget
+  relabelled "per-run budget" (engine semantics are per-run by design — spec §10; label promised
+  per-card).
+
+**Verified:** 332 server tests (21 files), `pnpm -r typecheck` clean, `next build` clean (17 routes incl.
+icon), live re-e2e on dev:mock: view-diff-by-worktree-name returns the diff, unborn-HEAD files/log return
+empty (no fatals), phantom defaultBranch 400s, untracked-dir diff explains itself, all UI deletes work
+(project/card/run/template verified in-browser via Playwright), zero console errors on the home page.
+NOT exercised live: deleted-run resurrection race (mock exits instantly on SIGTERM — guard is
+code-level + identity-checked), real-gh PR-closed re-approve (deterministic tests only).
+
+## 12. Agent-template library v2 — skills made real + 12-profile library + detail page (2026-06-10)
+
+**User ask:** improve the built-in templates, grow the agent library, make templates carry skills +
+working instructions, and add a template detail/edit page.
+
+- **Skills were write-only metadata (root-cause fix).** `LaunchRequest.skills` was persisted on the
+  run row but NEVER reached the spawned process (claude has no --skills flag). buildArgs now merges a
+  SKILLS instruction block ("invoke each matching one with the Skill tool BEFORE starting…") into
+  `--append-system-prompt`, composing AFTER any template systemPrompt in a single merged flag (F-11
+  prompt-last invariant pinned). 3 new buildArgs tests.
+- **Built-in library rebuilt: 12 profiles** (templates.ts). The 5 originals (Orchestrator / Researcher /
+  Implementer / Reviewer / Synthesizer) upgraded + 7 specialists added: Debugger, Test Writer,
+  Security Auditor, Refactorer, Docs Writer, Frontend Builder, Perf Optimizer. Every prompt follows one
+  contract: identity + guardrails → numbered WORKING METHOD → shared SKILL_RULE (honor the appended
+  SKILLS block) → shared REPORT_RULE output contract (worker results feed the Synthesizer/human gate).
+  Reviewer's role corrected 'worker'→'reviewer' (name-keyed lookups unaffected; worker fallback pool
+  still non-empty). Orchestrator now assigns across the full library by name.
+- **Seeding auto-upgrade:** `seedTemplates` upgrades a built-in row ONLY if its systemPrompt is
+  byte-equal to a LEGACY_SEED_PROMPTS entry (untouched v1 seed) — user-edited built-ins are never
+  clobbered; ids/createdAt preserved. Idempotent. New names insert as before.
+- **Detail page `/templates/[id]`** (+ `GET /api/templates/:id`, `api.template/updateTemplate`):
+  full system-prompt editor, skills picker fed by the live `~/.claude/skills` catalog (`/api/skills`)
+  + add-by-name for uncataloged skills, role/model/effort/permission/tools/budget editors, Save via
+  the (validated) PUT, Delete for non-builtins; built-ins editable with name/isBuiltin immutable.
+  List cards link through ("open →") and show attached skills.
+
+**Verified:** 344 server tests (+12: 9 templates.test.ts seeding/round-trip incl. clobber-protection,
+3 buildArgs skills), `pnpm -r typecheck` clean, `next build` clean (18 routes, /templates/[id] added),
+live smoke: 12 builtins seeded on the running dev:mock (5 auto-upgraded in place), detail page edit →
+✓ saved → persisted (`skills:['graphify']` on Debugger), launch with skills carries them onto the run,
+zero console errors.
+
+## 13. Skill catalog: full Claude-setup collection + full model lineup (2026-06-10)
+
+- **Skills now collected from the WHOLE Claude setup (user ask: "collect all skills").** catalog.ts
+  previously scanned only `~/.claude/skills` + project `.claude/skills` (2 hits on this machine).
+  Added `scanPluginSkills()`: reads `~/.claude/plugins/installed_plugins.json` (v2 manifest —
+  source of truth for the CURRENT install path; blind cache-globbing would surface stale versions),
+  scans each enabled plugin's `<installPath>/skills/<dir>/SKILL.md` AND `commands/*.md`
+  (slash-commands are Skill-invocable), emits fully-qualified `<plugin>:<segment>` names (the
+  Skill-tool invoke form; segment = dir name / file stem, not drifting frontmatter), respects
+  settings.json `enabledPlugins:false` (e.g. ralph-loop excluded), de-dupes multi-version installs
+  newest-lastUpdated-first, fully defensive (missing/corrupt manifest → []). listSkills also picks
+  up `~/.claude/commands` + project `.claude/commands`. Live: **2 → 34 skills** (32 plugin: all of
+  superpowers, commit-commands, code-review, feature-dev, hookify, eq-session…), each with
+  frontmatter description + scope badge in the LaunchModal and template-detail pickers.
+  6 hermetic tests (test/catalog.test.ts — fake manifest/installs).
+- **Model catalog: full current + legacy lineup (user ask: "add all possible claude llm models like
+  fable5").** @fleet/shared MODELS 3 → 9 entries, pricing per the claude-api reference (2026-06):
+  **Fable 5 `claude-fable-5` $10/$50 · 1M ctx · 128K out** (new top tier, no fast mode), Opus
+  4.8/4.7/4.6 $5/$25 (fast 2× capable per CC), Sonnet 4.6 $3/$15 · 1M, Haiku 4.5 $1/$5 · 200K,
+  legacy-active Opus 4.5 / Opus 4.1 ($15/$75) / Sonnet 4.5 pinnable. Launch default UNCHANGED
+  (route hardcodes `body.model || 'claude-opus-4-8'`); `modelRates` unknown-id fallback re-pinned
+  to the opus entry by ID (was `MODELS[0]` — would have priced unknowns at Fable's 2×). Catalog
+  test added (server.test.ts).
+
+**Verified:** 351 server tests (+7), 3/3 typecheck, `next build` clean, live `/api/models` lists all
+9 with pricing, `/api/skills` returns 34, template-detail dropdown + skill picker render the full
+catalogs in-browser.
+
+## 14. Launch on a /command — full slash-command surface for agents (2026-06-10)
+
+**User ask:** let a launched agent start on any available slash-command, including plugin /commands.
+
+- **SkillInfo.kind** (`'skill' | 'command'`, shared) — the catalog now discriminates SKILL.md skills
+  from `commands/*.md` slash-commands; scope union gains `'builtin'`.
+- **Built-in claude commands**: the binary embeds its bundled skills and extracts them only
+  per-invocation (no stable on-disk enumeration), so the 8 stable task-shaped built-ins ship as a
+  static catalog entry set (`init`, `review`, `code-review`, `security-review`, `simplify`,
+  `verify`, `run`, `deep-research`; scope `builtin`, path `claude-builtin:/<name>`). Unknown-to-CLI
+  names fail loud in run output — best-effort by design.
+- **LaunchModal "run a /command" picker**: optional select, grouped — built-in (claude) /
+  commands (plugins·user·project) / skills (also /-invocable) — ALL 42 entries on this machine.
+  Picking one re-labels the prompt to "arguments for /<cmd>", shows a "will run: /<cmd> <args>"
+  preview, and submits `prompt = "/<cmd> <args>"` (headless claude executes slash-commands passed
+  as -p prompt). Free-form prompt unchanged when no command picked.
+- **Dup-path bug fixed (React dup-key warning in launch modal)**: a cwd of $HOME made the
+  'project' catalog scan resolve to the SAME ~/.claude dirs as the 'user' scan → every user skill
+  listed twice. listSkills/listSubagents now de-dupe by path; catalog test pins unique paths.
+
+**Verified:** 352 server tests (23 files; +catalog kind/builtin/unique-path pins), 3/3 typecheck,
+`next build` clean, live: /api/skills = 42 (8 builtin·command, 12 plugin·command, 20 plugin·skill,
+2 user·skill), picker renders all 42 grouped, /code-review selection composes the preview correctly,
+dup-key console warning gone.
+
+**§14 addendum (same day):** a /command launch no longer double-injects the command as a skill —
+claude auto-loads the command's own instructions when the prompt starts with `/<name>`, so
+buildArgs filters the prompt-head command out of the SKILLS note (server-side guarantee, all
+callers) and the LaunchModal filters it from the submitted skills array. 2 pinning tests
+(354 total). Other attached skills still inject normally alongside a /command.
+
+## 15. Release page + GitHub-based update check / self-update (2026-06-10)
+
+**User ask:** "the release page and the autoupdate based on the version on the github".
+
+- **Server `release.ts`** (+ ReleaseStatus/ReleaseInfo/SelfUpdateResult in @fleet/shared):
+  - `GET /api/release/status` — local version (root package.json) + short HEAD sha vs the repo's
+    newest GitHub Release (newest STABLE preferred over prereleases); `updateAvailable` via loose
+    semver compare (v-prefix/prerelease-tail tolerant, numeric not string order).
+  - Repo slug resolves from `FLEET_GITHUB_REPO` (override) else the `origin` remote URL
+    (https/ssh/git@ forms parsed). THIS repo has no remote yet → everything degrades quietly
+    (repo:null, no error spam) and the page explains the two ways to link it.
+  - GitHub fetch: 10-min cache + 6-h unref'd background refresh (so the sidebar badge works
+    without visiting the page), optional GITHUB_TOKEN, 404→empty-not-error, failures land in
+    `status.error` never 5xx, last-known releases kept on flaky network. Fetcher injectable for
+    tests (`__setFetcherForTests`).
+  - `GET /api/release/list` — releases for the changelog page.
+  - `POST /api/release/update` — SELF-UPDATE: refuses without origin (400) / with a dirty tree
+    (409, lists the dirt — never pulls over local work) / detached HEAD; else
+    `git fetch origin --tags` → `git pull --ff-only origin <branch>` → `pnpm install`, each step
+    logged (stops at first failure), cache invalidated. Note in response: dev watchers reload
+    themselves; production needs `pnpm build` + restart.
+- **Web `/releases`** (nav "⇪ Releases"): version strip (installed/sha/latest/status), update
+  banner with one-click "⇪ Update to <tag>" (only when updateAvailable AND canSelfUpdate),
+  per-step output log, not-linked explainer, full changelog (release bodies via MarkdownView,
+  "installed" badge on the matching tag). **Sidebar badge**: pulsing amber dot on the Releases
+  nav entry when an update is available (one-shot status fetch in Shell).
+
+**Verified:** 368 server tests (24 files; +14 release: slug parse forms, semver compare, status
+shapes incl. prerelease preference + degrade-on-network-failure, no-remote 400 on update —
+repo-state-dependent cases `skipIf(hasOrigin)`), 3/3 typecheck, `next build` clean (18 routes),
+live demo against `FLEET_GITHUB_REPO=anthropics/claude-code`: latest v2.1.172 detected,
+updateAvailable true, sidebar badge lit, 20-release changelog rendered, honest "no origin —
+pull manually" state (no update button); restarted clean without the env (quiet not-linked state).

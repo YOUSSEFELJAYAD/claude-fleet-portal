@@ -34,7 +34,10 @@ export function RunCard({ run, index = 0 }: { run: Run; index?: number }) {
                     e.preventDefault();
                     e.stopPropagation();
                     if (!confirm('Delete this run from history? This cannot be undone.')) return;
-                    api.deleteRun(run.id).catch(() => {});
+                    // 404 = already gone (a missed run-removed SSE) — not worth reporting.
+                    api.deleteRun(run.id).catch((err: any) => {
+                      if (err?.status !== 404) alert(err?.message || 'failed to delete run');
+                    });
                   }}
                   className="opacity-0 group-hover:opacity-100 text-faint hover:text-sig-failed font-mono text-[12px] transition-opacity leading-none"
                 >

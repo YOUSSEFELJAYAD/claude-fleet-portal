@@ -26,12 +26,20 @@ import { Btn, Textarea } from '@/components/ui';
  * Read view fetches `GET /api/projects/:id/files?path=<file>&content=1` → ShowFileResult.
  */
 
-type ShowFileResult =
-  | { binary: true; content?: undefined; truncated?: undefined; size: number | null; isImage: boolean; ext: string; error?: string }
-  | { binary: false; content: string; truncated: boolean; size: number; isImage: false; ext: string; error?: string };
+type ShowFileResult = {
+  kind?: string;
+  type?: string;
+  content?: string;
+  truncated?: boolean;
+  size?: number | null;
+  isImage?: boolean;
+  ext?: string;
+  error?: string;
+};
 
 const MD_EXTS = new Set(['.md', '.markdown', '.mdx']);
 const JSON_EXTS = new Set(['.json', '.jsonc', '.geojson']);
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 
 export function FileViewer({
   projectId,
@@ -91,6 +99,8 @@ export function FileViewer({
       setEditing(true);
       return;
     }
+    // Images are served as raw bytes (never JSON) — rendered straight via <img>, no metadata fetch.
+    if (IMAGE_EXTS.has(extOf(path))) return;
     let alive = true;
     setLoading(true);
     fetch(`${API}/api/projects/${projectId}/files?path=${encodeURIComponent(path)}&content=1`)
@@ -168,7 +178,9 @@ export function FileViewer({
       // Reflect the just-committed bytes in the read view without a round-trip (and without re-running
       // the path effect, which would clear okSha). The freshly written content IS editBuf.
       setData((d) =>
-        d && !d.binary ? { ...d, content: editBuf, size: new Blob([editBuf]).size, truncated: false } : d,
+        d && typeof d.content === 'string'
+          ? { ...d, content: editBuf, size: new Blob([editBuf]).size, truncated: false }
+          : d,
       );
       onCommitted?.({ path, deleted: false, sha: res.sha });
     } catch (e: any) {
@@ -229,11 +241,12 @@ export function FileViewer({
         {path} — {err}
       </div>
     );
-  if (!data) return null;
+  const isImagePath = IMAGE_EXTS.has(extOf(path));
+  if (!data && !isImagePath) return null;
 
-  const ext = data.ext || extOf(path);
+  const ext = data?.ext || extOf(path);
   // An Edit affordance only makes sense for displayable text (not images / other binary).
-  const canShowEdit = editingEnabled && !data.binary;
+  const canShowEdit = editingEnabled && data?.kind === 'file' && typeof data?.content === 'string';
 
   // ── EDIT MODE ───────────────────────────────────────────────────────────────
   if (editing) {
@@ -287,10 +300,10 @@ export function FileViewer({
   );
 
   // image
-  if (data.binary && data.isImage) {
+  if (isImagePath) {
     return (
       <div className="overflow-auto h-full">
-        <ReadBar path={path} size={data.size}>
+        <ReadBar path={path} size={data?.size ?? null}>
           <span>image</span>
           {editAffordance}
         </ReadBar>
@@ -306,17 +319,17 @@ export function FileViewer({
       </div>
     );
   }
-  // other binary
-  if (data.binary) {
+  // other binary (or any non-blob payload, e.g. a submodule's tree)
+  if (!data || data.kind !== 'file' || typeof data.content !== 'string') {
     return (
       <div className="overflow-auto h-full">
-        <ReadBar path={path} size={data.size}>
+        <ReadBar path={path} size={data?.size ?? null}>
           {editAffordance}
         </ReadBar>
         {(editErr || conflict) && <ConflictBox message={editErr ?? 'conflict'} conflict={conflict} onReload={reload} />}
         <div className="p-4">
           <div className="font-mono text-[12px] text-faint border border-line2 px-3 py-4">
-            Binary file ({fmtBytes(data.size)}) — not displayed.
+            Binary file ({fmtBytes(data?.size ?? null)}) — not displayed.
           </div>
         </div>
       </div>
@@ -328,7 +341,7 @@ export function FileViewer({
 
   return (
     <div className="overflow-auto h-full">
-      <ReadBar path={path} size={data.size} truncated={data.truncated}>
+      <ReadBar path={path} size={data.size ?? null} truncated={data.truncated}>
         {editAffordance}
       </ReadBar>
       {(editErr || conflict) && <ConflictBox message={editErr ?? 'conflict'} conflict={conflict} onReload={reload} />}

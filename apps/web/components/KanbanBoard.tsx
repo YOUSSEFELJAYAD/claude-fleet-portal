@@ -21,7 +21,7 @@ export interface KanbanBoardProps extends Omit<KanbanCardProps, 'task'> {
 }
 
 /** Presentational board — lays out KANBAN_COLUMNS, sorts cards by priority then rank. */
-export function KanbanBoard({ tasks, wipLimit, projectId, busy, onMove, onApprove, onRequestChanges, onDelete, onRefreshPr }: KanbanBoardProps) {
+export function KanbanBoard({ tasks, wipLimit, projectId, busy, onMove, onApprove, onRequestChanges, onDelete, onRefreshPr, onViewDiff }: KanbanBoardProps) {
   const byColumn = new Map<KanbanColumn, KanbanTask[]>();
   for (const c of KANBAN_COLUMNS) byColumn.set(c, []);
   for (const t of tasks) {
@@ -70,6 +70,7 @@ export function KanbanBoard({ tasks, wipLimit, projectId, busy, onMove, onApprov
                     onRequestChanges={onRequestChanges}
                     onDelete={onDelete}
                     onRefreshPr={onRefreshPr}
+                    onViewDiff={onViewDiff}
                   />
                 ))
               )}

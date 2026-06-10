@@ -39,6 +39,7 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
   const { id } = params;
   const [project, setProject] = useState<Project | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [spend, setSpend] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [planning, setPlanning] = useState(false);
@@ -46,10 +47,12 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
   function reload() {
     setLoading(true);
     setError(null);
-    Promise.all([getProject(id), api.listRuns()])
-      .then(([p, allRuns]) => {
+    Promise.all([getProject(id), api.listRuns(), api.fleetStatus()])
+      .then(([p, allRuns, fleet]) => {
         setProject(p);
         setRuns(allRuns.filter((r) => r.projectId === id));
+        // server-side SUM over every run scoped to this project — the /api/agents list is capped at 500.
+        setSpend(fleet.projects.find((fp) => fp.projectId === id)?.projectSpend ?? 0);
       })
       .catch((e) => setError(e.message || 'failed to load project'))
       .finally(() => setLoading(false));
@@ -91,7 +94,6 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
   }
 
   const p = project;
-  const spend = runs.reduce((sum, r) => sum + (r.costUsd || 0), 0);
   const liveRuns = runs.filter((r) => statusMeta(r.status).live);
 
   return (
@@ -141,7 +143,7 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
               {p.budgetCeilingUsd != null && <span className="text-faint text-[12px]"> / {usd(p.budgetCeilingUsd)}</span>}
             </div>
           </div>
-          <Stat label="total runs" value={runs.length} />
+          <Stat label="recent runs" value={runs.length} />
           <Stat label="live runs" value={liveRuns.length} accent={liveRuns.length ? '#ffb000' : undefined} />
           <Stat label="wip limit" value={p.wipLimit} />
         </div>
@@ -179,7 +181,7 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
       {/* scoped runs */}
       <div className="mb-3 flex items-baseline justify-between">
         <Kicker>project runs</Kicker>
-        <span className="font-mono text-[10px] text-faint">spend derived from these runs</span>
+        <span className="font-mono text-[10px] text-faint">most recent runs · spend aggregated across all runs</span>
       </div>
       {runs.length === 0 ? (
         <Empty>No runs scoped to this project yet. The PM spawns build runs as it picks up Ready cards.</Empty>

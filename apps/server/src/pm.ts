@@ -39,7 +39,7 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 import type { Run, Project, KanbanTask, Campaign, ExecutionPhase } from '@fleet/shared';
 import { registry } from './registry.js';
-import { projectsRepo } from './projects.js';
+import { projectsRepo, onProjectDeleted } from './projects.js';
 import { kanbanRepo } from './kanban.js';
 import {
   ensureCommitted,
@@ -243,6 +243,18 @@ class PmEngine {
     // v2 #4 — a campaign-mode card gates on WHOLE-campaign completion (not its workers' run
     // terminals, which carry campaignId!=null and are skipped by handleRunTerminal's partition guard).
     campaigns.onCampaignTerminal((c) => this.handleCampaignTerminal(c));
+    // Deleting a project cascades its board: cancel (stops live run/campaign, tears down the
+    // worktree) then drop the row — same H2 ordering the kanban DELETE route uses.
+    onProjectDeleted((projectId) => {
+      for (const card of kanbanRepo.listTasks(projectId)) {
+        try {
+          this.cancel(card.id);
+        } catch {
+          /* card cleanup is best-effort; still drop the row below */
+        }
+        kanbanRepo.deleteTask(card.id);
+      }
+    });
     if (!this.safetyTimer) {
       // Human card moves (Backlog→Ready, drag) fire no terminal event → an unref'd safety tick
       // re-evaluates every project periodically. unref so it never keeps the process alive.
@@ -484,6 +496,12 @@ class PmEngine {
         return 'skip';
       }
 
+      // campaigns.create persists the campaign row BEFORE launching the orchestrator, so a 429 from
+      // the concurrency cap there would strand a dead 'planning' row on every capped retry — pre-check
+      // the cap and stay 'capped' (card left Ready; the tick retries). Synchronous from here through
+      // the orchestrator launch, so the slot can't be claimed in between.
+      if (registry.spend().activeRuns >= registry.getConfig().maxConcurrentRuns) return 'capped';
+
       // UNRELAXED deny-list (§3.4): campaign workers NEVER push — force pushEnabled false regardless of
       // the project's single-mode relaxation. permissionMode: the same unattended bypass the PM build
       // uses (isolated worktree + push denied → safe), so interactive:false workers don't stall.
@@ -615,7 +633,10 @@ class PmEngine {
       return true;
     } catch (e: any) {
       if (e?.statusCode === 429) {
-        // leave the card where it is; the safety tick / next terminal retries the fix
+        // capped: the safety tick never retries an InProgress card (and the old run's terminal
+        // won't re-fire), so return the card to Ready — the tick re-picks Ready cards. The fix
+        // context survives in lastError/validationOutput.
+        kanbanRepo.updateTask(card.id, { column: 'Ready', executionPhase: 'idle' });
         return false;
       }
       kanbanRepo.updateTask(card.id, {
@@ -739,6 +760,9 @@ class PmEngine {
   private async gate(cardId: string, project: Project): Promise<void> {
     const card = kanbanRepo.getTask(cardId);
     if (!card) return;
+    // Re-check after the (long) validate await: a human/cancel may have moved the card terminal
+    // or re-queued it meanwhile (H2 ordering) — do not resurrect it.
+    if (PM_DONE_COLUMNS.has(card.column) || card.column === 'Backlog' || card.column === 'Ready') return;
 
     if (!project.autoMerge) {
       // STOP for a human Approve — park in Review (phase idle so the badge isn't "merging" yet).
@@ -758,10 +782,21 @@ class PmEngine {
     const card = kanbanRepo.getTask(taskId);
     if (!card) return;
     if (card.column !== 'Review') return; // only Review cards are approvable
-    // A PR is already open for this card (v2 #2 PR mode parks Review+idle with prState set). Re-approving
-    // would re-run push + `gh pr create`, which fails because the PR exists. Ignore — use refresh-pr to
-    // advance the card to Done when the PR merges on GitHub. prState is null in local mode (unaffected).
-    if (card.prState) return;
+    // A live resolve agent owns this card's worktree (MERGE_HEAD is set) — driving a merge
+    // now would clobber the 'resolving' partition marker and could ship conflict markers.
+    // ('merging' is NOT blocked here: the safety tick deliberately re-drives Review+merging
+    // after a restart, and the in-flight set dedupes live merges.)
+    if (card.executionPhase === 'resolving') return;
+    // A PR is LIVE for this card (v2 #2 PR mode parks Review+idle with prState set). Re-approving
+    // would re-run push + `gh pr create`, which fails because the PR exists. Ignore — use refresh-pr
+    // to advance the card to Done when the PR merges on GitHub. A CLOSED (rejected) PR stays
+    // approvable: doMergePr pushes and opens a fresh PR. prState is null in local mode (unaffected).
+    // Reset any 'merging' phase a caller already wrote, else the badge (and the tick's Review+merging
+    // sweep) sticks until the PR merges remotely.
+    if (card.prState === 'open' || card.prState === 'merged') {
+      if (card.executionPhase === 'merging') kanbanRepo.updateTask(taskId, { executionPhase: 'idle' });
+      return;
+    }
     const project = projectsRepo.getProject(card.projectId);
     if (!project) return;
     // mark merging so the badge reflects the in-flight merge and a concurrent tick won't re-drive it
@@ -868,7 +903,7 @@ class PmEngine {
           }
 
           // 5(local). final merge --no-ff into main (assert-clean + ORIG_HEAD rollback live in git.ts).
-          const res = await mergeBranch(project.rootDir, branch);
+          const res = await mergeBranch(project.rootDir, branch, base);
           if (!res.ok) {
             kanbanRepo.updateTask(cardId, {
               column: 'Review',
@@ -1144,7 +1179,7 @@ class PmEngine {
       await this.doMergePr(cardId, project, card, wtName, branch, base);
       return;
     }
-    const res = await mergeBranch(project.rootDir, branch);
+    const res = await mergeBranch(project.rootDir, branch, base);
     if (!res.ok) {
       kanbanRepo.updateTask(cardId, {
         column: 'Review',
@@ -1257,8 +1292,15 @@ class PmEngine {
     if (!project) return;
     const branch = branchNameFor(wtName);
 
-    const pv = await prView(project.rootDir, branch);
-    if (!pv) return; // no PR for this branch (or gh/auth error) → leave the card as-is
+    const pvr = await prView(project.rootDir, branch);
+    if (pvr.error) {
+      // gh/auth/network failure ≠ "no PR" — surface it on the card so the user knows the
+      // badge is stale instead of silently never updating (route is fire-and-forget).
+      kanbanRepo.updateTask(taskId, { lastError: `refresh-pr failed: ${pvr.error}` });
+      return;
+    }
+    const pv = pvr.pr;
+    if (!pv) return; // genuinely no PR for this branch → leave the card as-is
 
     if (pv.state === 'merged') {
       await this.withMergeLock(project.id, async () => {
@@ -1293,6 +1335,9 @@ class PmEngine {
   private async rework(cardId: string, project: Project, validationOutput: string | null): Promise<void> {
     const card = kanbanRepo.getTask(cardId);
     if (!card) return;
+    // Re-check after the (long) validate await: a human/cancel may have moved the card terminal
+    // or re-queued it meanwhile (H2 ordering) — never relaunch a run for it.
+    if (PM_DONE_COLUMNS.has(card.column) || card.column === 'Backlog' || card.column === 'Ready') return;
     const wtName = card.worktreeName ?? worktreeNameFor(card);
     const wtDir = worktreeDirFor(project.rootDir, wtName);
 

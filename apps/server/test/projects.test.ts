@@ -270,16 +270,28 @@ describe('W0 detectDefaultBranch — repo actual branch, not hardcoded main', ()
     expect(res.json().defaultBranch).toBe('main');
   });
 
-  it('honours an explicit defaultBranch over detection when provided', async () => {
+  it('honours an explicit defaultBranch when it matches a real branch', async () => {
     const dir = makeGitRepo('master');
     const res = await app.inject({
       method: 'POST',
       url: '/api/projects',
       headers: H(),
-      payload: { name: 'explicit-branch', rootDir: dir, defaultBranch: 'develop' },
+      payload: { name: 'explicit-branch', rootDir: dir, defaultBranch: 'master' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().defaultBranch).toBe('develop');
+    expect(res.json().defaultBranch).toBe('master');
+  });
+
+  it('rejects an explicit defaultBranch that does not exist in the repo (a phantom base breaks every branch-based git function)', async () => {
+    const dir = makeGitRepo('master');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'phantom-branch', rootDir: dir, defaultBranch: 'develop' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain('develop');
   });
 });
 
@@ -742,5 +754,45 @@ describe('W0 config validation — wipLimit positive int, budgetCeiling non-neg-
     expect(okUpdate.statusCode).toBe(200);
     expect(okUpdate.json().wipLimit).toBe(2);
     expect(okUpdate.json().budgetCeilingUsd).toBe(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Project delete — 404 on unknown id; cascades the kanban board (cancel+delete
+// every card) so deleted projects don't leak orphaned rows (the UI confirm
+// promises "kanban board and task history will be removed").
+// ────────────────────────────────────────────────────────────────────────────
+describe('DELETE /api/projects/:id — existence + board cascade', () => {
+  it('404s on an unknown project id', async () => {
+    const res = await app.inject({ method: 'DELETE', url: '/api/projects/nope', headers: H() });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('deletes the project AND its kanban cards', async () => {
+    const dir = makeGitRepo('main');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: H(),
+      payload: { name: 'cascade-me', rootDir: dir },
+    });
+    expect(created.statusCode).toBe(200);
+    const pid = created.json().id;
+    // pause so the PM never picks the card up (keeps the test deterministic)
+    await app.inject({ method: 'PUT', url: `/api/projects/${pid}`, headers: H(), payload: { paused: true } });
+    const card = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${pid}/tasks`,
+      headers: H(),
+      payload: { title: 'orphan-candidate', column: 'Backlog' },
+    });
+    expect(card.statusCode).toBe(200);
+
+    const del = await app.inject({ method: 'DELETE', url: `/api/projects/${pid}`, headers: H() });
+    expect(del.statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: `/api/projects/${pid}`, headers: H() })).statusCode).toBe(404);
+
+    const { kanbanRepo } = await import('../src/kanban.js');
+    expect(kanbanRepo.listTasks(pid)).toEqual([]); // no orphaned rows
   });
 });

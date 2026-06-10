@@ -69,6 +69,8 @@ export default function RunDetail({ params }: { params: { id: string } }) {
   }
 
   const m = statusMeta(run.status);
+  const permReq = [...events].reverse().find((e) => e.type === 'permission_request');
+  const permReqId = String((permReq?.payload as any)?.requestId ?? 'pending');
 
   return (
     <div>
@@ -123,8 +125,8 @@ export default function RunDetail({ params }: { params: { id: string } }) {
           </div>
           {run.status === 'awaiting-permission' && (
             <div className="flex gap-2">
-              <Btn variant="amber" onClick={() => act(() => api.permission(id, 'pending', 'approve'))}>✓ Approve</Btn>
-              <Btn variant="danger" onClick={() => act(() => api.permission(id, 'pending', 'deny'))}>✕ Deny</Btn>
+              <Btn variant="amber" onClick={() => act(() => api.permission(id, permReqId, 'approve'))}>✓ Approve</Btn>
+              <Btn variant="danger" onClick={() => act(() => api.permission(id, permReqId, 'deny'))}>✕ Deny</Btn>
             </div>
           )}
           {/* A9 — export (anchors: Content-Disposition makes them download in place) */}
@@ -218,7 +220,7 @@ export default function RunDetail({ params }: { params: { id: string } }) {
           {run.status === 'awaiting-input' && (
             <div className="px-4 py-3 border-t hairline flex gap-2">
               <Input value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="send a follow-up message…" className="flex-1"
-                onKeyDown={(e) => { if (e.key === 'Enter' && inputText.trim()) act(async () => { await api.input(id, inputText); setInputText(''); }); }} />
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.repeat && !busy && inputText.trim()) act(async () => { await api.input(id, inputText); setInputText(''); }); }} />
               <Btn variant="amber" disabled={busy || !inputText.trim()} onClick={() => act(async () => { await api.input(id, inputText); setInputText(''); })}>Send ▶</Btn>
             </div>
           )}

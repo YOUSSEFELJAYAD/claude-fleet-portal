@@ -250,13 +250,25 @@ export function registerFileviewRoutes(app: FastifyInstance) {
         reply.code(400);
         return { error: 'invalid branch' };
       }
+      // Callers pass either the git branch or a card's WORKTREE name (`task-<id>` — the only
+      // identifier the board carries; the branch git creates for it is `worktree-task-<id>`,
+      // pm.ts branchNameFor). Resolve here so the naming convention stays server-side; fall
+      // back to the merge-time backup ref so the diff still renders after branch cleanup.
+      let ref = branch;
+      for (const c of [branch, `worktree-${branch}`, `refs/fleet-backup/${branch}`, `refs/fleet-backup/worktree-${branch}`]) {
+        const ok = await gitExec(root, ['-C', root, 'rev-parse', '--verify', '-q', `${c}^{commit}`]);
+        if (ok.ok) {
+          ref = c;
+          break;
+        }
+      }
       const base = project.defaultBranch;
-      const args = ['-C', root, 'diff', `${base}...${branch}`];
+      const args = ['-C', root, 'diff', `${base}...${ref}`];
       if (relpath) args.push('--', relpath);
       const r = await gitExec(root, args, { maxBuffer: DIFF_MAX_BUFFER });
       if (!r.ok) return { diff: '', truncated: false, binary: false, error: gitErrText(r) };
       const raw = r.stdout;
-      if (/^Binary files .* differ$/m.test(raw)) return { diff: '', truncated: false, binary: true };
+      if (relpath && /^Binary files .* differ$/m.test(raw)) return { diff: '', truncated: false, binary: true };
       const capped = capDiffLocal(raw);
       return { diff: capped.diff, truncated: capped.truncated, binary: false };
     }

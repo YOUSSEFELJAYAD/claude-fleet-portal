@@ -36,7 +36,7 @@ import { repo } from './db.js';
 import { registry } from './registry.js';
 import { planHasCycle, planHasDupIds } from './campaigns.js';
 import { kanbanRepo } from './kanban.js';
-import { projectsRepo } from './projects.js';
+import { projectsRepo, onProjectDeleted } from './projects.js';
 import { pm } from './pm.js'; // circular but runtime-safe: only referenced inside apply() (mirrors kanban.ts)
 
 const KANBAN_COLS = new Set<string>(KANBAN_COLUMNS);
@@ -107,6 +107,8 @@ const COLS = `id, project_id, objective, target_column, status, orchestrator_run
 const getDraftStmt = db.prepare(`SELECT ${COLS} FROM plan_drafts WHERE id = ?`);
 const getByRunStmt = db.prepare(`SELECT ${COLS} FROM plan_drafts WHERE orchestrator_run_id = ?`);
 const listByProjectStmt = db.prepare(`SELECT ${COLS} FROM plan_drafts WHERE project_id = ? ORDER BY created_at DESC`);
+const listPlanningStmt = db.prepare(`SELECT ${COLS} FROM plan_drafts WHERE status = 'planning'`);
+const deleteByProjectStmt = db.prepare(`DELETE FROM plan_drafts WHERE project_id = ?`);
 const insertStmt = db.prepare(`
   INSERT INTO plan_drafts (${COLS})
   VALUES (@id, @project_id, @objective, @target_column, @status, @orchestrator_run_id, @plan, @error, @applied_card_ids, @created_at, @updated_at)
@@ -206,7 +208,32 @@ function parsePlan(run: Run): PlanTask[] | null {
 // ── engine — terminal handler (partitioned; §3.7) ───────────────────────────────
 class Planboard {
   init() {
+    // Boot reconciliation — registry's reconcileOrphans flips orphaned runs to 'failed' via raw
+    // SQL without firing onRunTerminal (and before this subscription exists), so resolve any
+    // draft still 'planning' whose planner run is gone or already terminal.
+    for (const draft of (listPlanningStmt.all() as any[]).map(rowToDraft)) {
+      const run = draft.orchestratorRunId ? registry.getRun(draft.orchestratorRunId) : null;
+      if (!run) {
+        planboardRepo.update(draft.id, { status: 'error', error: 'planner run lost across server restart' });
+      } else if (run.status === 'completed' || run.status === 'failed' || run.status === 'killed') {
+        this.handleRunTerminal(run);
+      }
+    }
     registry.onRunTerminal((run) => this.handleRunTerminal(run));
+    // Deleting a project drops its drafts (stop a still-running planner first so it
+    // doesn't keep spending against a project that no longer exists).
+    onProjectDeleted((projectId) => {
+      for (const draft of planboardRepo.list(projectId)) {
+        if (draft.status === 'planning' && draft.orchestratorRunId) {
+          try {
+            registry.stop(draft.orchestratorRunId);
+          } catch {
+            /* already terminal / gone */
+          }
+        }
+      }
+      deleteByProjectStmt.run(projectId);
+    });
   }
 
   /**
@@ -273,21 +300,29 @@ class Planboard {
     planboardRepo.insert(draft);
 
     const orchT = orchestratorTemplate();
-    const run = registry.launch({
-      prompt: `OBJECTIVE:\n${obj}\n\nDecompose this objective into a minimal dependency-ordered plan of subtasks suitable for kanban cards. Return ONLY the structured plan.`,
-      cwd: project.rootDir,
-      model: orchT.model,
-      effort: orchT.effort,
-      permissionMode: orchT.permissionMode,
-      allowedTools: orchT.allowedTools,
-      skills: orchT.skills,
-      budgetUsd: orchT.budgetUsd ?? undefined,
-      appendSystemPrompt: orchT.systemPrompt,
-      jsonSchema: PLAN_JSON_SCHEMA,
-      campaignId: null, // §3.7 — owned by neither pm.ts nor campaigns.ts
-      projectId, // scopes the run to the project (shows under project runs); pm still no-ops (no card)
-      interactive: false,
-    });
+    let run: Run;
+    try {
+      run = registry.launch({
+        prompt: `OBJECTIVE:\n${obj}\n\nDecompose this objective into a minimal dependency-ordered plan of subtasks suitable for kanban cards. Return ONLY the structured plan.`,
+        cwd: project.rootDir,
+        model: orchT.model,
+        effort: orchT.effort,
+        permissionMode: orchT.permissionMode,
+        allowedTools: orchT.allowedTools,
+        skills: orchT.skills,
+        budgetUsd: orchT.budgetUsd ?? undefined,
+        appendSystemPrompt: orchT.systemPrompt,
+        jsonSchema: PLAN_JSON_SCHEMA,
+        campaignId: null, // §3.7 — owned by neither pm.ts nor campaigns.ts
+        projectId, // scopes the run to the project (shows under project runs); pm still no-ops (no card)
+        interactive: false,
+      });
+    } catch (e: any) {
+      // launch can throw synchronously (429 concurrency cap, 400 missing cwd) — resolve the
+      // already-inserted draft so it never wedges in 'planning', then rethrow for the route.
+      planboardRepo.update(draft.id, { status: 'error', error: e.message });
+      throw e;
+    }
     // The terminal fires on detached-subprocess exit (never synchronously inside launch()), and
     // the run id isn't stored until here — so the partitioned terminal handler can only match this
     // draft AFTER this update lands. Storing the run id is all that's needed.

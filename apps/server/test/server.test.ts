@@ -140,3 +140,65 @@ describe('config ↔ fleet deadlock guard (residual H9 path — DC §10)', () =>
     expect(res.json().maxConcurrentRuns).toBe(5);
   });
 });
+
+describe('empty JSON body tolerance — body-less DELETE/POST from the web UI', () => {
+  const H = () => ({ host: `127.0.0.1:${PORT}`, 'content-type': 'application/json' });
+
+  it('DELETE with content-type: application/json and NO body reaches the route (404, not FST 400)', async () => {
+    // The web client sets the json content-type on every call, including body-less DELETEs.
+    // Fastify's default parser would reject those with FST_ERR_CTP_EMPTY_JSON_BODY before the
+    // route ever ran — every UI delete button silently failed with 400.
+    const res = await app.inject({ method: 'DELETE', url: '/api/templates/nonexistent', headers: H() });
+    expect(res.statusCode).toBe(404); // route-level "not found", NOT a parser-level 400
+  });
+
+  it('POST with content-type: application/json and empty body reaches the route', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/tasks/nonexistent/refresh-pr', headers: H() });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('still rejects malformed (non-empty) JSON with 400', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: '{not json' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('still blocks __proto__ poisoning in JSON bodies', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/config',
+      headers: H(),
+      payload: '{"__proto__":{"polluted":true},"maxConcurrentRuns":8}',
+    });
+    expect(({} as any).polluted).toBeUndefined();
+    expect(res.statusCode).toBeLessThan(500);
+  });
+});
+
+describe('model catalog — full current + legacy Claude lineup', () => {
+  const H = () => ({ host: `127.0.0.1:${PORT}` });
+
+  it('serves every current model incl. Fable 5 with correct pricing, unique ids', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/models', headers: H() });
+    expect(res.statusCode).toBe(200);
+    const models = res.json();
+    const ids = models.map((m: any) => m.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of [
+      'claude-fable-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5',
+    ]) {
+      expect(ids).toContain(id);
+    }
+    const fable = models.find((m: any) => m.id === 'claude-fable-5');
+    expect(fable.inputPerM).toBe(10);
+    expect(fable.outputPerM).toBe(50);
+    expect(fable.contextWindow).toBe(1_000_000);
+    const opus = models.find((m: any) => m.id === 'claude-opus-4-8');
+    expect(opus.inputPerM).toBe(5);
+    expect(opus.fastModeCapable).toBe(true);
+  });
+});

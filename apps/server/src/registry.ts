@@ -66,10 +66,16 @@ interface LiveRun {
   pendingEvents: NormalizedEvent[];
   runDirty: boolean;
   flushTimer: NodeJS.Timeout | null;
+  /** Set by deleteRun() — the detached child can outlive the record by up to ~3s
+   *  (SIGTERM→SIGKILL window); its late onExit must not resurrect deleted rows. */
+  deleted?: boolean;
 }
 
 function modelRates(modelId: string, fast: boolean) {
-  const m = MODELS.find((x) => x.id === modelId) ?? MODELS[0];
+  // Unknown ids price as the DEFAULT model (opus), not whatever happens to be first
+  // in the catalog — Fable 5 sits at MODELS[0] and costs 2× opus.
+  const m =
+    MODELS.find((x) => x.id === modelId) ?? MODELS.find((x) => x.id === 'claude-opus-4-8') ?? MODELS[0];
   if (fast && m.fastModeCapable && m.fastInputPerM) {
     return { inputPerM: m.fastInputPerM, outputPerM: m.fastOutputPerM! };
   }
@@ -116,10 +122,12 @@ class Registry {
     const prev = this.evictTimers.get(runId);
     if (prev) clearTimeout(prev);
     const t = setTimeout(() => {
-      const lr = this.live.get(runId);
-      const subs = this.runSubs.get(runId)?.size ?? 0;
-      if (lr && isTerminal(lr.run.status) && subs === 0) this.live.delete(runId);
       this.evictTimers.delete(runId);
+      const lr = this.live.get(runId);
+      if (!lr || !isTerminal(lr.run.status)) return;
+      const subs = this.runSubs.get(runId)?.size ?? 0;
+      if (subs === 0) this.live.delete(runId);
+      else this.scheduleEvict(runId);
     }, 60_000);
     t.unref();
     this.evictTimers.set(runId, t);
@@ -422,6 +430,13 @@ class Registry {
   }
 
   private onExit(lr: LiveRun, code: number | null, _signal: NodeJS.Signals | null) {
+    // The run was deleted (or replaced by a resume) while the child was still dying —
+    // upserting now would re-INSERT the deleted rows, re-broadcast a ghost run, and
+    // fire a second terminal notification. Drop everything from this stale closure.
+    if (lr.deleted || this.live.get(lr.run.id) !== lr) {
+      lr.proc = null;
+      return;
+    }
     this.flush(lr); // H16 — drain buffered events before writing the terminal state
     let status: RunStatus;
     if (lr.killed) status = 'killed';
@@ -468,6 +483,10 @@ class Registry {
     if (!lr.interactive) throw Object.assign(new Error('Run was launched one-shot (not interactive).'), { statusCode: 409 });
     lr.proc.writeUserMessage(text);
     lr.resultSeen = false;
+    if (lr.tree.authoritativeCost != null) lr.tree.liveCostEstimate = lr.tree.authoritativeCost;
+    lr.tree.authoritativeCost = null;
+    lr.tree.authoritativeTokensIn = null;
+    lr.tree.authoritativeTokensOut = null;
     if (!isTerminal(lr.run.status)) {
       lr.run.status = 'running';
       this.emitRun(lr);
@@ -497,8 +516,11 @@ class Registry {
       // group by persisted pid, mark it killed, and broadcast so the UI reflects it (PRD §10).
       const run = repo.getRun(runId);
       if (!run) return;
-      killProcessGroup(run.pid);
       if (!isTerminal(run.status)) {
+        // Signal the pid ONLY while the record says the run is live — a terminal row's
+        // persisted pid may have been recycled by the OS onto an unrelated process
+        // (another fleet run passes the looksLikeClaudePid guard).
+        killProcessGroup(run.pid);
         run.status = 'killed';
         run.killReason = reason; // H5
         run.endedAt = Date.now();
@@ -509,6 +531,7 @@ class Registry {
       this.broadcastFleet({ kind: 'spend', spend: this.spend() });
       return;
     }
+    if (isTerminal(lr.run.status)) return;
     this.flush(lr); // H16 — drain buffered events before the terminal write
     lr.killed = true;
     const now = Date.now();
@@ -533,6 +556,7 @@ class Registry {
     if (!isTerminal(run.status)) {
       throw Object.assign(new Error('Stop the run before deleting it.'), { statusCode: 409 });
     }
+    if (lr) lr.deleted = true; // the dying child's late onExit must not resurrect the rows
     repo.deleteRun(runId);
     this.cancelEvict(runId);
     this.notified.delete(runId);
@@ -551,6 +575,11 @@ class Registry {
     const activeCount = [...this.live.values()].filter((lr) => !isTerminal(lr.run.status)).length;
     if (activeCount >= this.config.maxConcurrentRuns) {
       throw Object.assign(new Error(`Max concurrent runs reached (${this.config.maxConcurrentRuns})`), { statusCode: 429 });
+    }
+    // Mirror launch()'s cwd guard — a PM worktree may have been pruned since this run
+    // finished; without this the spawn fails async into a bare 'failed' with no error.
+    if (!existsSync(existing.cwd) || !statSync(existing.cwd).isDirectory()) {
+      throw Object.assign(new Error(`Working directory no longer exists: ${existing.cwd}`), { statusCode: 400 });
     }
     this.cancelEvict(runId);
     this.notified.delete(runId); // allow a fresh terminal notification after resume
@@ -582,6 +611,8 @@ class Registry {
     existing.status = 'starting';
     existing.endedAt = null;
     existing.exitCode = null;
+    existing.killReason = null;
+    existing.error = null;
     const lr: LiveRun = {
       run: existing,
       req,
@@ -616,6 +647,14 @@ class Registry {
   decidePermission(runId: string, requestId: string, decision: 'approve' | 'deny') {
     const lr = this.live.get(runId);
     if (!lr || !lr.proc) throw Object.assign(new Error('Run is not live'), { statusCode: 409 });
+    if (!lr.interactive) {
+      // One-shot runs had stdin closed at spawn — a write would be silently dropped
+      // (ERR_STREAM_WRITE_AFTER_END is swallowed) and the child would wait forever.
+      throw Object.assign(
+        new Error('This run was launched one-shot; its stdin is closed so a permission decision cannot be delivered. Stop the run, or relaunch interactive / with a non-prompting permission mode.'),
+        { statusCode: 409 },
+      );
+    }
     // H14 — use the verified SDK control-protocol shape: subtype:'success' wrapper, and the
     // inner response keyed by `behavior: allow|deny` (NOT `decision`), nested one level deeper.
     // (best-effort: this CC version has no --permission-prompt-tool flag and CLI #469/#34046

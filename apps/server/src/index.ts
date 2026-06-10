@@ -5,20 +5,20 @@ import { repo } from './db.js';
 
 const app = buildServer();
 
-// H4 — graceful shutdown: stop accepting connections, kill live claude child process
-// groups (detached → would otherwise keep spending), then checkpoint + close sqlite.
+// H4 — graceful shutdown: kill live claude child process groups (detached → would
+// otherwise keep spending), stop accepting connections, then checkpoint + close sqlite.
 let shuttingDown = false;
 async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   // eslint-disable-next-line no-console
   console.log(`[fleet] ${signal} received — shutting down…`);
+  registry.shutdown();
   try {
     await app.close();
   } catch {
     /* ignore */
   }
-  registry.shutdown();
   repo.close();
   process.exit(0);
 }

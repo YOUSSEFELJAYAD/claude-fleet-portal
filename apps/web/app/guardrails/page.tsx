@@ -10,6 +10,7 @@ export default function GuardrailsPage() {
   const [spend, setSpend] = useState<SpendSummary | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [cfgErr, setCfgErr] = useState<string | null>(null);
 
   useEffect(() => {
     api.config().then(setCfg);
@@ -24,10 +25,16 @@ export default function GuardrailsPage() {
   async function save() {
     if (!cfg) return;
     setBusy(true);
-    const next = await api.setConfig(cfg);
-    setCfg(next);
-    setBusy(false);
-    setSaved(true);
+    setCfgErr(null);
+    try {
+      const next = await api.setConfig(cfg);
+      setCfg(next);
+      setSaved(true);
+    } catch (e: any) {
+      setCfgErr(e?.message ?? 'failed to save guardrails');
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!cfg) return <div className="font-mono text-faint text-[12px]">loading config…</div>;
@@ -85,6 +92,7 @@ export default function GuardrailsPage() {
         <div className="mt-6 flex items-center gap-3">
           <Btn variant="solid" onClick={save} disabled={busy}>{busy ? 'saving…' : 'Save Guardrails'}</Btn>
           {saved && <span className="font-mono text-[11px] text-sig-completed" style={{ color: '#54e08a' }}>✓ saved</span>}
+          {cfgErr && <span className="font-mono text-[11px]" style={{ color: '#ff5d5d' }}>{cfgErr}</span>}
         </div>
       </Panel>
     </div>

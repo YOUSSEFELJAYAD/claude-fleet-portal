@@ -1,5 +1,5 @@
 'use client';
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { useCampaign } from '@/lib/live';
 import { api } from '@/lib/api';
@@ -70,6 +70,7 @@ const NodeChip = ({ label, runId, color, sub }: { label: string; runId: string |
 export default function CampaignDetail({ params }: { params: { id: string } }) {
   const { id } = params;
   const { campaign: c, connected } = useCampaign(id);
+  const [killErr, setKillErr] = useState<string | null>(null);
 
   if (!c) {
     return (
@@ -101,7 +102,23 @@ export default function CampaignDetail({ params }: { params: { id: string } }) {
           <h1 className="text-ink text-[17px] mt-2 leading-snug max-w-3xl">{c.objective}</h1>
           <div className="font-mono text-[11px] text-faint mt-1">{c.cwd} · maxParallel {c.maxParallel}</div>
         </div>
-        {live && <Btn variant="danger" onClick={() => api.killCampaign(id)}>■ Kill Campaign</Btn>}
+        {live && (
+          <div className="flex flex-col items-end gap-1">
+            <Btn
+              variant="danger"
+              onClick={() =>
+                api.killCampaign(id).then(
+                  () => setKillErr(null),
+                  // 404 = already gone; SSE will reflect the terminal state
+                  (e: any) => setKillErr(e?.status === 404 ? null : e?.message || 'failed to kill campaign'),
+                )
+              }
+            >
+              ■ Kill Campaign
+            </Btn>
+            {killErr && <span className="font-mono text-[10px]" style={{ color: '#ff5d5d' }}>{killErr}</span>}
+          </div>
+        )}
       </div>
 
       <Panel className="p-4 mb-5 grid grid-cols-2 md:grid-cols-4 gap-5">

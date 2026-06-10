@@ -154,6 +154,45 @@ describe('processManager.buildArgs — interactive stdin-prompt fix', () => {
     expect(args.indexOf('--')).toBeGreaterThan(args.indexOf('--disallowedTools'));
   });
 
+  it('skills reach the agent: merged into --append-system-prompt as a Skill-tool instruction', () => {
+    const args = buildArgs({ ...base, skills: ['graphify', 'tdd'] }, 'sid-sk', false);
+    const i = args.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThan(-1);
+    expect(args[i + 1]).toContain('graphify, tdd');
+    expect(args[i + 1]).toContain('Skill tool');
+    // F-11 invariant intact
+    expect(args[args.length - 1]).toBe('do the thing');
+    expect(args[args.length - 2]).toBe('--');
+  });
+
+  it('skills note COMPOSES with an explicit appendSystemPrompt (template prompt first, skills after)', () => {
+    const args = buildArgs({ ...base, appendSystemPrompt: 'You are a reviewer.', skills: ['graphify'] }, 'sid-sk2', false);
+    const i = args.indexOf('--append-system-prompt');
+    const v = args[i + 1];
+    expect(v.startsWith('You are a reviewer.')).toBe(true);
+    expect(v).toContain('graphify');
+    expect(args.filter((a) => a === '--append-system-prompt').length).toBe(1); // single merged flag
+  });
+
+  it('a /command prompt does NOT re-inject the same name as a skill (the command auto-loads its own instructions)', () => {
+    const args = buildArgs({ ...base, prompt: '/graphify map this repo', skills: ['graphify', 'tdd'] }, 'sid-sk5', false);
+    const i = args.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThan(-1);
+    expect(args[i + 1]).toContain('tdd');
+    expect(args[i + 1]).not.toContain('graphify'); // deduped — only the OTHER skill is injected
+  });
+
+  it('a /command prompt whose only skill IS the command → no skills note at all', () => {
+    const args = buildArgs({ ...base, prompt: '/commit-commands:commit', skills: ['commit-commands:commit'] }, 'sid-sk6', false);
+    expect(args).not.toContain('--append-system-prompt');
+  });
+
+  it('no skills → --append-system-prompt only when a template prompt exists (unchanged behavior)', () => {
+    expect(buildArgs(base, 'sid-sk3', false)).not.toContain('--append-system-prompt');
+    const withSys = buildArgs({ ...base, appendSystemPrompt: 'X' }, 'sid-sk4', false);
+    expect(withSys[withSys.indexOf('--append-system-prompt') + 1]).toBe('X');
+  });
+
   it('interactive: NEVER passes the prompt as a positional (delivered via stdin) and adds --input-format', () => {
     const args = buildArgs(base, 'sid-2', true);
     // the prompt must NOT appear as an argv token — in stream-json input mode it is ignored and the

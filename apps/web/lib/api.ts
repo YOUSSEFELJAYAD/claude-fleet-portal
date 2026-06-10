@@ -18,6 +18,9 @@ import type {
   FleetConfig,
   FleetStatus,
   FleetProjectStatus,
+  ReleaseStatus,
+  ReleaseInfo,
+  SelfUpdateResult,
 } from '@fleet/shared';
 
 // Re-export for page components that take these via the api layer.
@@ -29,8 +32,11 @@ export const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 export type ApiError = Error & { status?: number; code?: string };
 
 async function j<T>(path: string, init?: RequestInit): Promise<T> {
+  // Only claim a JSON body when one is actually sent — Fastify 400s an EMPTY body that
+  // carries `content-type: application/json` (FST_ERR_CTP_EMPTY_JSON_BODY), which broke
+  // every body-less DELETE (kill run, delete record / template / campaign).
   const r = await fetch(API + path, {
-    headers: { 'content-type': 'application/json' },
+    ...(init?.body != null ? { headers: { 'content-type': 'application/json' } } : {}),
     ...init,
   });
   if (!r.ok) {
@@ -112,6 +118,11 @@ export const api = {
   listRuns: (q?: { status?: string; effort?: string; q?: string }) => j<Run[]>('/api/agents' + qs(q)),
   getRun: (id: string) => j<{ run: Run; nodes: RunNode[] }>(`/api/agents/${id}`),
   getTree: (id: string) => j<RunNode>(`/api/agents/${id}/tree`),
+  // ── release / self-update (§15) ──
+  releaseStatus: (force?: boolean) => j<ReleaseStatus>(`/api/release/status${force ? '?force=1' : ''}`),
+  releases: () => j<{ repo: string | null; releases: ReleaseInfo[]; error?: string | null }>('/api/release/list'),
+  selfUpdate: () => j<SelfUpdateResult>('/api/release/update', { method: 'POST', body: JSON.stringify({}) }),
+
   stop: (id: string) => j(`/api/agents/${id}`, { method: 'DELETE' }),
   deleteRun: (id: string) => j(`/api/agents/${id}/record`, { method: 'DELETE' }),
   input: (id: string, text: string) =>
@@ -139,7 +150,10 @@ export const api = {
 
   // Orchestration Mode
   templates: () => j<AgentTemplate[]>('/api/templates'),
+  template: (id: string) => j<AgentTemplate>(`/api/templates/${id}`),
   createTemplate: (t: CreateTemplateRequest) => j<AgentTemplate>('/api/templates', { method: 'POST', body: JSON.stringify(t) }),
+  updateTemplate: (id: string, patch: Partial<AgentTemplate>) =>
+    j<AgentTemplate>(`/api/templates/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
   deleteTemplate: (id: string) => j(`/api/templates/${id}`, { method: 'DELETE' }),
   campaigns: () => j<Campaign[]>('/api/campaigns'),
   campaign: (id: string) => j<Campaign>(`/api/campaigns/${id}`),

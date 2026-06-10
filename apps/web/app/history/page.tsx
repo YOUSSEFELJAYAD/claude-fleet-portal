@@ -20,6 +20,7 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedSearch[]>([]); // A8 saved searches
+  const [reload, setReload] = useState(0);
 
   const loadSaved = () =>
     fetch(`${API}/api/saved-searches`)
@@ -41,7 +42,7 @@ export default function HistoryPage() {
         .finally(() => setLoading(false));
     }, 200);
     return () => clearTimeout(h);
-  }, [q, status]);
+  }, [q, status, reload]);
 
   // A9 — CSV export carrying the current filters
   const csvHref = (() => {
@@ -119,7 +120,7 @@ export default function HistoryPage() {
 
       {error ? (
         <div className="font-mono text-sig-failed text-[12px] border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">
-          {error} · <button onClick={() => { setQ((v) => v); setStatus((v) => v); }} className="underline">retry</button>
+          {error} · <button onClick={() => setReload((n) => n + 1)} className="underline">retry</button>
         </div>
       ) : loading ? (
         <div className="font-mono text-faint text-[12px]">querying…</div>
@@ -157,7 +158,12 @@ export default function HistoryPage() {
                         e.preventDefault();
                         e.stopPropagation();
                         if (!confirm('Delete this run from history? This cannot be undone.')) return;
-                        api.deleteRun(r.id).then(() => setRuns((prev) => prev.filter((x) => x.id !== r.id)));
+                        api.deleteRun(r.id)
+                          .then(() => setRuns((prev) => prev.filter((x) => x.id !== r.id)))
+                          .catch((err) => {
+                            if (err?.status === 404) setRuns((prev) => prev.filter((x) => x.id !== r.id));
+                            else setError(err?.message || 'failed to delete run');
+                          });
                       }}
                       className="opacity-0 group-hover:opacity-100 text-faint hover:text-sig-failed font-mono text-[13px] transition-opacity"
                       style={{ lineHeight: 1 }}

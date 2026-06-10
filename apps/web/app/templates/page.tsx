@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { api } from '@/lib/api';
 import type { AgentTemplate, EffortLevel, PermissionMode } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Textarea, Select, Btn, Empty } from '@/components/ui';
@@ -18,14 +19,20 @@ function TemplateCard({ t, onDelete }: { t: AgentTemplate; onDelete: () => void 
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2">
           <span style={{ width: 7, height: 7, borderRadius: 999, background: color, display: 'inline-block' }} />
-          <span className="font-display text-[13px] text-ink tracking-wide">{t.name}</span>
+          <Link href={`/templates/${t.id}`} className="font-display text-[13px] text-ink tracking-wide hover:text-amber">
+            {t.name}
+          </Link>
           <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border" style={{ color, borderColor: color + '40' }}>{t.role}</span>
         </div>
-        {t.isBuiltin ? (
-          <span className="font-mono text-[9px] text-faint">built-in</span>
-        ) : (
-          <button onClick={onDelete} className="font-mono text-[10px] text-faint hover:text-sig-failed">✕ delete</button>
-        )}
+        <div className="flex items-center gap-2">
+          {t.isBuiltin && <span className="font-mono text-[9px] text-faint">built-in</span>}
+          <Link href={`/templates/${t.id}`} className="font-mono text-[10px] text-dim hover:text-amber underline">
+            open →
+          </Link>
+          {!t.isBuiltin && (
+            <button onClick={onDelete} className="font-mono text-[10px] text-faint hover:text-sig-failed">✕ delete</button>
+          )}
+        </div>
       </div>
       <div className="text-dim text-[11px] mt-2 leading-snug">{t.description}</div>
       <div className="mt-3 flex flex-wrap gap-1.5 font-mono text-[10px]">
@@ -37,6 +44,9 @@ function TemplateCard({ t, onDelete }: { t: AgentTemplate; onDelete: () => void 
       {t.allowedTools.length > 0 && (
         <div className="mt-2 font-mono text-[10px] text-faint truncate">tools: {t.allowedTools.join(', ')}</div>
       )}
+      {t.skills.length > 0 && (
+        <div className="mt-1 font-mono text-[10px] truncate" style={{ color: '#39d4cf' }}>skills: {t.skills.join(', ')}</div>
+      )}
     </Panel>
   );
 }
@@ -44,7 +54,9 @@ function TemplateCard({ t, onDelete }: { t: AgentTemplate; onDelete: () => void 
 export default function TemplatesPage() {
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [open, setOpen] = useState(false);
-  const reload = () => api.templates().then(setTemplates);
+  // delete failures surface here (the create-form `err` is hidden when the form is closed)
+  const [listErr, setListErr] = useState<string | null>(null);
+  const reload = () => api.templates().then(setTemplates).catch(() => {});
   useEffect(() => {
     reload();
   }, []);
@@ -124,12 +136,34 @@ export default function TemplatesPage() {
         </Panel>
       )}
 
+      {listErr && (
+        <div className="font-mono text-[11px] mb-3 px-3 py-2 border border-sig-failed/30" style={{ color: '#ff5d5d' }}>
+          {listErr}
+        </div>
+      )}
+
       {templates.length === 0 ? (
         <Empty>No templates.</Empty>
       ) : (
         <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
           {templates.map((t) => (
-            <TemplateCard key={t.id} t={t} onDelete={() => api.deleteTemplate(t.id).then(reload)} />
+            <TemplateCard
+              key={t.id}
+              t={t}
+              onDelete={() =>
+                api.deleteTemplate(t.id).then(
+                  () => {
+                    setListErr(null);
+                    reload();
+                  },
+                  (e: any) => {
+                    // 404 = stale list (deleted elsewhere) — reloading IS the recovery
+                    if (e?.status === 404) reload();
+                    else setListErr(e?.message || 'failed to delete template');
+                  },
+                )
+              }
+            />
           ))}
         </div>
       )}

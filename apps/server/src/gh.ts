@@ -286,26 +286,31 @@ export interface PrView {
 }
 
 /**
- * View the PR for `branch` via `gh pr view <branch> --json state,url`. Returns `null` when there is
- * NO PR for the branch (gh exits nonzero) — the refresh-pr route reads `null` as "no PR yet".
+ * View the PR for `branch` via `gh pr view <branch> --json state,url`. Discriminates the
+ * GENUINE no-PR case (`{ pr: null }` — gh exits 1 printing "no pull requests found") from real
+ * failures (`{ error }` — auth expiry, network, missing gh binary), so a stale badge isn't
+ * silently mistaken for "no PR yet".
  *
  * gh's `state` field is UPPERCASE (`OPEN` / `MERGED` / `CLOSED`); we lowercase-map it to the shared
  * `KanbanTask.prState` union (`'open' | 'merged' | 'closed'`). An unrecognized state falls back to
  * `'open'`. Never throws.
  */
-export async function prView(root: string, branch: string): Promise<PrView | null> {
+export async function prView(root: string, branch: string): Promise<{ pr: PrView | null; error?: string }> {
   const r = await ghExec(root, ['pr', 'view', branch, '--json', 'state,url']);
-  if (!r.ok) return null; // no PR for this branch (or gh/auth error) → caller treats as "no PR"
+  if (!r.ok) {
+    if (r.code === 1 && /no pull requests found/i.test(r.stderr + r.stdout)) return { pr: null };
+    return { pr: null, error: ghErr(r) };
+  }
   let parsed: any;
   try {
     parsed = JSON.parse(r.stdout);
   } catch {
-    return null; // unparseable → treat as no usable PR
+    return { pr: null, error: 'gh pr view returned unparseable JSON' };
   }
-  if (!parsed || typeof parsed !== 'object') return null;
+  if (!parsed || typeof parsed !== 'object') return { pr: null, error: 'gh pr view returned an unexpected shape' };
   const url = typeof parsed.url === 'string' ? parsed.url : '';
   const state = normalizePrState(parsed.state);
-  return { state, url };
+  return { pr: { state, url } };
 }
 
 export interface PrMergeResult {

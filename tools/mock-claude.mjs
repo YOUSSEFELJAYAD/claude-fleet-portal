@@ -80,6 +80,9 @@ async function main() {
 
   if (streamInput) {
     // Stay alive and respond to follow-up user messages from stdin (PRD §7.6 send-input).
+    // The first stdin message is the run's initial prompt (registry writes it at spawn);
+    // the fixture replay is already its answer, so swallow it.
+    let initialPromptSeen = false;
     const rl = createInterface({ input: process.stdin });
     rl.on('line', async (l) => {
       l = l.trim();
@@ -88,6 +91,10 @@ async function main() {
       try {
         msg = JSON.parse(l);
       } catch {
+        return;
+      }
+      if (!initialPromptSeen) {
+        initialPromptSeen = true;
         return;
       }
       const text =

@@ -27,6 +27,9 @@ import { KANBAN_COLUMNS } from '@fleet/shared';
 import db from './db.js';
 import { planHasCycle, planHasDupIds } from './campaigns.js';
 import { pm } from './pm.js'; // circular but runtime-safe: pm uses kanbanRepo only inside methods
+import { registry } from './registry.js';
+
+const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'killed']);
 
 // ── schema (idempotent) ───────────────────────────────────────────────────────
 // NOTE: `column` and `rank` are SQLite keywords → always double-quoted in DDL/DML.
@@ -551,6 +554,26 @@ export function registerKanbanRoutes(app: FastifyInstance) {
     try {
       const id = (req.params as any).id as string;
       const body = (req.body as any) ?? {};
+      // ── column-move liveness guard ─────────────────────────────────────────
+      // A card with engine activity in flight must not be raw-moved: InProgress→Ready
+      // would double-launch into the SAME worktree (two claudes writing one tree) and
+      // orphan the old run's terminal; InProgress→Done would ship nothing. Moving to
+      // Canceled routes through pm.cancel (H2: DB-terminal first, then stop, then
+      // worktree teardown). Keyed on LIVENESS, not stale runId — a Blocked/failed
+      // card's human requeue to Ready stays allowed.
+      const pre = kanbanRepo.getTask(id);
+      if (pre && PATCHABLE_COLUMN(body.column) && body.column !== pre.column) {
+        const busyPhase = ['building', 'validating', 'merging', 'resolving'].includes(pre.executionPhase);
+        const liveRun = pre.runId ? !TERMINAL_RUN_STATUSES.has(registry.getRun(pre.runId)?.status ?? 'failed') : false;
+        if (busyPhase || liveRun) {
+          if (body.column === 'Canceled') {
+            pm.cancel(id); // stops the run/campaign + tears down the worktree
+            return kanbanRepo.getTask(id)!;
+          }
+          reply.code(409);
+          return { error: 'card has a live run — move it to Canceled (stops the run) or delete it first' };
+        }
+      }
       const result = db.transaction(() => {
         const existing = kanbanRepo.getTask(id);
         if (!existing) return { code: 404 as const, error: 'not found' };
@@ -668,6 +691,19 @@ export function registerKanbanRoutes(app: FastifyInstance) {
       reply.code(409);
       return { error: 'card is not in Review' };
     }
+    // Engine activity in flight (a live resolve agent, an in-flight merge) — approving now
+    // would clobber the phase marker the terminal handler partitions on (e.g. a re-approved
+    // 'resolving' card would route its resolve terminal into the BUILD pipeline and could
+    // merge conflict markers). prState 'closed' stays approvable — re-approving pushes a
+    // fresh PR; only a live ('open') or already-merged PR blocks.
+    if (existing.executionPhase === 'resolving' || existing.executionPhase === 'merging') {
+      reply.code(409);
+      return { error: `card is busy (${existing.executionPhase}); wait for it to settle` };
+    }
+    if (existing.prState === 'open' || existing.prState === 'merged') {
+      reply.code(409);
+      return { error: 'a PR is already open for this card; merge it on GitHub or use refresh-pr' };
+    }
     const next = kanbanRepo.updateTask(id, { executionPhase: 'merging' });
     void pm.approve(id); // run the gated merge under the per-project mutex
     return next!;
@@ -684,12 +720,20 @@ export function registerKanbanRoutes(app: FastifyInstance) {
       reply.code(409);
       return { error: 'card is not in Review' };
     }
+    if (existing.executionPhase === 'resolving' || existing.executionPhase === 'merging') {
+      reply.code(409);
+      return { error: `card is busy (${existing.executionPhase}); wait for it to settle` };
+    }
     const comment = String((req.body as any)?.comment ?? '').trim();
     const next = kanbanRepo.updateTask(id, {
       column: 'InProgress',
       executionPhase: 'idle',
       attemptCount: existing.attemptCount + 1,
       lastError: comment ? `[human request-changes] ${comment}` : '[human request-changes]',
+      // Nothing else ever clears PR state — without this a closed-PR badge follows the
+      // reworked card back into Review forever.
+      prState: null,
+      prUrl: null,
     });
     void pm.requestChanges(id); // relaunch a fix run in the same worktree (threads the comment)
     return next!;

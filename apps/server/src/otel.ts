@@ -34,6 +34,17 @@ export interface SessionOtel {
 
 const store = new Map<string, SessionOtel>();
 
+/** Evict sessions idle this long — the run page stops polling once a run leaves the live set. */
+const EVICT_IDLE_MS = 60 * 60 * 1000;
+/** Per-session cap on retained decisions (the UI only renders the most recent ones). */
+const MAX_TOOL_DECISIONS = 200;
+
+function sweep(now: number) {
+  for (const [sid, s] of store) {
+    if (now - s.lastUpdate > EVICT_IDLE_MS) store.delete(sid);
+  }
+}
+
 function blank(sessionId: string): SessionOtel {
   return {
     sessionId,
@@ -90,6 +101,7 @@ const tokenBucket = (type: string): keyof SessionOtel['tokens'] | null => {
  * Returns the set of session ids touched. Defensive: tolerates partial/unknown shapes.
  */
 export function ingestMetrics(body: any, now: number): Set<string> {
+  sweep(now);
   const touched = new Set<string>();
   for (const rm of body?.resourceMetrics ?? []) {
     const resAttrs = attrsToMap(rm?.resource?.attributes ?? []);
@@ -118,13 +130,6 @@ export function ingestMetrics(body: any, now: number): Set<string> {
             const t = String(attrs['type'] ?? '');
             if (t === 'added') s.linesAdded += val;
             else if (t === 'removed') s.linesRemoved += val;
-          } else if (name === 'claude_code.code_edit_tool.decision' || name === 'claude_code.tool_decision') {
-            s.toolDecisions.push({
-              tool: String(attrs['tool_name'] ?? attrs['tool'] ?? 'unknown'),
-              decision: String(attrs['decision'] ?? 'unknown'),
-              source: String(attrs['source'] ?? ''),
-              ts: now,
-            });
           }
           s.lastUpdate = now;
           touched.add(sid);
@@ -137,6 +142,7 @@ export function ingestMetrics(body: any, now: number): Set<string> {
 
 /** Ingest OTLP/JSON logs — claude emits tool_decision (and api_error) as log records. */
 export function ingestLogs(body: any, now: number): Set<string> {
+  sweep(now);
   const touched = new Set<string>();
   for (const rl of body?.resourceLogs ?? []) {
     const resAttrs = attrsToMap(rl?.resource?.attributes ?? []);
@@ -154,6 +160,7 @@ export function ingestLogs(body: any, now: number): Set<string> {
             source: String(attrs['source'] ?? ''),
             ts: now,
           });
+          if (s.toolDecisions.length > MAX_TOOL_DECISIONS) s.toolDecisions.shift();
           s.lastUpdate = now;
           touched.add(sid);
         }
