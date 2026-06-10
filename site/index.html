@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Claude Fleet Portal — mission control for your Claude Code agents</title>
+<meta name="description" content="Open-source mission control for Claude Code: launch, monitor and orchestrate a fleet of local agents with live cost guardrails, an autonomous PM, campaigns and one-click updates. MIT licensed." />
+<meta property="og:title" content="Claude Fleet Portal" />
+<meta property="og:description" content="Open-source mission control for your Claude Code agents." />
+<meta property="og:image" content="assets/icon-512.png" />
+<link rel="icon" href="assets/icon.png" />
+<style>
+  :root {
+    --bg: #07080b; --panel: #0e1015; --line: #1d2129; --ink: #e9e7df;
+    --dim: #9aa1ab; --faint: #5b626d; --amber: #ffb000; --coral: #e8704a; --green: #54e08a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--bg); color: var(--ink); font: 16px/1.6 "Avenir Next", "Segoe UI", system-ui, sans-serif; overflow-x: hidden; }
+  a { color: var(--amber); text-decoration: none; }
+  .mono { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
+
+  /* ── hero ── */
+  #hero { position: relative; min-height: 100vh; display: flex; align-items: center; justify-content: center; text-align: center; }
+  #scene { position: absolute; inset: 0; z-index: 0; }
+  .hero-inner { position: relative; z-index: 1; padding: 48px 24px; max-width: 880px; }
+  .hero-inner img.logo { width: 108px; height: 108px; border-radius: 26px; box-shadow: 0 0 60px rgba(255,176,0,.35); }
+  h1 { font-size: clamp(40px, 7vw, 76px); letter-spacing: .02em; line-height: 1.05; margin: 26px 0 14px; font-weight: 700; }
+  h1 .amber { color: var(--amber); }
+  .tagline { color: var(--dim); font-size: clamp(16px, 2.4vw, 21px); max-width: 640px; margin: 0 auto 14px; }
+  .oss-chip { display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; color: var(--dim); font-size: 13px; margin-bottom: 26px; background: rgba(14,16,21,.6); backdrop-filter: blur(4px); }
+  .oss-chip b { color: var(--green); font-weight: 600; }
+  .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 13px 26px; border-radius: 10px; font-weight: 600; font-size: 15.5px; transition: transform .15s ease, box-shadow .15s ease; }
+  .btn:hover { transform: translateY(-2px); }
+  .btn-amber { background: var(--amber); color: #14161c; box-shadow: 0 8px 34px rgba(255,176,0,.35); }
+  .btn-ghost { border: 1px solid var(--line); color: var(--ink); background: rgba(14,16,21,.6); backdrop-filter: blur(4px); }
+  .hero-foot { position: absolute; bottom: 26px; left: 0; right: 0; color: var(--faint); font-size: 12.5px; z-index: 1; }
+
+  /* ── sections ── */
+  section { max-width: 1120px; margin: 0 auto; padding: 96px 24px; }
+  .kicker { color: var(--amber); font-size: 12.5px; letter-spacing: .22em; text-transform: uppercase; font-weight: 700; }
+  h2 { font-size: clamp(26px, 4vw, 40px); margin: 10px 0 18px; }
+  .lead { color: var(--dim); max-width: 760px; }
+
+  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 42px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 26px; transition: border-color .2s, transform .2s; }
+  .card:hover { border-color: rgba(255,176,0,.45); transform: translateY(-3px); }
+  .card .ico { font-size: 26px; }
+  .card h3 { margin: 12px 0 8px; font-size: 18px; }
+  .card p { color: var(--dim); font-size: 14.5px; }
+
+  .shot { width: 100%; border-radius: 14px; border: 1px solid var(--line); box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+  .shots { display: grid; gap: 26px; margin-top: 42px; }
+  .shot-row { display: grid; gap: 26px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 860px) { .shot-row { grid-template-columns: 1fr; } }
+
+  /* install */
+  .install-cols { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-top: 42px; }
+  pre { background: #0a0c10; border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; overflow-x: auto; font-size: 13.5px; line-height: 1.7; color: #cfd6df; }
+  pre .c { color: var(--faint); }
+  pre .a { color: var(--amber); }
+  .plat { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .plat a { border: 1px solid var(--line); border-radius: 8px; padding: 9px 16px; font-size: 13.5px; color: var(--ink); }
+  .plat a:hover { border-color: var(--amber); }
+
+  /* open source */
+  #oss .stats { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 30px; }
+  .stat { border: 1px solid var(--line); border-radius: 12px; padding: 18px 26px; background: var(--panel); }
+  .stat b { display: block; font-size: 26px; color: var(--amber); }
+  .stat span { color: var(--faint); font-size: 13px; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 24px 60px; text-align: center; color: var(--faint); font-size: 13.5px; }
+  footer img { width: 38px; border-radius: 9px; vertical-align: middle; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<!-- ── HERO with three.js fleet ─────────────────────────────────────────── -->
+<header id="hero">
+  <div id="scene"></div>
+  <div class="hero-inner">
+    <img class="logo" src="assets/icon.png" alt="Claude Fleet Portal logo" />
+    <h1>Claude <span class="amber">Fleet</span> Portal</h1>
+    <p class="tagline">Mission control for your Claude Code agents — launch, watch and orchestrate
+      a whole fleet from one cockpit, with live cost guardrails and an autonomous PM.</p>
+    <div class="oss-chip">⚖ <b>100% open source</b> · MIT licensed · built in the open</div>
+    <div class="cta">
+      <a class="btn btn-amber" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest">⇩ Download for macOS · Windows · Linux</a>
+      <a class="btn btn-ghost" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal">★ Star on GitHub</a>
+    </div>
+  </div>
+  <div class="hero-foot mono">🐙 one octopus, many arms — your agents under mission control</div>
+</header>
+
+<!-- ── FEATURES ─────────────────────────────────────────────────────────── -->
+<section id="features">
+  <div class="kicker">capabilities</div>
+  <h2>Everything your fleet needs</h2>
+  <p class="lead">The portal owns Claude Code sessions end to end: it spawns them headless, parses the
+    live event stream, rebuilds the orchestrator → subagent hierarchy and streams it to your browser —
+    with full control over every run.</p>
+  <div class="grid">
+    <div class="card"><div class="ico">◉</div><h3>Fleet dashboard</h3><p>Every run live: status, model and effort, cost gauge heating toward the budget ceiling, token burn, subagent count &amp; depth.</p></div>
+    <div class="card"><div class="ico">⧉</div><h3>Live workflow trees</h3><p>Root → subagents at any depth with per-node streaming timelines, span waterfalls and OTLP telemetry. Stop, steer, resume, approve.</p></div>
+    <div class="card"><div class="ico">◫</div><h3>Autonomous PM</h3><p>Attach a git repo, drop cards on the Kanban board — the agent PM builds in isolated worktrees, validates, gates and merges. PR mode and a conflict-resolution agent included.</p></div>
+    <div class="card"><div class="ico">⛓</div><h3>Campaigns</h3><p>One objective in, a planned dependency DAG out — a real worker agent per subtask, run in parallel, merged by a synthesizer.</p></div>
+    <div class="card"><div class="ico">⊞</div><h3>Agent library</h3><p>12 tuned profiles — Debugger, Test Writer, Security Auditor, Frontend Builder… — fully editable, with skills that genuinely shape the spawned agent.</p></div>
+    <div class="card"><div class="ico">⊕</div><h3>Your whole Claude setup</h3><p>Every skill and slash-command from your installed plugins, surfaced and attachable. Launch a run directly on any /command.</p></div>
+    <div class="card"><div class="ico">⊘</div><h3>Hard guardrails</h3><p>Budget ceilings enforced twice (CLI flag + server auto-kill), concurrency caps, per-project spend ceilings, daily tracking.</p></div>
+    <div class="card"><div class="ico">⇪</div><h3>Self-updating</h3><p>Checks GitHub releases in the background, updates itself, and asks for a simple restart. Desktop builds point you at the new installer.</p></div>
+    <div class="card"><div class="ico">🖥</div><h3>Desktop or source</h3><p>Prebuilt apps for macOS, Windows and Linux — or clone and <span class="mono">./install.sh</span>. No Claude installed? A free deterministic mock lets you explore everything.</p></div>
+  </div>
+</section>
+
+<!-- ── SCREENSHOTS ──────────────────────────────────────────────────────── -->
+<section id="tour">
+  <div class="kicker">the cockpit</div>
+  <h2>Built like mission control</h2>
+  <p class="lead">Amber-on-charcoal, dense with signal, zero fluff. Everything updates live over SSE.</p>
+  <div class="shots">
+    <img class="shot" src="assets/dashboard.png" alt="Fleet dashboard" loading="lazy" />
+    <div class="shot-row">
+      <img class="shot" src="assets/run-detail.png" alt="Run detail with live workflow tree" loading="lazy" />
+      <img class="shot" src="assets/board.png" alt="Kanban board executed by the agent PM" loading="lazy" />
+    </div>
+    <img class="shot" src="assets/template.png" alt="Agent profile editor with skill picker" loading="lazy" />
+  </div>
+</section>
+
+<!-- ── INSTALL ──────────────────────────────────────────────────────────── -->
+<section id="install">
+  <div class="kicker">get started</div>
+  <h2>Running in two minutes</h2>
+  <div class="install-cols">
+    <div class="card">
+      <h3>⇩ Download the app</h3>
+      <p>Prebuilt by GitHub Actions for every release — no Node, pnpm or checkout required.</p>
+      <div class="plat">
+        <a href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest"> macOS .dmg</a>
+        <a href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest">⊞ Windows .exe</a>
+        <a href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest">🐧 AppImage / .deb</a>
+      </div>
+      <p style="margin-top:16px">With the <a href="https://claude.com/claude-code">Claude Code CLI</a> installed you get real agent runs — without it, a free deterministic mock.</p>
+    </div>
+    <div class="card">
+      <h3>⌁ Build from source</h3>
+<pre><span class="c"># Node ≥ 20 · pnpm · git</span>
+git clone https://github.com/YOUSSEFELJAYAD/claude-fleet-portal.git
+cd claude-fleet-portal
+<span class="a">./install.sh</span>   <span class="c"># checks → installs → builds</span>
+<span class="a">./start.sh</span>     <span class="c"># web :4318 · control plane :4319</span>
+<span class="a">./start.sh --mock</span>  <span class="c"># free tour, no tokens</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ── OPEN SOURCE ──────────────────────────────────────────────────────── -->
+<section id="oss">
+  <div class="kicker">open source</div>
+  <h2>Built in the open. Yours to shape.</h2>
+  <p class="lead">Claude Fleet Portal is MIT-licensed, end to end — the control plane, the UI, the desktop
+    shell and the release pipeline. Local-first by design: your code, your data and your API spend never
+    leave your machine. Every engineering decision is logged in the repo (<span class="mono">DC.md</span>),
+    every release ships from a public GitHub Actions pipeline you can audit, and the deterministic
+    mock + 350-test hermetic suite mean you can hack on it without spending a token.</p>
+  <div class="stats">
+    <div class="stat"><b>MIT</b><span>license — use it anywhere</span></div>
+    <div class="stat"><b>350+</b><span>deterministic server tests</span></div>
+    <div class="stat"><b>3 OS</b><span>installers, built by public CI</span></div>
+    <div class="stat"><b>100%</b><span>local — nothing leaves your machine</span></div>
+  </div>
+  <div class="cta" style="justify-content:flex-start; margin-top:36px">
+    <a class="btn btn-amber" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal">Read the source</a>
+    <a class="btn btn-ghost" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/issues">Open an issue</a>
+    <a class="btn btn-ghost" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/blob/main/LICENSE">License</a>
+  </div>
+</section>
+
+<footer>
+  <img src="assets/icon.png" alt="" /><br/>
+  🐙 one octopus, many arms · MIT © 2026 <a href="https://github.com/YOUSSEFELJAYAD">YOUSSEF EL JAYAD</a> ·
+  ✳ powered by <a href="https://claude.com/claude-code">Claude Code</a> · not affiliated with Anthropic
+</footer>
+
+<!-- ── three.js fleet octopus ───────────────────────────────────────────── -->
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const host = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+host.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x07080b, 0.055);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
+camera.position.set(0, 0.6, 9);
+
+const AMBER = new THREE.Color(0xffb000);
+const CORAL = new THREE.Color(0xe8704a);
+
+// ── central core: the orchestrator ──
+const core = new THREE.Mesh(
+  new THREE.IcosahedronGeometry(0.85, 3),
+  new THREE.MeshBasicMaterial({ color: AMBER, wireframe: true, transparent: true, opacity: 0.85 })
+);
+scene.add(core);
+const heart = new THREE.Mesh(
+  new THREE.IcosahedronGeometry(0.5, 2),
+  new THREE.MeshBasicMaterial({ color: CORAL, transparent: true, opacity: 0.35 })
+);
+scene.add(heart);
+
+// ── tentacle arms: swimming bezier curves ending in agent nodes ──
+const ARMS = 8, SEGS = 48;
+const arms = [], agents = [];
+const armMat = new THREE.LineBasicMaterial({ color: AMBER, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending });
+const agentGeo = new THREE.SphereGeometry(0.11, 12, 12);
+for (let i = 0; i < ARMS; i++) {
+  const geo = new THREE.BufferGeometry().setFromPoints(new Array(SEGS).fill(new THREE.Vector3()));
+  const line = new THREE.Line(geo, armMat.clone());
+  line.material.opacity = 0.35 + (i % 3) * 0.15;
+  scene.add(line);
+  const agent = new THREE.Mesh(agentGeo, new THREE.MeshBasicMaterial({ color: i % 4 === 0 ? CORAL : AMBER }));
+  scene.add(agent);
+  arms.push(line); agents.push(agent);
+}
+
+// ── particle sea: the wider fleet ──
+const N = 900;
+const pos = new Float32Array(N * 3);
+for (let i = 0; i < N; i++) {
+  const r = 6 + Math.random() * 18, th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+  pos[i*3] = r * Math.sin(ph) * Math.cos(th);
+  pos[i*3+1] = (r * Math.cos(ph)) * 0.45;
+  pos[i*3+2] = r * Math.sin(ph) * Math.sin(th) - 4;
+}
+const pGeo = new THREE.BufferGeometry();
+pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+const points = new THREE.Points(pGeo, new THREE.PointsMaterial({
+  color: 0xffb000, size: 0.045, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false
+}));
+scene.add(points);
+
+// ── mouse parallax ──
+let mx = 0, my = 0;
+addEventListener('pointermove', (e) => {
+  mx = (e.clientX / innerWidth - 0.5) * 2;
+  my = (e.clientY / innerHeight - 0.5) * 2;
+}, { passive: true });
+
+function size() {
+  const w = host.clientWidth, h = host.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', size); size();
+
+const v = new THREE.Vector3(), p0 = new THREE.Vector3(), p1 = new THREE.Vector3(), p2 = new THREE.Vector3(), p3 = new THREE.Vector3();
+const curve = new THREE.CubicBezierCurve3(p0, p1, p2, p3);
+
+renderer.setAnimationLoop((tms) => {
+  const t = tms / 1000;
+  core.rotation.y = t * 0.25; core.rotation.x = Math.sin(t * 0.3) * 0.18;
+  heart.scale.setScalar(1 + Math.sin(t * 2.1) * 0.08);
+  points.rotation.y = t * 0.02;
+
+  for (let i = 0; i < ARMS; i++) {
+    const base = (i / ARMS) * Math.PI * 2 + t * 0.12;
+    const sway = Math.sin(t * 0.9 + i * 1.7) * 0.55;
+    const reach = 3.4 + Math.sin(t * 0.55 + i * 2.3) * 0.7;
+    const droop = Math.sin(t * 0.7 + i) * 0.6 - 0.4;
+    p0.set(0, -0.2, 0);
+    p1.set(Math.cos(base) * 1.3, 0.4 + sway * 0.3, Math.sin(base) * 1.3);
+    p2.set(Math.cos(base + sway * 0.25) * reach * 0.75, droop, Math.sin(base + sway * 0.25) * reach * 0.75);
+    p3.set(Math.cos(base + sway * 0.45) * reach, droop * 1.6, Math.sin(base + sway * 0.45) * reach);
+    const pts = curve.getPoints(SEGS - 1);
+    arms[i].geometry.setFromPoints(pts);
+    agents[i].position.copy(p3);
+    agents[i].scale.setScalar(1 + Math.sin(t * 3 + i * 2) * 0.25);
+  }
+
+  camera.position.x += (mx * 1.1 - camera.position.x) * 0.04;
+  camera.position.y += (0.6 - my * 0.7 - camera.position.y) * 0.04;
+  camera.lookAt(v.set(0, 0, 0));
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

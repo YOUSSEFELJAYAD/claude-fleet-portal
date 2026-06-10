@@ -773,3 +773,14 @@ v0.1.0–v0.4.0 + tags deleted, versions (root + desktop) set back to 0.1.0, sin
 tag pushed — the auto-release pipeline (tests → auto-notes release → 3-OS installers) produces
 the public debut release. Pipeline previously validated end-to-end on the v0.4.0 dry run
 (15 assets: dmg arm64/x64 + zips, NSIS exe, AppImage + deb).
+
+## 20. Landing page (three.js) on GitHub Pages + MIT LICENSE (2026-06-11)
+
+`site/index.html` — single-file landing page deployed to GitHub Pages
+(youssefeljayad.github.io/claude-fleet-portal) via .github/workflows/pages.yml (official
+actions only). Hero: three.js (CDN importmap) animated fleet-octopus — wireframe icosahedron
+core + pulsing coral heart, 8 swimming cubic-bezier tentacles ending in glowing agent nodes,
+900-particle sea, additive blending, pointer parallax; zero console errors. Sections: features
+(9 cards), screenshot tour (fresh §19 shots), install (download vs source), OPEN-SOURCE focus
+(MIT end-to-end, local-first, auditable CI, hackable-without-tokens; stat chips) and footer.
+**LICENSE (MIT, © 2026 YOUSSEF EL JAYAD) added** — the repo previously claimed nothing.
