@@ -1,0 +1,83 @@
+{
+  "name": "claude-fleet-portal-desktop",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Desktop shell for the Claude Fleet Portal \u2014 boots the bundled control plane + web UI and opens them in a window.",
+  "main": "main.cjs",
+  "scripts": {
+    "bundle:server": "node scripts/bundle-server.cjs",
+    "bundle:web": "node scripts/copy-web.cjs",
+    "prepare:app": "npm run bundle:server && npm run bundle:web",
+    "dev": "electron .",
+    "dist": "electron-builder --publish never",
+    "release": "electron-builder --publish always"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0"
+  },
+  "build": {
+    "appId": "com.youssefeljayad.claude-fleet-portal",
+    "productName": "Claude Fleet Portal",
+    "asar": false,
+    "files": [
+      "main.cjs",
+      "bundle/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "category": "Development",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "YOUSSEFELJAYAD",
+      "repo": "claude-fleet-portal"
+    },
+    "extraResources": [
+      {
+        "from": "web",
+        "to": "web"
+      },
+      {
+        "from": "mock",
+        "to": "mock"
+      }
+    ]
+  }
+}

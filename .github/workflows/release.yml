@@ -1,0 +1,73 @@
+name: release
+
+# Fully automated release: push a version tag (vX.Y.Z) and GitHub does the rest —
+#   1. test    — server suite + typecheck across the workspace
+#   2. release — create the GitHub release with auto-generated notes (if not already created)
+#   3. desktop — build installers for macOS / Windows / Linux and attach them to the release
+# All run: commands are static; the only interpolations are trusted contexts (tag name, secrets).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release + upload installer assets
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm test
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the release if it doesn't exist (auto-generated notes)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Claude Fleet Portal $TAG" --generate-notes
+
+  desktop:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build web (standalone for desktop)
+        run: pnpm build
+        env:
+          FLEET_STANDALONE: '1'
+      - name: Install desktop dependencies
+        run: npm install
+        working-directory: desktop
+      - name: Bundle server + assemble web payload
+        run: npm run prepare:app
+        working-directory: desktop
+      - name: Build installers and attach to the release
+        run: npx electron-builder --publish always
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

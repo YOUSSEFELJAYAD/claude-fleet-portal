@@ -9,3 +9,8 @@ data/
 *.png.tmp
 .env
 .env.local
+desktop/node_modules/
+desktop/dist/
+desktop/bundle/
+desktop/web/
+desktop/mock/

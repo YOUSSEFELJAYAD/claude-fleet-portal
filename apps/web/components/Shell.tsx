@@ -8,7 +8,7 @@ import { usd } from '@/lib/format';
 import type { ReleaseStatus } from '@fleet/shared';
 import { Gauge, Btn, Dot } from './ui';
 import { LaunchModal } from './LaunchModal';
-import { UpdateModal, updateDismissKey } from './UpdateModal';
+import { UpdateModal, updateDismissKey, type UpdatePhase } from './UpdateModal';
 
 const NAV = [
   { href: '/', label: 'Fleet', glyph: '◉' },
@@ -33,14 +33,19 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [launchOpen, setLaunchOpen] = useState(false);
   // release status drives: the amber dot on the Releases nav entry, the version line at the
   // bottom of the sidebar, and the update popup (snoozed per-version via localStorage).
+  // The update itself runs in the BACKGROUND — Shell owns the phase, so the popup can be
+  // closed mid-update and the sidebar chip keeps reporting until restart.
   const [release, setRelease] = useState<ReleaseStatus | null>(null);
   const [updatePopup, setUpdatePopup] = useState(false);
+  const [updPhase, setUpdPhase] = useState<UpdatePhase>('idle');
   useEffect(() => {
     api
       .releaseStatus()
       .then((s) => {
         setRelease(s);
-        if (s.updateAvailable && s.canSelfUpdate && s.latest) {
+        // popup for BOTH flavors: source installs self-update in place; packaged apps
+        // (no git checkout → canSelfUpdate false) are offered the download page instead.
+        if (s.updateAvailable && s.latest) {
           let snoozed = false;
           try {
             snoozed = !!localStorage.getItem(updateDismissKey(s.latest.tag));
@@ -53,6 +58,31 @@ export function Shell({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
   const updateAvailable = !!release?.updateAvailable;
+
+  function startUpdate() {
+    setUpdPhase('running');
+    api
+      .selfUpdate()
+      .then((r) => {
+        setUpdPhase(r.ok ? 'ready' : 'failed');
+        setUpdatePopup(true); // resurface even if the user closed it and kept working
+      })
+      .catch(() => {
+        setUpdPhase('failed');
+        setUpdatePopup(true);
+      });
+  }
+
+  function closeUpdate(snooze: boolean) {
+    setUpdatePopup(false);
+    if (snooze && release?.latest) {
+      try {
+        localStorage.setItem(updateDismissKey(release.latest.tag), '1');
+      } catch {
+        /* ignore */
+      }
+    }
+  }
   const active = runs.filter((r) => ['starting', 'running', 'orchestrating', 'awaiting-input', 'awaiting-permission'].includes(r.status));
   const dailyCap = 50; // soft visual reference for the daily-spend gauge
 
@@ -113,8 +143,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <Link href="/releases" className="block mt-2 font-mono text-[10px] text-faint hover:text-amber" title="releases & updates">
               v{release.currentVersion}
               {release.currentSha && <span className="opacity-60"> · {release.currentSha}</span>}
-              {updateAvailable && release.latest && (
-                <span className="text-amber"> → {release.latest.tag} available</span>
+              {updPhase === 'running' ? (
+                <span className="text-amber"> · updating…</span>
+              ) : updPhase === 'ready' ? (
+                <span className="text-amber"> · restart to apply</span>
+              ) : (
+                updateAvailable && release.latest && <span className="text-amber"> → {release.latest.tag} available</span>
               )}
             </Link>
           )}
@@ -144,7 +178,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </div>
 
       {launchOpen && <LaunchModal onClose={() => setLaunchOpen(false)} />}
-      {updatePopup && release && <UpdateModal status={release} onClose={() => setUpdatePopup(false)} />}
+      {updatePopup && release && (
+        <UpdateModal status={release} phase={updPhase} onStart={startUpdate} onClose={closeUpdate} />
+      )}
     </div>
   );
 }

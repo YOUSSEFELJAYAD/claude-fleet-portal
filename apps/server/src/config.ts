@@ -5,7 +5,9 @@ import type { PortalConfig, PermissionMode } from '@fleet/shared';
 import { PERMISSION_MODES } from '@fleet/shared';
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // apps/server/src
-export const REPO_ROOT = path.resolve(here, '..', '..', '..');
+// Overridable for the packaged desktop app, where the bundle lives outside any checkout
+// (FLEET_REPO_ROOT points at the app resources dir, which carries a version-stamped package.json).
+export const REPO_ROOT = process.env.FLEET_REPO_ROOT || path.resolve(here, '..', '..', '..');
 
 export const HOME = os.homedir();
 /** The `claude` binary (or the mock-claude replayer). DC.md D-009. */

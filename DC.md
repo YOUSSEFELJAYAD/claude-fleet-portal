@@ -733,3 +733,33 @@ run launched + record deleted), dev mode restored after.
 v0.2.0 → v2.1.172, Later closed it and the snooze held across navigation while the nav badge
 + footer amber hint stayed; clean env shows quiet `v0.2.0 · <sha>` footer. 3/3 typecheck,
 `next build` clean. Released as **v0.3.0**.
+
+## 18. Desktop app + auto-release pipeline + popup v2 + app icon (2026-06-11) → v0.4.0
+
+- **Popup v2 (user: "same UI, no tech info, background"):** UpdateModal rebuilt on the portal's
+  own Panel/Kicker/Btn language; release notes render via MarkdownView; ZERO tech jargon (step
+  logs live on /releases only). The update runs in the BACKGROUND — Shell owns the phase
+  (idle/running/ready/failed), so the popup can be closed mid-update ("Continue working") and
+  the sidebar version line carries the state ("updating…" → "restart to apply"); on completion
+  the popup resurfaces asking for a plain restart. Packaged apps (canSelfUpdate false) get a
+  "⇪ Get <tag>" button that opens the release download page instead.
+- **Desktop app (`desktop/`, Electron 33 + electron-builder):** main.cjs forks the esbuild-bundled
+  control plane (import.meta.url shimmed for CJS; better-sqlite3 external, rebuilt for Electron's
+  ABI) and the Next standalone web server (FLEET_STANDALONE=1 build; payload DEREFERENCED —
+  packagers mangle pnpm symlinks — and shipped via extraResources because electron-builder's
+  smart node_modules handling prunes `files` payloads). Data in the OS userData dir; PATH
+  augmented for GUI apps; `claude` resolved from common install dirs with a bundled-mock fallback
+  driven through an ELECTRON_RUN_AS_NODE shim (zero system-Node requirement); FLEET_REPO_ROOT →
+  app dir (version-stamped package.json), FLEET_GITHUB_REPO pinned for update checks; external
+  links open in the system browser; double-start attaches to the existing instance.
+  **Verified locally on macOS:** `electron-builder --dir` → packaged .app boots the full stack
+  (API+web up, /releases 200, run launched), mock shim + userData DB confirmed.
+- **App icon:** amber fleet octopus + coral Claude spark on the charcoal tile (SVG → rendered at
+  1024px via Playwright → desktop/build/icon.png; electron-builder converts per-platform).
+- **Auto-release pipeline (.github/workflows/release.yml):** push a vX.Y.Z tag → test (suite +
+  typecheck) → create the GitHub release with auto-generated notes → 3-OS matrix builds installers
+  (dmg/zip, nsis exe, AppImage/deb) and attaches them via electron-builder --publish. Static
+  commands only; ref_name passed through env (injection-safe).
+
+366 tests + 2 by-design skips (origin now exists), 3/3 typecheck. Released as **v0.4.0** — the
+first tag the pipeline builds installers for.

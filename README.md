@@ -65,6 +65,14 @@ external infra — `pnpm dev` just runs. Schema mirrors the PRD and stays Postgr
 
 ## Install & run
 
+**Option A — download the desktop app** (no Node/pnpm needed): grab the installer for your OS
+from the [latest release](https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest)
+— macOS `.dmg`, Windows `.exe`, Linux `.AppImage`/`.deb`. The app boots the whole portal and
+opens it in a window; with the `claude` CLI installed you get real runs, without it you get the
+free deterministic mock. Installers are built automatically by GitHub Actions for every release.
+
+**Option B — build from source:**
+
 ```bash
 git clone https://github.com/YOUSSEFELJAYAD/claude-fleet-portal.git
 cd claude-fleet-portal
