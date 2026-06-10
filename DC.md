@@ -763,3 +763,13 @@ v0.2.0 → v2.1.172, Later closed it and the snooze held across navigation while
 
 366 tests + 2 by-design skips (origin now exists), 3/3 typecheck. Released as **v0.4.0** — the
 first tag the pipeline builds installers for.
+
+## 19. Brand reset → public v0.1.0 (2026-06-11)
+
+README rewritten professionally (logo header from the app icon, badges, fresh screenshots shot
+from a seeded mock env — dashboard / run detail / board / template editor; stale wave-era PNGs
+and two unreferenced research-note docs removed). Release history RESET at user request: releases
+v0.1.0–v0.4.0 + tags deleted, versions (root + desktop) set back to 0.1.0, single clean **v0.1.0**
+tag pushed — the auto-release pipeline (tests → auto-notes release → 3-OS installers) produces
+the public debut release. Pipeline previously validated end-to-end on the v0.4.0 dry run
+(15 assets: dmg arm64/x64 + zips, NSIS exe, AppImage + deb).

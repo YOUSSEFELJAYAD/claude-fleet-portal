@@ -1,134 +1,117 @@
-# Claude Fleet Portal
+<div align="center">
+  <img src="docs/icon.png" alt="Claude Fleet Portal" width="120" />
 
-A locally-hosted **mission-control console** to launch, monitor, and control a fleet of local
-Claude Code agents — including **Dynamic Workflows** (orchestrator → subagent trees), **Agent
-Teams**, **Skills**, and the **effort / ultracode** dial, with live cost & concurrency guardrails.
+  # Claude Fleet Portal
 
-> Implementation of [`PRD-Claude-Fleet-Portal.md`](./PRD-Claude-Fleet-Portal.md). Every engineering
-> decision (and every deviation from the PRD) is logged in [`DC.md`](./DC.md).
+  **Mission control for your Claude Code agents.**
+  Launch, monitor, and orchestrate a whole fleet of local agents — with live cost guardrails,
+  an autonomous PM running your Kanban board, and one-click updates.
 
-![Fleet dashboard](./docs/dashboard.png)
-![Run detail — workflow tree + timeline](./docs/run-detail-live.png)
+  [![Latest release](https://img.shields.io/github/v/release/YOUSSEFELJAYAD/claude-fleet-portal?color=ffb000&label=release)](https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest)
+  [![Build](https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/actions/workflows/release.yml/badge.svg)](https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/actions/workflows/release.yml)
+  ![Platforms](https://img.shields.io/badge/platforms-macOS%20·%20Windows%20·%20Linux-3d4350)
+
+  <img src="docs/dashboard.png" alt="Fleet dashboard" width="850" />
+</div>
 
 ---
 
 ## What it does
 
-The portal **owns** Claude Code sessions: it spawns them as `claude -p --output-format stream-json`
-child processes, parses the streamed events, assembles the **orchestrator → subagent hierarchy**,
-and relays everything to the browser in real time over SSE — with REST controls to **stop, resume,
-send follow-up input, and approve/deny permissions**.
+The portal **owns** Claude Code sessions: it spawns them as headless child processes, parses the
+event stream, assembles the orchestrator → subagent hierarchy, and relays everything to the
+browser live — with full controls to stop, steer, resume, and approve.
 
-- **Fleet dashboard** — every run with live status, model + effort, cost gauge (heats amber→red near
-  the budget ceiling), token burn, subagent count & depth.
-- **Hierarchical run detail** — the live **workflow tree** (root → subagents, arbitrary depth),
-  per-node streaming timeline with token deltas, per-node and rolled-up token/cost, raw event log.
-- **Control** — stop (cascades to the subtree), send stdin input (interactive runs), resume a
-  finished session, approve/deny permission prompts.
-- **Agent Teams** — reads the shared task list at `~/.claude/tasks/{id}/` (status board +
-  dependencies + mailbox), watched live.
-- **Skills & subagents** — discovered from `~/.claude/skills` and `~/.claude/agents`; attachable at launch.
-- **Guardrails & history** — per-run budget ceilings (enforced via Claude Code's `--max-budget-usd`
-  *and* server-side auto-kill), concurrency caps, daily spend, durable searchable history with replay.
-- **Orchestration Mode (Campaigns)** — give one **orchestrator** agent an objective; it decomposes the
-  work (via `--json-schema`) and the portal **auto-spawns a real worker agent per subtask**, respecting
-  a dependency DAG + a parallelism cap, then an optional **synthesizer** merges the results — all from a
-  library of reusable **Agent Templates**. One agent → an auto-built fleet.
+- **Fleet dashboard** — every run with live status, model + effort, cost gauge, token burn,
+  subagent count and depth.
+- **Run detail** — the live workflow tree (root → subagents at any depth), per-node streaming
+  timeline, span waterfall, OTLP telemetry, raw event log.
+- **Projects + autonomous PM** — attach a git repo and put cards on a Kanban board; the agent PM
+  picks them up, builds in isolated git worktrees, validates, gates (human approve or full auto),
+  and merges. Conflict resolution by a dedicated agent; GitHub PR mode included.
+- **Campaigns** — give an orchestrator one objective; it plans a dependency DAG and the portal
+  spawns a real worker agent per subtask, then a synthesizer merges the results.
+- **Agent library** — 12 built-in agent profiles (Debugger, Test Writer, Security Auditor,
+  Frontend Builder, …) with tuned working methods; every profile is editable, and skills attach
+  with real effect on the spawned agent.
+- **Your whole Claude setup, surfaced** — every skill and slash-command from your installed
+  plugins is collectible and attachable; launch a run directly on any `/command`.
+- **Guardrails** — per-run budget ceilings enforced twice (CLI flag + server auto-kill),
+  concurrency caps, per-project spend ceilings, daily spend tracking.
+- **Releases & updates** — the app checks GitHub for new releases, shows a clean update popup,
+  applies updates in the background, and asks for a simple restart.
 
-![Campaign DAG — orchestrator → workers → synthesizer](./docs/campaign-dag.png)
+<div align="center">
+  <img src="docs/run-detail.png" alt="Run detail — live workflow tree" width="850" />
+  <img src="docs/board.png" alt="Project Kanban executed by the agent PM" width="850" />
+  <img src="docs/template.png" alt="Agent profile editor with skill picker" width="850" />
+</div>
 
-## Architecture
+---
 
-```
-apps/web   ──REST + SSE──▶  apps/server                      ──spawn/stdin/signals──▶  claude -p
-(Next.js 14 / App Router)   (Fastify control plane)                                    └─ subagents (≤16 live)
-                            ├─ process manager  (spawn, line-buffer, cascade-kill)
-                            ├─ stream parser    (normalize verified stream-json)
-                            ├─ tree builder     (parent_tool_use_id → subtree)
-                            ├─ registry+guardrails (status, budget, concurrency)
-                            ├─ team watcher     (~/.claude/tasks/{id})
-                            └─ SQLite (better-sqlite3): runs/run_nodes/events/teams/...
-packages/shared            the frozen TypeScript contract both apps import
-tools/mock-claude.mjs      replays captured stream-json — free, deterministic pipeline tests
-fixtures/                  real captured + synthetic stream-json traces
-```
+## Install
 
-**Why SQLite, not Postgres+Redis** (PRD named the latter): single-user localhost-first means zero
-external infra — `pnpm dev` just runs. Schema mirrors the PRD and stays Postgres-portable. See
-[`DC.md` D-005](./DC.md).
+### Option A — download the app
 
-## Requirements
+Grab the installer for your OS from the
+**[latest release](https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest)**:
+macOS `.dmg` · Windows `.exe` · Linux `.AppImage` / `.deb`.
 
-- Node ≥ 20 (built on 22), **pnpm**
-- **Claude Code ≥ 2.1.154**, authenticated (`claude --version`) — only needed for *real* runs
-- No database server needed (SQLite is embedded)
+No Node, pnpm, or checkout required — the app boots the whole portal and opens it in a window.
+With the [Claude Code CLI](https://claude.com/claude-code) installed you get real agent runs;
+without it the app runs a free deterministic mock so you can explore everything first.
+Installers are built and published automatically by GitHub Actions for every release.
 
-## Install & run
-
-**Option A — download the desktop app** (no Node/pnpm needed): grab the installer for your OS
-from the [latest release](https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest)
-— macOS `.dmg`, Windows `.exe`, Linux `.AppImage`/`.deb`. The app boots the whole portal and
-opens it in a window; with the `claude` CLI installed you get real runs, without it you get the
-free deterministic mock. Installers are built automatically by GitHub Actions for every release.
-
-**Option B — build from source:**
+### Option B — run from source
 
 ```bash
 git clone https://github.com/YOUSSEFELJAYAD/claude-fleet-portal.git
 cd claude-fleet-portal
-./install.sh            # checks prereqs → pnpm install → production build
+./install.sh            # checks prerequisites → installs → builds
 
-./start.sh              # production →  web http://127.0.0.1:4318 · control plane :4319
-./start.sh --mock       # same, against the FREE deterministic mock (no tokens — great first tour)
+./start.sh              # production →  web http://127.0.0.1:4318 · API :4319
+./start.sh --mock       # same, with the free deterministic mock (no tokens)
 ```
 
-Open **http://127.0.0.1:4318**, hit **＋ Launch Agent**, and watch it stream.
+Requirements: Node ≥ 20, pnpm (auto-enabled via corepack), git. Claude Code ≥ 2.1.154 for real runs.
 
-For development (hot reload):
+---
+
+## Updating
+
+The portal checks its GitHub releases in the background. When a new version ships you get an
+amber badge in the sidebar and a popup — **Update now** applies it in the background and asks
+for a restart (`./start.sh` rebuilds anything stale by itself). Desktop installs are pointed to
+the download page for the new installer. To release: bump the version, push a `vX.Y.Z` tag, and
+GitHub Actions does the rest — tests, release notes, installers for all three platforms.
+
+---
+
+## Development
 
 ```bash
-pnpm dev                # against the REAL claude binary (spends real tokens)
-pnpm dev:mock           # against the mock
+pnpm dev                # hot reload against the real claude binary
+pnpm dev:mock           # hot reload against the mock (free)
+pnpm test               # deterministic server suite (350+ tests, hermetic)
+pnpm -r typecheck
 ```
 
-Once the repo has an `origin` remote, **/releases** in the app checks GitHub for newer
-releases (sidebar badge) and can **self-update** with one click (`git pull --ff-only` +
-`pnpm install`; refuses over uncommitted changes).
+| Path | What it is |
+|---|---|
+| `apps/server` | Fastify control plane — process manager, stream parser, run registry, PM engine, SQLite |
+| `apps/web` | Next.js UI (all rendering from the normalized contract, never raw CLI JSON) |
+| `packages/shared` | The frozen TypeScript contract between them |
+| `desktop/` | Electron shell + packaging for the desktop app |
+| `tools/mock-claude.mjs` | Deterministic stream-json replayer used by tests and mock mode |
 
-Env knobs: `CLAUDE_BIN` (real vs mock), `FLEET_WEB_PORT` (4318), `FLEET_SERVER_PORT` (4319),
-`FLEET_DATA_DIR` (./data), `MOCK_FIXTURE` (`workflow-fanout` | `real-subagent` | `real-pong`),
-`MOCK_DELAY_MS`, `FLEET_GITHUB_REPO` / `GITHUB_TOKEN` (release checks).
+Env knobs: `CLAUDE_BIN`, `FLEET_WEB_PORT` (4318), `FLEET_SERVER_PORT` (4319), `FLEET_DATA_DIR`
+(./data), `FLEET_GITHUB_REPO` / `GITHUB_TOKEN` (release checks), `MOCK_FIXTURE`, `MOCK_DELAY_MS`.
 
-## Tests
+Engineering history: every decision is logged in [`DC.md`](./DC.md); the original spec lives in
+[`PRD-Claude-Fleet-Portal.md`](./PRD-Claude-Fleet-Portal.md).
 
-```bash
-pnpm test          # parser + tree builder vs REAL captured traces and synthetic fan-out
-pnpm typecheck     # all three packages
-pnpm build         # production Next.js build
-```
+---
 
-The riskiest logic — the stream parser and the **tree builder** — is TDD'd against the *actual*
-stream-json captured from the installed Claude Code (`fixtures/real-subagent.jsonl`), so the
-hierarchy rules are grounded in ground truth, not guesses.
-
-## Ground truth (verified, not assumed)
-
-The PRD flagged the stream-json schema and CLI flags as undocumented. They were captured live from
-Claude Code 2.1.168 before any code was written (see [`DC.md` §1](./DC.md)):
-
-- Subtree hierarchy is keyed by **`parent_tool_use_id`** (the spawning `Agent`/`Task` tool_use id),
-  not the PRD's invented `parentId`.
-- Real flags: `--effort {low,medium,high,xhigh,max}`, `--max-budget-usd`, `--session-id` (pre-assigned
-  so `runId === sessionId`), `--input-format stream-json`.
-- "ultracode" = `xhigh` effort + auto-orchestration (no literal flag); modeled as a launch preset.
-
-## API (control plane, `:4319`)
-
-`POST /api/agents` · `GET /api/agents` · `GET /api/agents/:id` · `GET /api/agents/:id/tree` ·
-`GET /api/agents/:id/stream` (SSE) · `POST /api/agents/:id/input` · `POST /api/agents/:id/resume` ·
-`DELETE /api/agents/:id` · `POST /api/agents/:id/permission` · `GET /api/teams[/:id[/stream]]` ·
-`GET /api/skills` · `GET /api/subagents` · `GET /api/models` · `GET/PUT /api/config` ·
-`GET /api/spend` · `GET /api/fleet/stream` (SSE).
-
-**Orchestration Mode:** `GET/POST/PUT/DELETE /api/templates` · `POST /api/campaigns` ·
-`GET /api/campaigns[/:id]` · `GET /api/campaigns/:id/stream` (SSE) · `DELETE /api/campaigns/:id`.
+<div align="center">
+  <sub>🐙 one octopus, many arms — <em>your agents under mission control</em> · ✳ powered by <a href="https://claude.com/claude-code">Claude Code</a></sub>
+</div>
