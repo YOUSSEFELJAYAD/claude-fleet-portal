@@ -37,6 +37,16 @@ if [ ! -d apps/web/.next ]; then
   exit 1
 fi
 
+# After a self-update (git pull from /releases) the built bundle is stale — rebuild when the
+# built sha no longer matches HEAD. install.sh and this block both stamp the sha after building.
+HEAD_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILT_SHA=$(cat apps/web/.next/fleet-build-sha 2>/dev/null || echo none)
+if [ "$HEAD_SHA" != "unknown" ] && [ "$BUILT_SHA" != "$HEAD_SHA" ]; then
+  echo "▶ build is stale (built: $BUILT_SHA · code: $HEAD_SHA) — rebuilding…"
+  pnpm build
+  echo "$HEAD_SHA" > apps/web/.next/fleet-build-sha
+fi
+
 if [ "${1:-}" = "--mock" ]; then
   export CLAUDE_BIN="$PWD/tools/mock-claude.mjs"
   echo "▶ mock mode — runs are free and deterministic (CLAUDE_BIN=$CLAUDE_BIN)"

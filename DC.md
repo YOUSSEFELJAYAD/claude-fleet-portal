@@ -713,3 +713,23 @@ pull manually" state (no update button); restarted clean without the env (quiet 
 **Verified end-to-end:** ./install.sh ran clean on this checkout (build 18 routes), ./start.sh
 --mock booted production mode (banner rendered, both ports healthy, 12 templates served, mock
 run launched + record deleted), dev mode restored after.
+
+## 17. Update popup + sidebar version line + stale-build auto-rebuild (2026-06-11) → v0.3.0
+
+- **UpdateModal** (components/UpdateModal.tsx, mounted by Shell): pops when
+  `updateAvailable && canSelfUpdate` — shows current→latest, release-notes excerpt, "full
+  changelog →"; **⇪ Update now** runs the guarded self-update and then ASKS THE USER TO
+  RESTART (amber instruction card: Ctrl-C + ./start.sh; dev reloads itself); **Later**
+  snoozes THAT version via localStorage (`fleet-update-dismissed-<tag>`) — next release
+  pops again. Failure path shows the per-step log.
+- **Sidebar version line** (bottom, under telemetry): `v<version> · <sha>` linking to
+  /releases, with an amber `→ <tag> available` suffix when an update exists.
+- **start.sh stale-build auto-rebuild**: install.sh/start.sh stamp `.next/fleet-build-sha`
+  after building; start.sh compares it to HEAD and rebuilds when the code moved past the
+  bundle (i.e. right after a self-update restart) — making "restart the app" genuinely
+  complete an update in production.
+
+**Verified live** (FLEET_GITHUB_REPO=anthropics/claude-code demo env): popup rendered with
+v0.2.0 → v2.1.172, Later closed it and the snooze held across navigation while the nav badge
++ footer amber hint stayed; clean env shows quiet `v0.2.0 · <sha>` footer. 3/3 typecheck,
+`next build` clean. Released as **v0.3.0**.

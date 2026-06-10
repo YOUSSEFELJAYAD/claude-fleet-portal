@@ -5,8 +5,10 @@ import { usePathname } from 'next/navigation';
 import { useFleet } from '@/lib/live';
 import { api } from '@/lib/api';
 import { usd } from '@/lib/format';
+import type { ReleaseStatus } from '@fleet/shared';
 import { Gauge, Btn, Dot } from './ui';
 import { LaunchModal } from './LaunchModal';
+import { UpdateModal, updateDismissKey } from './UpdateModal';
 
 const NAV = [
   { href: '/', label: 'Fleet', glyph: '◉' },
@@ -29,11 +31,28 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { spend, connected, runs } = useFleet();
   const [launchOpen, setLaunchOpen] = useState(false);
-  // amber dot on the Releases nav entry when GitHub has a newer release (server-cached check)
-  const [updateAvailable, setUpdateAvailable] = useState(false);
+  // release status drives: the amber dot on the Releases nav entry, the version line at the
+  // bottom of the sidebar, and the update popup (snoozed per-version via localStorage).
+  const [release, setRelease] = useState<ReleaseStatus | null>(null);
+  const [updatePopup, setUpdatePopup] = useState(false);
   useEffect(() => {
-    api.releaseStatus().then((s) => setUpdateAvailable(s.updateAvailable)).catch(() => {});
+    api
+      .releaseStatus()
+      .then((s) => {
+        setRelease(s);
+        if (s.updateAvailable && s.canSelfUpdate && s.latest) {
+          let snoozed = false;
+          try {
+            snoozed = !!localStorage.getItem(updateDismissKey(s.latest.tag));
+          } catch {
+            /* ignore */
+          }
+          if (!snoozed) setUpdatePopup(true);
+        }
+      })
+      .catch(() => {});
   }, []);
+  const updateAvailable = !!release?.updateAvailable;
   const active = runs.filter((r) => ['starting', 'running', 'orchestrating', 'awaiting-input', 'awaiting-permission'].includes(r.status));
   const dailyCap = 50; // soft visual reference for the daily-spend gauge
 
@@ -90,6 +109,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
               {connected ? 'telemetry live' : 'reconnecting'}
             </span>
           </div>
+          {release && (
+            <Link href="/releases" className="block mt-2 font-mono text-[10px] text-faint hover:text-amber" title="releases & updates">
+              v{release.currentVersion}
+              {release.currentSha && <span className="opacity-60"> · {release.currentSha}</span>}
+              {updateAvailable && release.latest && (
+                <span className="text-amber"> → {release.latest.tag} available</span>
+              )}
+            </Link>
+          )}
         </div>
       </aside>
 
@@ -116,6 +144,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </div>
 
       {launchOpen && <LaunchModal onClose={() => setLaunchOpen(false)} />}
+      {updatePopup && release && <UpdateModal status={release} onClose={() => setUpdatePopup(false)} />}
     </div>
   );
 }

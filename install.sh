@@ -62,6 +62,8 @@ pnpm install
 echo
 bold "3/4 · building the web app"
 pnpm build
+# stamp the built sha — start.sh rebuilds automatically when the code moves past it (self-update)
+git rev-parse --short HEAD > apps/web/.next/fleet-build-sha 2>/dev/null || true
 
 # ── 4. finishing touches ─────────────────────────────────────────────────────────
 echo
