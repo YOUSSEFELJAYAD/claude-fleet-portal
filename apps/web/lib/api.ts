@@ -85,6 +85,13 @@ export interface MetaResponse {
   statuses: string[];
 }
 
+/** Row from GET /api/mcp (server-side `claude mcp list` parse). */
+export interface McpServerInfo {
+  name: string;
+  status: string; // connected | needs-auth | failed | pending | best-effort token
+  detail: string;
+}
+
 // ── v2 #1: in-browser file CRUD + commit ──────────────────────────────────────
 /** Working-tree bytes of a single file for the editor (GET /files/edit). */
 export interface FileEditResult {
@@ -155,6 +162,7 @@ export const api = {
   permission: (id: string, requestId: string, decision: 'approve' | 'deny') =>
     j(`/api/agents/${id}/permission`, { method: 'POST', body: JSON.stringify({ requestId, decision }) }),
   meta: () => j<MetaResponse>('/api/meta'),
+  mcp: () => j<{ servers: McpServerInfo[]; error?: string }>('/api/mcp'),
   skills: (cwd?: string) => j<SkillInfo[]>('/api/skills' + (cwd ? `?cwd=${encodeURIComponent(cwd)}` : '')),
   subagents: (cwd?: string) =>
     j<SubagentInfo[]>('/api/subagents' + (cwd ? `?cwd=${encodeURIComponent(cwd)}` : '')),

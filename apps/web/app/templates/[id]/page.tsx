@@ -2,14 +2,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { api } from '@/lib/api';
+import { api, type McpServerInfo } from '@/lib/api';
 import type { AgentTemplate, EffortLevel, PermissionMode, SkillInfo, ToolPack } from '@fleet/shared';
 import { CLAUDE_TOOLS } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Textarea, Select, Btn } from '@/components/ui';
 import { MultiPicker } from '@/components/MultiPicker';
 import { PackBar } from '@/components/PackBar';
 
-const TOOL_OPTIONS = CLAUDE_TOOLS.map((t) => ({ value: t.name, hint: t.hint }));
 const union = (base: string[], add: string[]) => [...base, ...add.filter((x) => !base.includes(x))];
 
 const ROLE_COLOR: Record<string, string> = {
@@ -27,6 +26,7 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [meta, setMeta] = useState<{ models: { id: string; label: string }[]; efforts: string[]; permissionModes: string[] } | null>(null);
   const [catalog, setCatalog] = useState<SkillInfo[]>([]);
+  const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
 
   // ── edit state (initialized from the loaded template) ────────────────────────
   const [role, setRole] = useState<string>('worker');
@@ -59,7 +59,21 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
     api.template(id).then(hydrate).catch((e: any) => setLoadErr(e?.message || 'failed to load template'));
     api.meta().then((m) => setMeta(m as any)).catch(() => {});
     api.skills().then(setCatalog).catch(() => setCatalog([]));
+    api.mcp().then((r) => setMcpServers(r.servers)).catch(() => {});
   }, [id]);
+
+  // built-in tools + one mcp__<server> entry per configured MCP server (= all its tools)
+  const toolOptions = useMemo(
+    () => [
+      ...CLAUDE_TOOLS.map((t) => ({ value: t.name, hint: t.hint, group: 'claude tools' })),
+      ...mcpServers.map((s) => ({
+        value: `mcp__${s.name}`,
+        hint: `every ${s.name} tool · ${s.status}${s.detail ? ` · ${s.detail}` : ''}`,
+        group: 'mcp servers · all tools of the server',
+      })),
+    ],
+    [mcpServers],
+  );
 
   const skillOptions = useMemo(
     () =>
@@ -218,8 +232,8 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
               <MultiPicker
                 value={allowedTools}
                 onChange={setAllowedTools}
-                options={TOOL_OPTIONS}
-                placeholder="search tools — or type a pattern…"
+                options={toolOptions}
+                placeholder="search tools & mcp servers…"
                 customHint="patterns like Bash(git *) work"
               />
             </Field>

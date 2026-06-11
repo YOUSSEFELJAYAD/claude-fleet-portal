@@ -1,15 +1,28 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api } from '@/lib/api';
+import { api, type McpServerInfo } from '@/lib/api';
 import type { ModelInfo, SkillInfo, SubagentInfo, EffortLevel, PermissionMode, ToolPack } from '@fleet/shared';
 import { CLAUDE_TOOLS } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn } from './ui';
 import { MultiPicker } from './MultiPicker';
 import { PackBar } from './PackBar';
 
-const TOOL_OPTIONS = CLAUDE_TOOLS.map((t) => ({ value: t.name, hint: t.hint }));
 const union = (base: string[], add: string[]) => [...base, ...add.filter((x) => !base.includes(x))];
+
+/** built-in tools + one `mcp__<server>` entry per configured MCP server (= every tool
+ *  that server exposes — claude's own allowed-tools semantics); specific
+ *  `mcp__server__tool` patterns are still typeable as custom entries. */
+function buildToolOptions(mcpServers: McpServerInfo[]) {
+  return [
+    ...CLAUDE_TOOLS.map((t) => ({ value: t.name, hint: t.hint, group: 'claude tools' })),
+    ...mcpServers.map((s) => ({
+      value: `mcp__${s.name}`,
+      hint: `every ${s.name} tool · ${s.status}${s.detail ? ` · ${s.detail}` : ''}`,
+      group: 'mcp servers · all tools of the server',
+    })),
+  ];
+}
 
 export function LaunchModal({ onClose }: { onClose: () => void }) {
   const router = useRouter();
@@ -18,6 +31,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [permModes, setPermModes] = useState<string[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
+  const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
 
   const [prompt, setPrompt] = useState('');
   const [cwd, setCwd] = useState('/Users/jd');
@@ -48,7 +62,12 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
         setPermModes(m.permissionModes);
       })
       .catch(() => setErr('Could not load launch options — is the control plane running?')); // H8
+    api
+      .mcp()
+      .then((r) => setMcpServers(r.servers))
+      .catch(() => {}); // no MCP servers ≠ broken launch form
   }, []);
+  const toolOptions = useMemo(() => buildToolOptions(mcpServers), [mcpServers]);
   useEffect(() => {
     let alive = true;
     api.skills(cwd).then((s) => alive && setSkills(s)).catch(() => alive && setSkills([]));
@@ -260,8 +279,8 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
                 <MultiPicker
                   value={allowedTools}
                   onChange={setAllowedTools}
-                  options={TOOL_OPTIONS}
-                  placeholder="search tools — or type a pattern like Bash(git *)…"
+                  options={toolOptions}
+                  placeholder="search tools & mcp servers — or type a pattern like Bash(git *)…"
                   customHint="patterns like Bash(git *) / mcp__server__tool work"
                 />
               </Field>
@@ -275,7 +294,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
               <MultiPicker
                 value={disallowedTools}
                 onChange={setDisallowedTools}
-                options={TOOL_OPTIONS}
+                options={toolOptions}
                 placeholder="search… e.g. Bash(git push *)"
                 customHint="deny patterns work too"
               />
