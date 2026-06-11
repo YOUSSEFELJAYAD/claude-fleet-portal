@@ -43,6 +43,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [enabledEngines, setEnabledEngines] = useState<string[]>([]);
   const [selectedEngine, setSelectedEngine] = useState<RunEngine>('claude');
   const [engineModel, setEngineModel] = useState('');
+  const [thinkingLevel, setThinkingLevel] = useState('');
 
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [templateId, setTemplateId] = useState('');
@@ -164,6 +165,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             effort: 'high',
             permissionMode: 'default',
             budgetUsd: budget.trim() ? Number(budget) : null,
+            thinkingLevel: thinkingLevel || undefined,
           })
         : await api.launch({
             prompt: effectivePrompt,
@@ -184,6 +186,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             subagentProfile: subagentProfile || null,
             budgetUsd: budget.trim() ? Number(budget) : null,
             appendSystemPrompt: appendSys.trim() || undefined,
+            thinkingLevel: thinkingLevel || undefined,
           });
       onClose();
       router.push(`/runs/${run.id}`);
@@ -216,8 +219,12 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
                       key={eng}
                       onClick={() => {
                         // engine-model formats differ (codex: bare id; opencode: provider/model)
-                        // — a stale value from the previous engine would submit garbage
-                        if (eng !== selectedEngine) setEngineModel('');
+                        // — a stale value from the previous engine would submit garbage.
+                        // thinkingLevel options differ per engine too — reset both on switch.
+                        if (eng !== selectedEngine) {
+                          setEngineModel('');
+                          setThinkingLevel('');
+                        }
                         setSelectedEngine(eng);
                       }}
                       className="font-mono text-[11px] px-3 py-1.5 border transition-colors"
@@ -253,6 +260,35 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
                   />
                 </Field>
               </div>
+            )}
+
+            {/* ── thinking level — engine runs ── */}
+            {isEngineRun && (
+              <Field
+                label="thinking / reasoning"
+                hint={selectedEngine === 'codex' ? '-c model_reasoning_effort' : '--variant'}
+              >
+                <Select value={thinkingLevel} onChange={(e) => setThinkingLevel(e.target.value)}>
+                  <option value="">engine default</option>
+                  {selectedEngine === 'codex' && (
+                    <>
+                      <option value="minimal">minimal</option>
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                    </>
+                  )}
+                  {selectedEngine === 'opencode' && (
+                    <>
+                      <option value="minimal">minimal</option>
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                      <option value="max">max</option>
+                    </>
+                  )}
+                </Select>
+              </Field>
             )}
 
             {/* ── agent profile (template) picker — claude only ── */}
@@ -430,6 +466,19 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
               </Field>
             )}
 
+            {/* ── thinking level — claude only ── */}
+            {!isEngineRun && (
+              <Field label="thinking depth" hint="MAX_THINKING_TOKENS env var">
+                <Select value={thinkingLevel} onChange={(e) => setThinkingLevel(e.target.value)}>
+                  <option value="">model default (adaptive)</option>
+                  <option value="off">off — no thinking</option>
+                  <option value="think">think · 4K budget</option>
+                  <option value="megathink">megathink · 10K</option>
+                  <option value="ultrathink">ultrathink · 32K</option>
+                </Select>
+              </Field>
+            )}
+
             {/* ultracode + workflows row — claude only */}
             {!isEngineRun && (
               <div className="col-span-2 border border-amber/25 bg-amber/[0.04] px-4 py-3 flex items-center justify-between">
@@ -559,9 +608,9 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             <div className="font-mono text-[11px]" style={{ color: err ? '#ff5d5d' : '#5b626d' }}>
               {err ?? (isEngineRun
                 ? selectedEngine === 'codex'
-                  ? `spawns: codex${engineModel.trim() ? ` --model ${engineModel.trim()}` : ''} exec --json`
-                  : `spawns: opencode run --format json${engineModel.trim() ? ` --model ${engineModel.trim()}` : ''}`
-                : `spawns: claude -p --effort ${effectiveEffort}${fastMode ? ' (fast)' : ''}`)}
+                  ? `spawns: codex${thinkingLevel ? ` -c model_reasoning_effort=${thinkingLevel}` : ''}${engineModel.trim() ? ` --model ${engineModel.trim()}` : ''} exec --json`
+                  : `spawns: opencode run --format json${engineModel.trim() ? ` --model ${engineModel.trim()}` : ''}${thinkingLevel ? ` --variant ${thinkingLevel}` : ''}`
+                : `spawns: claude -p --effort ${effectiveEffort}${fastMode ? ' (fast)' : ''}${thinkingLevel ? ` · ${thinkingLevel}` : ''}`)}
             </div>
             <div className="flex gap-2">
               <Btn onClick={onClose}>Cancel</Btn>

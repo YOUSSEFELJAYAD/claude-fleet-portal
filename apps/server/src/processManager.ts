@@ -52,6 +52,21 @@ export function looksLikeClaudePid(pid: number | null | undefined): boolean {
   }
 }
 
+/**
+ * §26 — map a thinkingLevel string to the MAX_THINKING_TOKENS env var for claude.
+ * Levels: off→0, think→4000, megathink→10000, ultrathink→31999.
+ * Absent/null/unrecognised → {} (let the model use its adaptive default).
+ */
+export function thinkingEnv(level: string | null | undefined): Record<string, string> {
+  switch (level) {
+    case 'off':        return { MAX_THINKING_TOKENS: '0' };
+    case 'think':      return { MAX_THINKING_TOKENS: '4000' };
+    case 'megathink':  return { MAX_THINKING_TOKENS: '10000' };
+    case 'ultrathink': return { MAX_THINKING_TOKENS: '31999' };
+    default:           return {};
+  }
+}
+
 export interface ManagedProcess {
   pid: number | undefined;
   child: ChildProcess;
@@ -171,6 +186,7 @@ export function spawnClaude(
     onExit: (code: number | null, signal: NodeJS.Signals | null) => void;
   },
   keepStdinOpen: boolean,
+  extraEnv?: Record<string, string>,
 ): ManagedProcess {
   const child = spawn(CLAUDE_BIN, args, {
     cwd: cwd || process.cwd(),
@@ -178,7 +194,8 @@ export function spawnClaude(
     detached: true, // new process group → cascade kill (§7.6)
     // H6 — real OTLP exporter env; §22 — addonRunEnv routes the run through the compression
     // proxy (ANTHROPIC_BASE_URL) when that add-on is enabled AND its proxy is verified healthy.
-    env: { ...process.env, ...otelEnv(), ...addonRunEnv() },
+    // §26 — extraEnv (e.g. MAX_THINKING_TOKENS) is last so it wins over all earlier layers.
+    env: { ...process.env, ...otelEnv(), ...addonRunEnv(), ...extraEnv },
   });
   child.stdin?.on('error', () => {
     /* EPIPE from a dying child — swallowed so it can't crash the server */

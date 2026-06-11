@@ -29,7 +29,7 @@ export type EngineConfig = CodexEngineConfig | OpencodeEngineConfig;
  */
 export function buildEngineArgs(
   engine: RunEngine,
-  req: Pick<LaunchRequest, 'prompt' | 'cwd' | 'engineModel'>,
+  req: Pick<LaunchRequest, 'prompt' | 'cwd' | 'engineModel' | 'thinkingLevel'>,
   cfg: EngineConfig,
 ): string[] {
   const model = req.engineModel ?? (cfg as any).defaultModel ?? null;
@@ -42,6 +42,9 @@ export function buildEngineArgs(
       '--sandbox',
       ccfg.sandbox,
     ];
+    // §26 — reasoning effort is a GLOBAL flag placed before the subcommand ('exec').
+    // execFile-style spawn passes argv directly (no shell), so no extra quoting needed.
+    if (req.thinkingLevel) args.push('-c', `model_reasoning_effort=${req.thinkingLevel}`);
     if (model) args.push('--model', model);
     // `--` is REQUIRED before the positional prompt (same lesson as the claude path,
     // F-11): a prompt starting with '-' is otherwise parsed as a flag — empirically
@@ -55,6 +58,8 @@ export function buildEngineArgs(
     const args: string[] = ['run', '--format', 'json'];
     if (model) args.push('--model', model);
     if (ocfg.skipPermissions) args.push('--dangerously-skip-permissions');
+    // §26 — variant sets provider-specific reasoning effort; placed before the '--' separator.
+    if (req.thinkingLevel) args.push('--variant', req.thinkingLevel);
     // `--` ends option parsing — without it a hyphen-leading prompt is read as a flag
     // (worst case: a prompt naming --dangerously-skip-permissions would ENABLE it)
     args.push('--', req.prompt);

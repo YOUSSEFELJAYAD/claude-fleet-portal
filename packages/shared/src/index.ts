@@ -210,6 +210,10 @@ export interface LaunchRequest {
   /** §24 — engine-native model id (free text, e.g. 'gpt-5-codex' or 'anthropic/claude-sonnet-4-5');
    *  null/absent = the engine's own default. Ignored for engine 'claude'. */
   engineModel?: string | null;
+  /** §26 — thinking depth. claude: off|think|megathink|ultrathink → MAX_THINKING_TOKENS
+   *  (0/4000/10000/31999), absent = adaptive default. codex: minimal|low|medium|high →
+   *  -c model_reasoning_effort. opencode: passed to --variant verbatim. */
+  thinkingLevel?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

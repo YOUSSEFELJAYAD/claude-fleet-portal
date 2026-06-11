@@ -23,7 +23,7 @@ import { validateConfig } from './config.js';
 import { repo } from './db.js';
 import { RunTree } from './tree.js';
 import { normalize } from './parser.js';
-import { spawnClaude, buildArgs, buildResumeArgs, killProcessGroup, type ManagedProcess } from './processManager.js';
+import { spawnClaude, buildArgs, buildResumeArgs, killProcessGroup, thinkingEnv, type ManagedProcess } from './processManager.js';
 import { getEngineBin, engineLaunchConfig, isEngineEnabled } from './addons.js';
 import { buildEngineArgs, parseEngineLine, spawnEngine, type ManagedEngineProcess } from './engines.js';
 
@@ -297,6 +297,15 @@ class Registry {
       throw Object.assign(new Error(`Working directory does not exist: ${reqIn.cwd}`), { statusCode: 400 });
     }
 
+    // §26 — validate thinkingLevel for claude (only recognised levels are accepted).
+    const CLAUDE_THINKING_LEVELS = ['off', 'think', 'megathink', 'ultrathink'];
+    if (reqIn.thinkingLevel != null && !CLAUDE_THINKING_LEVELS.includes(reqIn.thinkingLevel)) {
+      throw Object.assign(
+        new Error('thinkingLevel must be one of off, think, megathink, ultrathink'),
+        { statusCode: 400 },
+      );
+    }
+
     // ultracode preset (DC.md D-007/D-008): force xhigh effort + tighter budget default.
     const ultracode = !!reqIn.ultracode;
     const effort: EffortLevel = ultracode ? 'xhigh' : reqIn.effort;
@@ -379,6 +388,26 @@ class Registry {
    */
   async launchEngine(reqIn: LaunchRequest): Promise<Run> {
     const engine = reqIn.engine!;
+
+    // §26 — validate thinkingLevel FIRST (before the engine-enabled / binary checks) so an
+    // invalid level always returns 400 regardless of add-on state, making the test deterministic.
+    if (reqIn.thinkingLevel != null) {
+      const CODEX_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high'];
+      const OPENCODE_THINKING_RE = /^[a-z0-9-]{1,32}$/i;
+      if (engine === 'codex' && !CODEX_THINKING_LEVELS.includes(reqIn.thinkingLevel)) {
+        throw Object.assign(
+          new Error('thinkingLevel for codex must be one of minimal, low, medium, high'),
+          { statusCode: 400 },
+        );
+      }
+      if (engine === 'opencode' && !OPENCODE_THINKING_RE.test(reqIn.thinkingLevel)) {
+        throw Object.assign(
+          new Error('thinkingLevel for opencode must match /^[a-z0-9-]{1,32}$/i'),
+          { statusCode: 400 },
+        );
+      }
+    }
+
     if (!isEngineEnabled(engine)) {
       throw Object.assign(new Error(`Engine add-on '${engine}' is not enabled — enable it in the Add-on Marketplace first`), {
         statusCode: 409,
@@ -593,6 +622,8 @@ class Registry {
   }
 
   private startProcess(lr: LiveRun, args: string[]) {
+    // §26 — thinking level is a per-invocation launch knob, not persisted; resume() rebuilds
+    // req from the persisted run without thinkingLevel (acceptable — it's a launch-time hint).
     lr.proc = spawnClaude(
       args,
       lr.run.cwd,
@@ -604,6 +635,7 @@ class Registry {
         onExit: (code, signal) => this.onExit(lr, code, signal),
       },
       lr.interactive,
+      thinkingEnv(lr.req.thinkingLevel),
     );
     // Persist the OS pid so stop/reconcile can reach the process group across server restarts.
     lr.run.pid = lr.proc.pid ?? null;

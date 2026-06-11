@@ -97,6 +97,56 @@ describe('buildEngineArgs — opencode', () => {
   });
 });
 
+// ── buildEngineArgs — thinking level (§26) ───────────────────────────────────
+
+describe('buildEngineArgs — thinkingLevel codex', () => {
+  const cfg: CodexEngineConfig = { defaultModel: null, sandbox: 'workspace-write' };
+
+  it('thinkingLevel high → -c model_reasoning_effort=high appears BEFORE exec', () => {
+    const args = buildEngineArgs('codex', { prompt: 'go', cwd: '/p', engineModel: undefined, thinkingLevel: 'high' }, cfg);
+    const cIdx = args.indexOf('-c');
+    expect(cIdx).toBeGreaterThanOrEqual(0);
+    expect(args[cIdx + 1]).toBe('model_reasoning_effort=high');
+    // must come before 'exec' subcommand
+    const execIdx = args.indexOf('exec');
+    expect(cIdx).toBeLessThan(execIdx);
+  });
+
+  it('absent thinkingLevel → no -c flag', () => {
+    const args = buildEngineArgs('codex', { prompt: 'go', cwd: '/p', engineModel: undefined }, cfg);
+    expect(args).not.toContain('-c');
+  });
+
+  it('null thinkingLevel → no -c flag', () => {
+    const args = buildEngineArgs('codex', { prompt: 'go', cwd: '/p', engineModel: undefined, thinkingLevel: null }, cfg);
+    expect(args).not.toContain('-c');
+  });
+});
+
+describe('buildEngineArgs — thinkingLevel opencode', () => {
+  const cfg: OpencodeEngineConfig = { defaultModel: null, skipPermissions: false };
+
+  it('thinkingLevel max → --variant max before -- separator', () => {
+    const args = buildEngineArgs('opencode', { prompt: 'go', cwd: '/p', engineModel: undefined, thinkingLevel: 'max' }, cfg);
+    const vIdx = args.indexOf('--variant');
+    expect(vIdx).toBeGreaterThanOrEqual(0);
+    expect(args[vIdx + 1]).toBe('max');
+    // must come before the -- separator
+    const ddIdx = args.indexOf('--');
+    expect(vIdx).toBeLessThan(ddIdx);
+  });
+
+  it('absent thinkingLevel → no --variant flag', () => {
+    const args = buildEngineArgs('opencode', { prompt: 'go', cwd: '/p', engineModel: undefined }, cfg);
+    expect(args).not.toContain('--variant');
+  });
+
+  it('null thinkingLevel → no --variant flag', () => {
+    const args = buildEngineArgs('opencode', { prompt: 'go', cwd: '/p', engineModel: undefined, thinkingLevel: null }, cfg);
+    expect(args).not.toContain('--variant');
+  });
+});
+
 // ── parseEngineLine — codex ──────────────────────────────────────────────────
 
 describe('parseEngineLine — codex', () => {

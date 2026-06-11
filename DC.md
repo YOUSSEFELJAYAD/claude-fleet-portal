@@ -956,3 +956,21 @@ Sonnet implemented, Fable reviewed (clean — no findings).
   appendSystemPrompt. No server changes (LaunchRequest.appendSystemPrompt already existed).
 - Template detail page: "launch with this profile" quick-launch panel (prompt + cwd + ▶) using
   the CURRENT edit state — tweak, launch, navigate to the run.
+
+## 26. Thinking mode for every engine (2026-06-11)
+
+User: add think-mode for all models where the LLM supports it. Sonnet implemented, Fable
+reviewed (clean) + re-verified suite/typecheck.
+- LaunchRequest.thinkingLevel (per-invocation knob, not persisted — resume uses defaults).
+- claude: MAX_THINKING_TOKENS env on the spawned child (off→0 · think→4000 · megathink→10000
+  · ultrathink→31999; absent = adaptive default). spawnClaude gained extraEnv (merged LAST so
+  it wins); startProcess passes thinkingEnv(req.thinkingLevel) — `claude --help` exposes no
+  thinking flag (verified), the env var is the documented mechanism.
+- codex: `-c model_reasoning_effort=<minimal|low|medium|high>` global flag before `exec`
+  (argv-direct, no shell quoting).
+- opencode: `--variant <level>` (provider-specific; validated /^[a-z0-9-]{1,32}$/i).
+- Server-side validation per engine (400 with per-engine message, ordered BEFORE the
+  engine-disabled check so bad input never reads as a 409).
+- LaunchModal: "thinking depth" select for claude AND engine runs (per-engine option sets),
+  reset on engine switch (cross-engine levels are invalid), included in both submit branches,
+  footer spawn hint reflects it. Tests +17 → suite 483 pass + 2 by-design skips.
