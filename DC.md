@@ -792,3 +792,21 @@ mission-control body atmosphere: amber/teal vignettes + blueprint grid + scanlin
 (Launch → Orchestrate → Watch live → Guardrails → Ship), each with its signal-color accent,
 fill-bar timer, pulse icon, hover-pause + click-select, started by IntersectionObserver; the
 hero motto now anchors to it. Zero console errors.
+
+## 21. macOS "app is damaged" fix — ad-hoc signing (2026-06-11)
+
+User-reported: the downloaded .dmg app failed with «"Claude Fleet Portal" is damaged and can't
+be opened» — Gatekeeper's message for a fully UNSIGNED app on Apple Silicon (we had
+`mac.identity: null`, which skips even ad-hoc signing). Fix chain:
+- **afterPack hook** signs the .app AD-HOC via @electron/osx-sign (`identity: '-'`,
+  `identityValidation: false` — '-' is not a keychain identity; bare `codesign --deep` left
+  nested helpers failing strict verify) and gates the build on
+  `codesign --verify --deep --strict`.
+- osx-sign stat-walks the bundle → the payload must be SYMLINK-FREE: copy-web.cjs now scrubs
+  every symlink after assembly (realize valid ones, drop dangling .pnpm leftovers).
+- Verified locally: strict deep verify passes (Signature=adhoc), and a QUARANTINED copy
+  (xattr-simulated download) opens via LaunchServices — no "damaged" dialog.
+- Honest residual (no Apple Developer account → no notarization): on other Macs Gatekeeper
+  still shows the one-time "unverified developer" prompt — right-click→Open or `xattr -cr`.
+  Documented in README, the landing-page download card, and the release notes.
+- v0.1.0 re-cut from the fixed commit (tag re-pushed; pipeline rebuilds all installers signed).

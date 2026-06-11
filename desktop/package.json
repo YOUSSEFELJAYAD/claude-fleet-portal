@@ -79,7 +79,8 @@
         "from": "mock",
         "to": "mock"
       }
-    ]
+    ],
+    "afterPack": "scripts/afterPack.cjs"
   },
   "homepage": "https://github.com/YOUSSEFELJAYAD/claude-fleet-portal",
   "author": {

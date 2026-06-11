@@ -62,6 +62,10 @@ With the [Claude Code CLI](https://claude.com/claude-code) installed you get rea
 without it the app runs a free deterministic mock so you can explore everything first.
 Installers are built and published automatically by GitHub Actions for every release.
 
+> **macOS first open:** the app is open-source and not notarized with Apple (no $99 developer
+> account), so Gatekeeper warns on first launch. **Right-click the app → Open → Open**, or run
+> `xattr -cr "/Applications/Claude Fleet Portal.app"`. You only do this once.
+
 ### Option B — run from source
 
 ```bash

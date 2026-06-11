@@ -38,4 +38,25 @@ fs.cpSync(path.join(repo, 'tools', 'mock-claude.mjs'), path.join(mockOut, 'tools
 const fixtures = path.join(repo, 'fixtures');
 if (fs.existsSync(fixtures)) fs.cpSync(fixtures, path.join(mockOut, 'fixtures'), { recursive: true });
 
-console.log('desktop web payload assembled →', out);
+// packagers and codesign both mishandle symlinks (electron-builder re-links them, osx-sign
+// stats them) — make the payload symlink-free: realize valid links, drop dangling ones.
+function scrubSymlinks(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isSymbolicLink()) {
+      let real = null;
+      try {
+        real = fs.realpathSync(p);
+      } catch {
+        /* dangling */
+      }
+      fs.rmSync(p, { force: true });
+      if (real) fs.cpSync(real, p, { recursive: true, dereference: true });
+    } else if (entry.isDirectory()) {
+      scrubSymlinks(p);
+    }
+  }
+}
+scrubSymlinks(out);
+
+console.log('desktop web payload assembled (symlink-free) →', out);
