@@ -344,8 +344,10 @@ class CampaignEngine {
         this.emitTask(t);
         running++;
       } catch (e: any) {
-        // concurrency cap (429) or transient → leave pending; retried on next terminal
-        if (e?.statusCode !== 429) {
+        // TRANSIENT → leave pending, retried on the next terminal/tick: concurrency cap
+        // (429) and the §24 daily spend ceiling (409 'daily-cap' — clears at midnight or
+        // when raised; failing the task here would irreversibly burn the DAG).
+        if (e?.statusCode !== 429 && e?.code !== 'daily-cap') {
           t.status = 'failed';
           repo.upsertTask(t);
           this.emitTask(t);
@@ -363,8 +365,9 @@ class CampaignEngine {
         try {
           this.launchSynthesizer(campaign, fresh);
         } catch (e: any) {
-          if (e?.statusCode === 429) {
-            // capped: synthesizerRunId is still null → tickActive retries on the next terminal
+          if (e?.statusCode === 429 || e?.code === 'daily-cap') {
+            // capped (concurrency or §24 daily ceiling): synthesizerRunId is still null
+            // → tickActive retries on the next terminal / when the cap clears
             campaign.status = 'running';
             campaign.costUsd = this.rollupCost(campaign);
             repo.upsertCampaign(campaign);
@@ -518,6 +521,26 @@ class CampaignEngine {
     campaign.costUsd = this.rollupCost(campaign);
     repo.upsertCampaign(campaign);
     this.emitCampaign(campaign);
+  }
+
+  /**
+   * §24 — panic support for POST /api/agents/stop-all. Campaigns must be killed (terminal
+   * FIRST, see kill()'s H2 note) BEFORE the registry sweeps live runs: a bare stopAll fires
+   * onRunTerminal per killed worker, and a non-terminal campaign would synchronously
+   * schedule() REPLACEMENT workers mid-panic — the exact hazard kill() defends against.
+   */
+  killAll(): number {
+    let killed = 0;
+    for (const c of repo.listCampaigns()) {
+      if (TERMINAL_CAMPAIGN.has(c.status)) continue;
+      try {
+        this.kill(c.id);
+        killed++;
+      } catch {
+        /* one bad campaign must not block the panic stop */
+      }
+    }
+    return killed;
   }
 
   // ── reads ────────────────────────────────────────────────────────────────────

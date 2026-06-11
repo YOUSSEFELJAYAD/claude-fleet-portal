@@ -43,7 +43,10 @@ export function buildEngineArgs(
       ccfg.sandbox,
     ];
     if (model) args.push('--model', model);
-    args.push('--cd', req.cwd, 'exec', '--json', '--skip-git-repo-check', req.prompt);
+    // `--` is REQUIRED before the positional prompt (same lesson as the claude path,
+    // F-11): a prompt starting with '-' is otherwise parsed as a flag — empirically
+    // reproduced ('- fix the login bug' → clap arg error, zero JSONL).
+    args.push('--cd', req.cwd, 'exec', '--json', '--skip-git-repo-check', '--', req.prompt);
     return args;
   }
 
@@ -52,7 +55,9 @@ export function buildEngineArgs(
     const args: string[] = ['run', '--format', 'json'];
     if (model) args.push('--model', model);
     if (ocfg.skipPermissions) args.push('--dangerously-skip-permissions');
-    args.push(req.prompt);
+    // `--` ends option parsing — without it a hyphen-leading prompt is read as a flag
+    // (worst case: a prompt naming --dangerously-skip-permissions would ENABLE it)
+    args.push('--', req.prompt);
     return args;
   }
 
@@ -150,7 +155,11 @@ export function parseEngineLine(engine: RunEngine, obj: unknown): EngineLine {
     }
 
     if (t === 'turn.failed' || t === 'error') {
-      const msg = (o.message as string | undefined) ?? (o.error as string | undefined) ?? t;
+      // real codex nests the message: {type:'turn.failed', error:{message:'…'}} —
+      // unwrap defensively; a TS cast alone would let the object flow into the UI
+      const candidates = [(o.error as any)?.message, o.message, o.error];
+      const found = candidates.find((c) => typeof c === 'string' && c);
+      const msg = (found as string | undefined) ?? (o.error ? JSON.stringify(o.error) : t);
       // Timeline renders result events from payload.result (not .text)
       return {
         type: 'result',

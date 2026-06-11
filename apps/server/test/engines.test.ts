@@ -24,7 +24,7 @@ describe('buildEngineArgs — codex', () => {
       '--ask-for-approval', 'never',
       '--sandbox', 'workspace-write',
       '--cd', '/proj',
-      'exec', '--json', '--skip-git-repo-check',
+      'exec', '--json', '--skip-git-repo-check', '--',
       'fix bugs',
     ]);
   });
@@ -53,10 +53,13 @@ describe('buildEngineArgs — codex', () => {
     expect(args).toContain('danger-full-access');
   });
 
-  it('prompt is the last argument (after --skip-git-repo-check)', () => {
+  it("prompt is the last argument, behind a '--' separator (F-11 — hyphen prompts must not parse as flags)", () => {
     const args = buildEngineArgs('codex', { prompt: 'hello world', cwd: '/p', engineModel: undefined }, baseCfg);
     expect(args[args.length - 1]).toBe('hello world');
-    expect(args[args.length - 2]).toBe('--skip-git-repo-check');
+    expect(args[args.length - 2]).toBe('--');
+    const dash = buildEngineArgs('codex', { prompt: '- fix the login bug', cwd: '/p', engineModel: undefined }, baseCfg);
+    expect(dash[dash.length - 1]).toBe('- fix the login bug');
+    expect(dash[dash.length - 2]).toBe('--');
   });
 });
 
@@ -65,7 +68,7 @@ describe('buildEngineArgs — opencode', () => {
 
   it('minimal: no model, no skip-permissions', () => {
     const args = buildEngineArgs('opencode', { prompt: 'refactor', cwd: '/p', engineModel: undefined }, baseCfg);
-    expect(args).toEqual(['run', '--format', 'json', 'refactor']);
+    expect(args).toEqual(['run', '--format', 'json', '--', 'refactor']);
   });
 
   it('with model from req', () => {
@@ -203,6 +206,13 @@ describe('parseEngineLine — codex', () => {
     const line = parseEngineLine('codex', { type: 'error', error: 'something went wrong' });
     expect(line.type).toBe('result');
     expect(line.isError).toBe(true);
+  });
+
+  it('turn.failed with the REAL nested shape {error:{message}} unwraps to a string (review)', () => {
+    const line = parseEngineLine('codex', { type: 'turn.failed', error: { message: 'rate limited' } });
+    expect(line.type).toBe('result');
+    expect(line.isError).toBe(true);
+    expect(line.payload?.result).toBe('rate limited'); // an object here would render raw JSON in the Timeline
   });
 
   it('null/garbage input → no event', () => {

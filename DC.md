@@ -911,3 +911,34 @@ children), lint nits. All sonnet-claimed results re-verified.
   (STOP ALL RUNS, confirm with live count, disabled at 0).
 - Tests: +24 across engines.test.ts / guardrails.test.ts / addons.test.ts updates (incl. a
   fake-bin engine E2E through spawnEngine) → suite 464 pass + 2 by-design skips; 3/3 typecheck.
+
+**§24 addendum — adversarial verification round (34 agents, 5 dimensions, all findings
+independently verified; 19 confirmed, ALL fixed):**
+- GUARDRAIL BYPASSES: resume() now checks the daily cap (was an open side gate for unbounded
+  spend); sweepTimeouts uses a per-INVOCATION clock (lr.invocationStartedAt — resume no longer
+  killed instantly off the ORIGINAL startedAt); campaigns/PM treat 409 'daily-cap' as TRANSIENT
+  like 429 (was: burned DAGs / permanently Blocked cards when the cap tripped mid-flight).
+- STOP-ALL RE-ENTRANCY: the panic route now kills campaigns FIRST (terminal-before-kill, their
+  own H2 defense) — a bare registry.stopAll() synchronously triggered schedule() to spawn
+  REPLACEMENT workers mid-panic. Returns {stopped, campaignsKilled}.
+- ENGINE CORRECTNESS: '--' separator before the positional prompt for BOTH engines (F-11
+  regression class — empirically reproduced: hyphen-leading prompts parsed as flags; an
+  opencode prompt could even flip --dangerously-skip-permissions); engine exit status no longer
+  OR'd with resultSeen (a crash after one streamed message was recorded 'completed'); codex
+  turn.failed nested {error:{message}} unwrapped (was: raw JSON in the Timeline); killed engine
+  runs keep node status 'killed' (was clobbered to 'failed'); no-op JSONL lines no longer run
+  the dirty/flush/emit pipeline (2 DB aggregates per skipped line); looksLikeClaudePid already
+  fixed for engine orphans in the first review pass.
+- VALIDATION/COPY: engine defaultModel trimmed/length-capped/no-leading-dash; compression
+  description scoped to claude runs (engine runs are NOT proxied); opencode page now states
+  that skipPermissions:false auto-rejects permission asks headlessly.
+- WEB: stale /command no longer silently prefixes engine prompts (and engineModel resets on
+  engine switch); Resume hidden for engine runs (was a guaranteed 409 dead-end); run header
+  shows an engine badge, hides the inapplicable effort dial, and renders killReason
+  ('timed out (maxRunMinutes)' / 'budget kill' / 'stopped by operator') + run.error (both were
+  persisted but invisible); launch-modal footer shows the real codex spawn shape; STOP ALL no
+  longer gated on the (possibly failed) spend poll; the three required guardrail number fields
+  edit as strings (clearing no longer snaps to 0).
+- Known accepted gap (documented, not fixed): daily spend is bucketed by started_at — a run
+  crossing midnight attributes post-midnight accrual to the previous day.
+- Suite: 466 pass + 2 by-design skips (+2 regression tests: resume-cap, nested turn.failed).

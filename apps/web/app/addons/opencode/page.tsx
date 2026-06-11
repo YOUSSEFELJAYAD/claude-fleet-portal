@@ -247,9 +247,14 @@ export default function OpencodePage() {
                 onChange={(v) => setForm({ ...form, skipPermissions: v })}
                 label="dangerously skip permissions — auto-approve all tool calls (--dangerously-skip-permissions)"
               />
-              {form.skipPermissions && (
+              {form.skipPermissions ? (
                 <div className="font-mono text-[10.5px] mt-1" style={{ color: '#ff5d5d' }}>
                   warning: this disables opencode permission checks entirely
+                </div>
+              ) : (
+                <div className="font-mono text-[10.5px] mt-1 text-faint">
+                  off = headless opencode AUTO-REJECTS permission asks — runs needing protected
+                  tools will degrade silently unless your opencode permission config allows them
                 </div>
               )}
             </div>

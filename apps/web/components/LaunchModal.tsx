@@ -101,11 +101,13 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const selectedModel = models.find((m) => m.id === model);
   const effectiveEffort = ultracode ? 'xhigh' : effort;
 
-  // A picked /command becomes the head of the prompt — headless claude executes
-  // slash commands passed as the -p prompt; the textarea then carries its arguments.
-  const effectivePrompt = command ? `/${command}${prompt.trim() ? ' ' + prompt.trim() : ''}` : prompt;
-
   const isEngineRun = selectedEngine !== 'claude';
+
+  // A picked /command becomes the head of the prompt — CLAUDE ONLY: codex/opencode
+  // have no claude slash-commands, and a stale selection from before an engine switch
+  // must never silently prefix the engine prompt (review).
+  const effectivePrompt =
+    !isEngineRun && command ? `/${command}${prompt.trim() ? ' ' + prompt.trim() : ''}` : prompt;
 
   async function submit() {
     if (!effectivePrompt.trim()) {
@@ -175,7 +177,12 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
                   {(['claude', ...enabledEngines] as RunEngine[]).map((eng) => (
                     <button
                       key={eng}
-                      onClick={() => setSelectedEngine(eng)}
+                      onClick={() => {
+                        // engine-model formats differ (codex: bare id; opencode: provider/model)
+                        // — a stale value from the previous engine would submit garbage
+                        if (eng !== selectedEngine) setEngineModel('');
+                        setSelectedEngine(eng);
+                      }}
                       className="font-mono text-[11px] px-3 py-1.5 border transition-colors"
                       style={{
                         background: selectedEngine === eng ? 'rgba(255,176,0,0.12)' : 'transparent',
@@ -448,7 +455,9 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
           <div className="flex items-center justify-between px-6 py-4 border-t hairline">
             <div className="font-mono text-[11px]" style={{ color: err ? '#ff5d5d' : '#5b626d' }}>
               {err ?? (isEngineRun
-                ? `spawns: ${selectedEngine} run --format json${engineModel.trim() ? ` --model ${engineModel.trim()}` : ''}`
+                ? selectedEngine === 'codex'
+                  ? `spawns: codex${engineModel.trim() ? ` --model ${engineModel.trim()}` : ''} exec --json`
+                  : `spawns: opencode run --format json${engineModel.trim() ? ` --model ${engineModel.trim()}` : ''}`
                 : `spawns: claude -p --effort ${effectiveEffort}${fastMode ? ' (fast)' : ''}`)}
             </div>
             <div className="flex gap-2">

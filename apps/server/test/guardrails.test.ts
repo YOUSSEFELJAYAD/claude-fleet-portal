@@ -184,6 +184,34 @@ describe('daily-cap launch rejection', () => {
     await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: { dailySpendCeilingUsd: null } });
     registry.setConfig({ ...registry.getConfig(), dailySpendCeilingUsd: null });
   });
+
+  it('resume is ALSO blocked by the daily cap (review: resume was an open side gate)', async () => {
+    // a terminal run to resume — its own seeded cost trips the ceiling
+    const id = randomUUID();
+    const now = Date.now();
+    repo.upsertRun({
+      id, sessionId: id, task: 'seed-for-resume-cap', cwd: dataDir, model: 'claude-haiku-4-5',
+      fastMode: false, effort: 'low', workflowsEnabled: false, ultracode: false, teamId: null,
+      campaignId: null, projectId: null, pid: null, status: 'completed', startedAt: now, endedAt: now,
+      tokensIn: 0, tokensOut: 0, costUsd: 10, exitCode: 0, killReason: null, error: null,
+      budgetUsd: null, permissionMode: 'default', allowedTools: null, skills: [],
+      subagentProfile: null, resultText: null, structuredOutput: null,
+      subagentCount: 0, liveSubagents: 0, maxDepth: 0, lastActivity: now,
+    } as any);
+    await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: { dailySpendCeilingUsd: 5 } });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/agents/${id}/resume`,
+      headers: H(),
+      payload: { prompt: 'continue' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatch(/Daily spend ceiling/);
+
+    await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: { dailySpendCeilingUsd: null } });
+    registry.setConfig({ ...registry.getConfig(), dailySpendCeilingUsd: null });
+  });
 });
 
 // ── sweepTimeouts ─────────────────────────────────────────────────────────────

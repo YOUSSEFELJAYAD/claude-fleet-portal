@@ -69,6 +69,9 @@ export default function RunDetail({ params }: { params: { id: string } }) {
   }
 
   const m = statusMeta(run.status);
+  // §24 — engine add-on runs (codex/opencode) are one-shot: resume/input/permission
+  // are server-rejected 409s, so the page must not offer them.
+  const isEngineRun = !!run.engine && run.engine !== 'claude';
   const permReq = [...events].reverse().find((e) => e.type === 'permission_request');
   const permReqId = String((permReq?.payload as any)?.requestId ?? 'pending');
 
@@ -81,17 +84,40 @@ export default function RunDetail({ params }: { params: { id: string } }) {
         <div className="min-w-0">
           <div className="flex items-center gap-3">
             <StatusBadge status={run.status} big />
+            {isEngineRun && (
+              <span className="font-display text-[10px] border px-2 py-0.5 uppercase tracking-wider" style={{ color: '#39d4cf', borderColor: '#39d4cf55' }}>
+                ◍ {run.engine} engine
+              </span>
+            )}
+            {run.killReason && (
+              <span
+                className="font-display text-[10px] border px-2 py-0.5 uppercase tracking-wider"
+                title={run.error ?? undefined}
+                style={{ color: '#ff5d5d', borderColor: '#ff5d5d55' }}
+              >
+                {run.killReason === 'timeout' ? '⏱ timed out (maxRunMinutes)' : run.killReason === 'budget' ? '$ budget kill' : '■ stopped by operator'}
+              </span>
+            )}
             {run.ultracode && <span className="font-display text-[10px] text-sig-failed border border-sig-failed/40 px-2 py-0.5 uppercase tracking-wider" style={{ color: '#ff5d5d' }}>⚡ ultracode</span>}
             <span className="font-mono text-[10px] text-faint">{id.slice(0, 13)}</span>
           </div>
           <h1 className="text-ink text-[17px] mt-2 leading-snug max-w-3xl">{run.task}</h1>
           <div className="font-mono text-[11px] text-faint mt-1.5 flex gap-3 flex-wrap">
             <span>{run.model}</span>
-            <span>·</span>
-            <span className="text-dim">effort {run.effort}{run.fastMode ? ' · fast' : ''}</span>
+            {!isEngineRun && (
+              <>
+                <span>·</span>
+                <span className="text-dim">effort {run.effort}{run.fastMode ? ' · fast' : ''}</span>
+              </>
+            )}
             <span>·</span>
             <span className="truncate">{run.cwd}</span>
           </div>
+          {run.error && (run.status === 'failed' || run.status === 'killed') && (
+            <div className="font-mono text-[11px] mt-2 px-3 py-2 border max-w-3xl" style={{ color: '#ff5d5d', borderColor: '#ff5d5d40', background: 'rgba(255,93,93,0.05)' }}>
+              {run.error.slice(0, 400)}
+            </div>
+          )}
         </div>
 
         {/* controls */}
@@ -102,7 +128,7 @@ export default function RunDetail({ params }: { params: { id: string } }) {
                 ■ Stop
               </Btn>
             )}
-            {!live && (
+            {!live && !isEngineRun && (
               <Btn variant="amber" onClick={() => setShowResume((s) => !s)} disabled={busy}>
                 ↻ Resume
               </Btn>
@@ -137,7 +163,7 @@ export default function RunDetail({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {showResume && !live && (
+      {showResume && !live && !isEngineRun && (
         <Panel className="p-3 mb-4 flex gap-2 items-center">
           <Input value={resumeText} onChange={(e) => setResumeText(e.target.value)} placeholder="follow-up instruction for the resumed session…" className="flex-1" />
           <Btn variant="solid" disabled={busy} onClick={() => act(async () => { await api.resume(id, resumeText || 'Continue.', true); setShowResume(false); setResumeText(''); })}>Resume ▶</Btn>

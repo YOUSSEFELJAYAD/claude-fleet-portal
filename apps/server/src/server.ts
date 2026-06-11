@@ -372,9 +372,13 @@ export function buildServer() {
 
   // §24 — stop-all (panic button): kills every live non-terminal run; returns the count.
   // Registered BEFORE :id DELETE so Fastify's router never confuses the literal path with the param.
+  // ORDER MATTERS (review): campaigns are killed FIRST (terminal-before-kill, their H2 defense) —
+  // a bare registry.stopAll() fires onRunTerminal per worker, and a still-active campaign would
+  // synchronously schedule() REPLACEMENT workers mid-panic, spawning new processes during the stop.
   app.post('/api/agents/stop-all', async () => {
+    const campaignsKilled = campaigns.killAll();
     const stopped = registry.stopAll();
-    return { stopped };
+    return { stopped, campaignsKilled };
   });
 
   app.delete('/api/agents/:id', async (req) => {

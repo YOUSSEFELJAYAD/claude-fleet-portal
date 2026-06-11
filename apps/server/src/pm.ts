@@ -454,7 +454,9 @@ class PmEngine {
       });
       return 'ok';
     } catch (e: any) {
-      if (e?.statusCode === 429) return 'capped';
+      // §24 — the daily ceiling is transient like the concurrency cap: card stays Ready
+      // and the PM retries once the cap clears (Blocked would need a human forever).
+      if (e?.statusCode === 429 || e?.code === 'daily-cap') return 'capped';
       // any other launch failure (bad cwd, etc.) → park the card as failed so it isn't retried forever
       kanbanRepo.updateTask(fresh.id, {
         column: 'Blocked',
@@ -524,7 +526,8 @@ class PmEngine {
       });
       return 'ok';
     } catch (e: any) {
-      if (e?.statusCode === 429) return 'capped'; // orchestrator launch hit the concurrency cap
+      // concurrency cap or §24 daily ceiling — both transient, card stays Ready
+      if (e?.statusCode === 429 || e?.code === 'daily-cap') return 'capped';
       kanbanRepo.updateTask(fresh.id, {
         column: 'Blocked',
         executionPhase: 'failed',
@@ -632,10 +635,10 @@ class PmEngine {
       });
       return true;
     } catch (e: any) {
-      if (e?.statusCode === 429) {
-        // capped: the safety tick never retries an InProgress card (and the old run's terminal
-        // won't re-fire), so return the card to Ready — the tick re-picks Ready cards. The fix
-        // context survives in lastError/validationOutput.
+      if (e?.statusCode === 429 || e?.code === 'daily-cap') {
+        // capped (concurrency or §24 daily ceiling): the safety tick never retries an
+        // InProgress card (and the old run's terminal won't re-fire), so return the card
+        // to Ready — the tick re-picks Ready cards. Fix context survives in lastError.
         kanbanRepo.updateTask(card.id, { column: 'Ready', executionPhase: 'idle' });
         return false;
       }

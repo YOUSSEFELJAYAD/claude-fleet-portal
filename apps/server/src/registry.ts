@@ -55,6 +55,10 @@ interface LiveRun {
   proc: ManagedProcess | null;
   /** Engine add-on runs use a ManagedEngineProcess instead of a ManagedProcess. */
   engineProc: ManagedEngineProcess | null;
+  /** §24 review — wall-clock start of THIS invocation. run.startedAt is the run's
+   *  ORIGINAL start (display/history); a resume must reset the maxRunMinutes clock,
+   *  exactly like the budget guardrail measures per-invocation cost (review #2). */
+  invocationStartedAt: number;
   interactive: boolean;
   killed: boolean;
   resultSeen: boolean;
@@ -182,7 +186,8 @@ class Registry {
     for (const lr of this.live.values()) {
       if (isTerminal(lr.run.status)) continue;
       if (lr.killed) continue;
-      const elapsed = now - lr.run.startedAt;
+      // per-INVOCATION clock — a resumed run must not be charged for its first life + idle gap
+      const elapsed = now - lr.invocationStartedAt;
       if (elapsed > maxMs) {
         lr.run.error = `[guardrail] exceeded maxRunMinutes (${this.config.maxRunMinutes} min) — auto-killed.`;
         lr.lastStderr += `\n${lr.run.error}`;
@@ -203,11 +208,12 @@ class Registry {
     return count;
   }
 
-  /** §24 — expose the live map count for tests (backdate helper). */
+  /** §24 — backdate a live run for deterministic timeout tests (both clocks). */
   __backdateRunForTests(runId: string, startedAt: number) {
     const lr = this.live.get(runId);
     if (lr) {
       lr.run.startedAt = startedAt;
+      lr.invocationStartedAt = startedAt;
       repo.upsertRun(lr.run);
     }
   }
@@ -346,6 +352,7 @@ class Registry {
       tree,
       proc: null,
       engineProc: null,
+      invocationStartedAt: Date.now(),
       interactive,
       killed: false,
       resultSeen: false,
@@ -449,6 +456,7 @@ class Registry {
       tree,
       proc: null,
       engineProc: null,
+      invocationStartedAt: Date.now(),
       interactive: false,
       killed: false,
       resultSeen: false,
@@ -486,6 +494,9 @@ class Registry {
       onLine: (obj) => {
         if (lr.killed) return;
         const line = parseEngineLine(engine, obj);
+        // no-op stream lines (thread.started, step_start, …) must not run the dirty/flush/
+        // emit pipeline — emitRun recomputes spend() (2 DB aggregates) per call (review)
+        if (!line.type && !line.usage && !line.resultText && !line.isError) return;
 
         // Accumulate usage
         if (line.usage) {
@@ -541,9 +552,12 @@ class Registry {
         lr.run.costUsd = 0; // engine CLIs provide no cost stream
         lr.run.resultText = lastResultText ?? null;
 
+        // Engine CLIs have trustworthy exit codes (codex/opencode: 0 ok, 1 error) and
+        // emit assistant text on EVERY turn — resultSeen is NOT a terminal signal here
+        // (unlike claude's result event), so a crash after one message must stay failed.
         let status: RunStatus;
         if (lr.killed) status = 'killed';
-        else if (code === 0 || (lr.resultSeen && !lr.resultError)) status = 'completed';
+        else if (code === 0 && !lr.resultError) status = 'completed';
         else status = 'failed';
 
         lr.run.status = status;
@@ -555,11 +569,12 @@ class Registry {
           if (err) lr.run.error = err.slice(-2000);
         }
 
-        // Mark root node done
+        // Mark root node done — 'killed' must survive (stop() already wrote it via
+        // killAll; a binary completed/failed mapping here clobbered it, review)
         const rootNode = lr.tree.nodes.get(lr.run.id);
         if (rootNode) {
-          rootNode.status = status === 'completed' ? 'completed' : 'failed';
-          rootNode.endedAt = lr.run.endedAt;
+          rootNode.status = status;
+          rootNode.endedAt = rootNode.endedAt ?? lr.run.endedAt;
           rootNode.tokensIn = totalTokIn;
           rootNode.tokensOut = totalTokOut;
         }
@@ -866,6 +881,9 @@ class Registry {
     if (activeCount >= this.config.maxConcurrentRuns) {
       throw Object.assign(new Error(`Max concurrent runs reached (${this.config.maxConcurrentRuns})`), { statusCode: 429 });
     }
+    // §24 review — resume spawns a fresh spending process; without this, the daily
+    // ceiling is a turnstile with an open side gate (resume-loop spends unbounded).
+    this.checkDailyCap();
     // Mirror launch()'s cwd guard — a PM worktree may have been pruned since this run
     // finished; without this the spawn fails async into a bare 'failed' with no error.
     if (!existsSync(existing.cwd) || !statSync(existing.cwd).isDirectory()) {
@@ -909,6 +927,7 @@ class Registry {
       tree,
       proc: null,
       engineProc: null,
+      invocationStartedAt: Date.now(),
       interactive: !!req.interactive,
       killed: false,
       resultSeen: false,

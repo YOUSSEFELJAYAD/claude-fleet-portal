@@ -77,10 +77,11 @@ const ADDON_DEFS: AddonDef[] = [
     name: 'Compression',
     tagline: 'Cut token burn 60–90% on tool-heavy runs',
     description:
-      'Routes every agent through the Headroom transparent proxy, which compresses tool outputs, ' +
+      'Routes every claude run through the Headroom transparent proxy, which compresses tool outputs, ' +
       'logs, search results and code before they reach the model — statistically, reversibly ' +
       '(agents get a retrieve tool for originals), and without touching your prompts. ' +
-      'Live savings show up on the Compression page per request.',
+      'Live savings show up on the Compression page per request. Engine add-on runs (codex/opencode) ' +
+      'talk to their own providers and are not routed.',
     kind: 'builtin' as const,
     docsUrl: 'https://headroom-docs.vercel.app/docs',
     page: '/addons/compression',
@@ -277,14 +278,23 @@ export function validateEngineConfig(id: string, input: unknown): CodexEngineCon
   const i = input as Record<string, unknown>;
   const bad = (msg: string) => Object.assign(new Error(msg), { statusCode: 400 });
 
+  // defaultModel flows VERBATIM into `--model <value>` at launch — trim it, treat
+  // blank as null, cap length, and refuse flag-shaped values (review).
+  const cleanModel = (v: unknown, current: string | null): string | null => {
+    if (v === undefined) return current;
+    if (v === null) return null;
+    if (typeof v !== 'string') throw bad('defaultModel must be a string or null');
+    const s = v.trim();
+    if (!s) return null;
+    if (s.length > 128) throw bad('defaultModel must be at most 128 characters');
+    if (s.startsWith('-')) throw bad('defaultModel must not start with "-"');
+    return s;
+  };
+
   if (id === CODEX_ID) {
     const base = codexConfig();
-    let defaultModel = base.defaultModel;
     let sandbox = base.sandbox;
-    if (i.defaultModel !== undefined) {
-      if (i.defaultModel !== null && typeof i.defaultModel !== 'string') throw bad('defaultModel must be a string or null');
-      defaultModel = (i.defaultModel as string | null);
-    }
+    const defaultModel = cleanModel(i.defaultModel, base.defaultModel);
     if (i.sandbox !== undefined) {
       const valid = ['read-only', 'workspace-write', 'danger-full-access'];
       if (!valid.includes(i.sandbox as string)) throw bad(`sandbox must be one of ${valid.join(', ')}`);
@@ -295,12 +305,8 @@ export function validateEngineConfig(id: string, input: unknown): CodexEngineCon
 
   if (id === OPENCODE_ID) {
     const base = opencodeConfig();
-    let defaultModel = base.defaultModel;
     let skipPermissions = base.skipPermissions;
-    if (i.defaultModel !== undefined) {
-      if (i.defaultModel !== null && typeof i.defaultModel !== 'string') throw bad('defaultModel must be a string or null');
-      defaultModel = (i.defaultModel as string | null);
-    }
+    const defaultModel = cleanModel(i.defaultModel, base.defaultModel);
     if (i.skipPermissions !== undefined) {
       if (typeof i.skipPermissions !== 'boolean') throw bad('skipPermissions must be a boolean');
       skipPermissions = i.skipPermissions;

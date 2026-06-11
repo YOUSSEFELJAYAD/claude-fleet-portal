@@ -7,8 +7,22 @@ import { usd } from '@/lib/format';
 
 const POLL_MS = 5000;
 
+/** The three REQUIRED number fields edit as STRINGS — coercing per keystroke turns a
+ *  cleared field into 0 (review); save() validates and converts. */
+interface NumForm {
+  maxConcurrentRuns: string;
+  defaultBudgetUsd: string;
+  ultracodeBudgetUsd: string;
+}
+const toNumForm = (c: PortalConfig): NumForm => ({
+  maxConcurrentRuns: String(c.maxConcurrentRuns),
+  defaultBudgetUsd: String(c.defaultBudgetUsd),
+  ultracodeBudgetUsd: String(c.ultracodeBudgetUsd),
+});
+
 export default function GuardrailsPage() {
   const [cfg, setCfg] = useState<PortalConfig | null>(null);
+  const [nums, setNums] = useState<NumForm | null>(null);
   const [spend, setSpend] = useState<SpendSummary | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -42,7 +56,10 @@ export default function GuardrailsPage() {
 
   useEffect(() => {
     alive.current = true;
-    api.config().then(setCfg);
+    api.config().then((c) => {
+      setCfg(c);
+      setNums(toNumForm(c));
+    });
     loadSpend();
     return () => {
       alive.current = false;
@@ -57,12 +74,30 @@ export default function GuardrailsPage() {
   }
 
   async function save() {
-    if (!cfg) return;
+    if (!cfg || !nums) return;
+    // client-side mirror of validateConfig for the string-typed fields — readable
+    // messages instead of a generic 400, and blank never silently becomes 0
+    const mcr = Number(nums.maxConcurrentRuns);
+    if (nums.maxConcurrentRuns.trim() === '' || !Number.isInteger(mcr) || mcr < 1) {
+      setCfgErr('max concurrent runs must be an integer ≥ 1');
+      return;
+    }
+    const dbu = Number(nums.defaultBudgetUsd);
+    if (nums.defaultBudgetUsd.trim() === '' || !Number.isFinite(dbu) || dbu <= 0) {
+      setCfgErr('default budget ceiling must be a positive number');
+      return;
+    }
+    const ubu = Number(nums.ultracodeBudgetUsd);
+    if (nums.ultracodeBudgetUsd.trim() === '' || !Number.isFinite(ubu) || ubu <= 0) {
+      setCfgErr('ultracode budget ceiling must be a positive number');
+      return;
+    }
     setBusy(true);
     setCfgErr(null);
     try {
-      const next = await api.setConfig(cfg);
+      const next = await api.setConfig({ ...cfg, maxConcurrentRuns: mcr, defaultBudgetUsd: dbu, ultracodeBudgetUsd: ubu });
       setCfg(next);
+      setNums(toNumForm(next));
       setSaved(true);
     } catch (e: any) {
       setCfgErr(e?.message ?? 'failed to save guardrails');
@@ -72,9 +107,13 @@ export default function GuardrailsPage() {
   }
 
   async function stopAll() {
-    const activeCount = spend?.activeRuns ?? 0;
+    // a panic button must not depend on the (possibly stale/failed) spend poll —
+    // the server-side stop-all is safe at 0 runs, so always offer it (review)
+    const known = spend?.activeRuns;
     const confirmed = window.confirm(
-      `Stop all ${activeCount} live run${activeCount !== 1 ? 's' : ''}? Running work is killed immediately.`,
+      known != null
+        ? `Stop all ${known} live run${known !== 1 ? 's' : ''} (and kill active campaigns)? Running work is terminated immediately.`
+        : 'Stop ALL live runs (and kill active campaigns)? Running work is terminated immediately.',
     );
     if (!confirmed) return;
     setStopBusy(true);
@@ -91,7 +130,7 @@ export default function GuardrailsPage() {
     }
   }
 
-  if (!cfg) return <div className="font-mono text-faint text-[12px]">loading config…</div>;
+  if (!cfg || !nums) return <div className="font-mono text-faint text-[12px]">loading config…</div>;
 
   const dailyCapSet = cfg.dailySpendCeilingUsd != null;
   const capReached = dailyCapSet && (spend?.todayUsd ?? 0) >= cfg.dailySpendCeilingUsd!;
@@ -169,24 +208,33 @@ export default function GuardrailsPage() {
               <Input
                 type="number"
                 min={1}
-                value={cfg.maxConcurrentRuns}
-                onChange={(e) => patch('maxConcurrentRuns', Number(e.target.value))}
+                value={nums.maxConcurrentRuns}
+                onChange={(e) => {
+                  setNums({ ...nums, maxConcurrentRuns: e.target.value });
+                  setSaved(false);
+                }}
               />
             </Field>
             <Field label="default budget ceiling" hint="USD / run">
               <Input
                 type="number"
                 step="0.5"
-                value={cfg.defaultBudgetUsd}
-                onChange={(e) => patch('defaultBudgetUsd', Number(e.target.value))}
+                value={nums.defaultBudgetUsd}
+                onChange={(e) => {
+                  setNums({ ...nums, defaultBudgetUsd: e.target.value });
+                  setSaved(false);
+                }}
               />
             </Field>
             <Field label="ultracode budget ceiling" hint="tighter default">
               <Input
                 type="number"
                 step="0.5"
-                value={cfg.ultracodeBudgetUsd}
-                onChange={(e) => patch('ultracodeBudgetUsd', Number(e.target.value))}
+                value={nums.ultracodeBudgetUsd}
+                onChange={(e) => {
+                  setNums({ ...nums, ultracodeBudgetUsd: e.target.value });
+                  setSaved(false);
+                }}
               />
             </Field>
             <Field label="default permission mode">
@@ -268,11 +316,7 @@ export default function GuardrailsPage() {
             and cannot be recovered. Individual runs can be stopped from the Fleet page.
           </p>
           <div className="flex items-center gap-3">
-            <Btn
-              variant="danger"
-              onClick={stopAll}
-              disabled={stopBusy || activeCount === 0}
-            >
+            <Btn variant="danger" onClick={stopAll} disabled={stopBusy}>
               {stopBusy ? 'stopping…' : `⏻ STOP ALL RUNS${activeCount > 0 ? ` (${activeCount})` : ''}`}
             </Btn>
             {stopMsg && (
