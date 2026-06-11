@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useFleet } from '@/lib/live';
 import { api } from '@/lib/api';
 import { usd } from '@/lib/format';
-import type { ReleaseStatus } from '@fleet/shared';
+import type { ReleaseStatus, AddonInfo } from '@fleet/shared';
 import { Gauge, Btn, Dot } from './ui';
 import { LaunchModal } from './LaunchModal';
 import { UpdateModal, updateDismissKey, type UpdatePhase } from './UpdateModal';
@@ -24,6 +24,7 @@ const NAV = [
   { href: '/mcp', label: 'MCP', glyph: '⊕' },
   { href: '/notifications', label: 'Notifications', glyph: '◬' },
   { href: '/guardrails', label: 'Guardrails', glyph: '⊘' },
+  { href: '/addons', label: 'Add-ons', glyph: '⌬' },
   { href: '/releases', label: 'Releases', glyph: '⇪' },
 ];
 
@@ -38,6 +39,22 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [release, setRelease] = useState<ReleaseStatus | null>(null);
   const [updatePopup, setUpdatePopup] = useState(false);
   const [updPhase, setUpdPhase] = useState<UpdatePhase>('idle');
+  // §22 — an ENABLED add-on unlocks its dedicated page as a nav entry (e.g. Compression).
+  // Re-fetched on route changes AND on the 'fleet:addons' event the add-on pages dispatch
+  // after a toggle/config change — without the event, flipping a switch on /addons would
+  // not move the rail until the next navigation.
+  const [addons, setAddons] = useState<AddonInfo[]>([]);
+  useEffect(() => {
+    const refresh = () => {
+      api
+        .addons()
+        .then(setAddons)
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener('fleet:addons', refresh);
+    return () => window.removeEventListener('fleet:addons', refresh);
+  }, [pathname]);
   useEffect(() => {
     api
       .releaseStatus()
@@ -86,6 +103,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const active = runs.filter((r) => ['starting', 'running', 'orchestrating', 'awaiting-input', 'awaiting-permission'].includes(r.status));
   const dailyCap = 50; // soft visual reference for the daily-spend gauge
 
+  // enabled add-ons slot their page directly under the Add-ons entry
+  type NavItem = { href: string; label: string; glyph: string; addonStatus?: AddonInfo['status'] };
+  const navItems: NavItem[] = [];
+  for (const n of NAV) {
+    navItems.push(n);
+    if (n.href === '/addons') {
+      for (const a of addons) {
+        if (a.enabled && a.page) navItems.push({ href: a.page, label: a.name, glyph: '◍', addonStatus: a.status });
+      }
+    }
+  }
+
   return (
     <div className="min-h-screen flex">
       {/* ── nav rail ─────────────────────────────────────────── */}
@@ -104,8 +133,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="flex-1 py-3">
-          {NAV.map((n) => {
-            const on = n.href === '/' ? pathname === '/' || pathname.startsWith('/runs') : pathname.startsWith(n.href);
+          {navItems.map((n) => {
+            const on =
+              n.href === '/'
+                ? pathname === '/' || pathname.startsWith('/runs')
+                : n.href === '/addons'
+                  ? // own the whole /addons tree EXCEPT sub-pages that have their own entry
+                    // (a disabled add-on's page is still reachable via Details/Install)
+                    pathname === '/addons' || (pathname.startsWith('/addons/') && !navItems.some((i) => i.addonStatus && pathname.startsWith(i.href)))
+                  : pathname.startsWith(n.href);
             return (
               <Link
                 key={n.href}
@@ -123,6 +159,19 @@ export function Shell({ children }: { children: React.ReactNode }) {
                     title="update available"
                     className="ml-auto animate-pulseGlow"
                     style={{ width: 7, height: 7, borderRadius: 999, background: '#ffb000', display: 'inline-block' }}
+                  />
+                )}
+                {n.addonStatus && (
+                  <span
+                    title={n.addonStatus}
+                    className={n.addonStatus === 'starting' ? 'ml-auto animate-pulseGlow' : 'ml-auto'}
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 999,
+                      display: 'inline-block',
+                      background: n.addonStatus === 'running' ? '#54e08a' : n.addonStatus === 'error' ? '#ff5d5d' : '#ffb000',
+                    }}
                   />
                 )}
               </Link>

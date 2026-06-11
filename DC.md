@@ -810,3 +810,40 @@ be opened» — Gatekeeper's message for a fully UNSIGNED app on Apple Silicon (
   still shows the one-time "unverified developer" prompt — right-click→Open or `xattr -cr`.
   Documented in README, the landing-page download card, and the release notes.
 - v0.1.0 re-cut from the fixed commit (tag re-pushed; pipeline rebuilds all installers signed).
+
+## 22. Add-on Marketplace + built-in Compression add-on (Headroom) (2026-06-11)
+
+User request: a settings-style "add-on marketplace" where capabilities can be toggled; first
+built-in add-on = **compression** via Headroom (headroom-docs.vercel.app); enabling it unlocks
+a dedicated info/config page.
+
+- **Server `addons.ts`** (module-owned `addons` table: enabled + config JSON per add-on):
+  static `ADDON_DEFS` catalog (one entry per add-on — marketplace grows by appending), routes
+  `GET /api/addons[, /:id]`, `POST enable|disable|restart|install`, `PUT config`,
+  `GET /api/addons/compression/stats`.
+- **Integration shape**: the portal OWNS a `headroom proxy --host 127.0.0.1 --port N` child
+  (spawn / health-probe / auto-restart / SIGTERM→SIGKILL stop), and `addonRunEnv()` injects
+  `ANTHROPIC_BASE_URL=http://127.0.0.1:N` into every spawned claude child (single injection
+  point in processManager → manual runs, campaigns and the PM all route identically). Binary
+  detection: `HEADROOM_BIN` authoritative, else PATH + `~/.local/bin` + homebrew dirs;
+  one-click install tries uv → pipx → pip3 (10-min cap, step output like self-update).
+- **Verified vs REAL headroom 0.24.0** (docs had drifted): `/health` is
+  `{service:'headroom-proxy', …, config:{…}}` (not the documented `{status, optimize, stats}`),
+  and counters live on `/stats` (`summary.api_requests`, `savings.total_tokens`,
+  `summary.cost.{savings_pct,total_saved_usd}`). Probe + stats mapping target the real shape
+  with the docs shape as fallback; the test fake mirrors the REAL wire shapes. Live-verified:
+  the portal auto-ATTACHED to the user's already-running proxy on 8787 (attach mode) and
+  surfaced its real savings.
+- **Lifecycle hardening** (17 confirmed findings from a 24-agent adversarial review, all fixed):
+  idempotent enable (no orphan/self-attach race), restart waits for the old child to free the
+  port, restart budget only resets after 60s STABLE uptime (flapping can't loop forever),
+  deadline-kill is terminal (gen-bumped, no futile retry cycles), a 10s WATCHDOG re-verifies
+  'running' (a dead external/hung proxy can't stay green while poisoning run env), and
+  `addonRunEnv` NEVER overrides an operator-set `ANTHROPIC_BASE_URL` (surfaced in statusDetail).
+- **Web**: `/addons` marketplace (status-chip cards, enable/disable, open-contribution card) +
+  `/addons/compression` (live savings incl. `$ saved`, config form with string-typed number
+  inputs + client-side validation, install helper, how-it-works) + Shell nav: "Add-ons" entry,
+  and an ENABLED add-on's page slots beneath it with a live status dot ('fleet:addons' event
+  keeps the rail in sync with toggles; unmount-safe setTimeout polling chains).
+- Tests: +19 (`addons.test.ts`, fake headroom binary speaking the real 0.24.0 protocol) →
+  suite 385 pass + 2 by-design skips; 3/3 typecheck.

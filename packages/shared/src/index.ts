@@ -704,6 +704,78 @@ export interface SelfUpdateResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Add-ons (§22) — optional capabilities toggled from the Add-on Marketplace.
+// The first (built-in) add-on is `compression`: the Headroom transparent proxy
+// (headroom-docs.vercel.app) sits between spawned claude runs and the Anthropic
+// API and compresses tool outputs / logs / search results before they hit the
+// model. Enabling an add-on unlocks its dedicated portal page (`page`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Lifecycle of an add-on's backing service (compression = the headroom proxy). */
+export type AddonStatus =
+  | 'disabled' // add-on switched off
+  | 'not-installed' // enabled-able only after its dependency is installed
+  | 'starting' // backing process spawned, waiting for first healthy probe
+  | 'running' // healthy
+  | 'stopped' // enabled but the backing process is not up
+  | 'error'; // backing process failed (statusDetail says why)
+
+export interface AddonInfo {
+  id: string;
+  name: string;
+  tagline: string;
+  description: string;
+  /** `builtin` ships with the portal; `marketplace` reserved for installable add-ons. */
+  kind: 'builtin' | 'marketplace';
+  docsUrl: string | null;
+  /** Portal route this add-on unlocks when enabled (shown in the nav rail). */
+  page: string | null;
+  enabled: boolean;
+  /** The add-on's external dependency (headroom binary) was detected. */
+  installed: boolean;
+  /** Detected dependency version, when the binary reports one. */
+  version: string | null;
+  status: AddonStatus;
+  statusDetail: string | null;
+  config: Record<string, unknown>;
+}
+
+/** Config for the built-in `compression` add-on (maps to `headroom proxy` flags). */
+export interface CompressionConfig {
+  /** Local port the proxy listens on (127.0.0.1 only). */
+  port: number;
+  /** Inject ANTHROPIC_BASE_URL into newly spawned runs so they route through the proxy. */
+  applyToNewRuns: boolean;
+  /** Token compression itself (`--no-optimize` when false). */
+  optimize: boolean;
+  /** Semantic caching (`--no-cache` when false). */
+  cache: boolean;
+  /** Provider rate-limit smoothing (`--no-rate-limit` when false). */
+  rateLimit: boolean;
+  /** Daily USD ceiling enforced by the proxy (`--budget`); null = uncapped. */
+  dailyBudgetUsd: number | null;
+}
+
+/** Live savings read from the proxy's /health + /stats endpoints. */
+export interface CompressionStats {
+  healthy: boolean;
+  endpoint: string;
+  totalRequests: number | null;
+  tokensSaved: number | null;
+  savingsPercent: number | null;
+  /** Dollars not spent, as accounted by the proxy (compression + cache). */
+  savedUsd: number | null;
+  error: string | null;
+}
+
+/** Result of POST /api/addons/:id/install (same step shape as self-update). */
+export interface AddonInstallResult {
+  ok: boolean;
+  steps: SelfUpdateStep[];
+  note: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Static reference data
 // ─────────────────────────────────────────────────────────────────────────────
 

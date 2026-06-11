@@ -21,6 +21,9 @@ import type {
   ReleaseStatus,
   ReleaseInfo,
   SelfUpdateResult,
+  AddonInfo,
+  AddonInstallResult,
+  CompressionStats,
 } from '@fleet/shared';
 
 // Re-export for page components that take these via the api layer.
@@ -122,6 +125,17 @@ export const api = {
   releaseStatus: (force?: boolean) => j<ReleaseStatus>(`/api/release/status${force ? '?force=1' : ''}`),
   releases: () => j<{ repo: string | null; releases: ReleaseInfo[]; error?: string | null }>('/api/release/list'),
   selfUpdate: () => j<SelfUpdateResult>('/api/release/update', { method: 'POST', body: JSON.stringify({}) }),
+
+  // ── add-on marketplace (§22) ──
+  addons: () => j<AddonInfo[]>('/api/addons'),
+  addon: (id: string) => j<AddonInfo>(`/api/addons/${id}`),
+  enableAddon: (id: string) => j<AddonInfo>(`/api/addons/${id}/enable`, { method: 'POST', body: JSON.stringify({}) }),
+  disableAddon: (id: string) => j<AddonInfo>(`/api/addons/${id}/disable`, { method: 'POST', body: JSON.stringify({}) }),
+  restartAddon: (id: string) => j<AddonInfo>(`/api/addons/${id}/restart`, { method: 'POST', body: JSON.stringify({}) }),
+  setAddonConfig: (id: string, cfg: Record<string, unknown>) =>
+    j<AddonInfo>(`/api/addons/${id}/config`, { method: 'PUT', body: JSON.stringify(cfg) }),
+  installAddon: (id: string) => j<AddonInstallResult>(`/api/addons/${id}/install`, { method: 'POST', body: JSON.stringify({}) }),
+  compressionStats: () => j<CompressionStats>('/api/addons/compression/stats'),
 
   stop: (id: string) => j(`/api/agents/${id}`, { method: 'DELETE' }),
   deleteRun: (id: string) => j(`/api/agents/${id}/record`, { method: 'DELETE' }),

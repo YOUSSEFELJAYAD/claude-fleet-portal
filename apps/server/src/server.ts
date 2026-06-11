@@ -22,6 +22,7 @@ import { registerScoreRoutes } from './scores.js';
 import { registerTagsRoutes } from './tags.js';
 import { registerOtelRoutes } from './otel.js'; // H6
 import { registerReleaseRoutes } from './release.js';
+import { registerAddonRoutes } from './addons.js'; // §22 — add-on marketplace (compression/headroom)
 // Agent-PM / Kanban feature (spec docs/superpowers/specs/2026-06-09-agent-pm-kanban-design.md).
 // Import order matters: projects BEFORE kanban (kanban_tasks references a project; tables created on import).
 import { registerProjectsRoutes } from './projects.js';
@@ -198,6 +199,7 @@ export function buildServer() {
   registerTagsRoutes(app); // A8
   registerOtelRoutes(app); // H6 — OTLP receiver (/v1/metrics, /v1/logs) + /api/agents/:id/otel
   registerReleaseRoutes(app); // §15 — release page + GitHub update check / self-update
+  registerAddonRoutes(app); // §22 — add-on marketplace + headroom compression-proxy lifecycle
 
   // Agent-PM / Kanban — projects BEFORE kanban (FK), then the viewer; then start the PM engine.
   registerProjectsRoutes(app);

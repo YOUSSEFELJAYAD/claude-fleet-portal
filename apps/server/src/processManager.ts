@@ -5,6 +5,7 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { CLAUDE_BIN, OTEL_ENABLED, OTLP_ENDPOINT } from './config.js';
+import { addonRunEnv } from './addons.js';
 import type { LaunchRequest } from '@fleet/shared';
 
 /**
@@ -166,7 +167,9 @@ export function spawnClaude(
     cwd: cwd || process.cwd(),
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true, // new process group → cascade kill (§7.6)
-    env: { ...process.env, ...otelEnv() }, // H6 — real OTLP exporter env (replaces the inert flag)
+    // H6 — real OTLP exporter env; §22 — addonRunEnv routes the run through the compression
+    // proxy (ANTHROPIC_BASE_URL) when that add-on is enabled AND its proxy is verified healthy.
+    env: { ...process.env, ...otelEnv(), ...addonRunEnv() },
   });
   child.stdin?.on('error', () => {
     /* EPIPE from a dying child — swallowed so it can't crash the server */
