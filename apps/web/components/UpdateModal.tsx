@@ -63,6 +63,12 @@ export function UpdateModal({
                     ? 'the update happens in the background — you can keep working'
                     : 'opens the download page — your data stays where it is'}
                 </div>
+                {!status.canSelfUpdate && (
+                  <div className="font-mono text-[10.5px] text-faint mt-1.5">
+                    macOS: Gatekeeper warns once on the new download — System Settings → Privacy &amp; Security →
+                    &quot;Open Anyway&quot;, or <span className="text-dim">xattr -cr</span> the app
+                  </div>
+                )}
               </>
             )}
 

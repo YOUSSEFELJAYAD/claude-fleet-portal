@@ -129,6 +129,22 @@ export default function ReleasesPage() {
         </div>
       )}
 
+      {/* ── macOS Gatekeeper note (the desktop app is open-source, not Apple-notarized) ── */}
+      <Panel className="p-4 mb-5">
+        <Kicker> macOS · first open of a downloaded app</Kicker>
+        <div className="font-mono text-[11.5px] text-dim leading-relaxed mt-2">
+          Gatekeeper warns once — <span className="text-ink">&quot;Apple could not verify … is free of malware&quot;</span> —
+          because the desktop app is open-source and not Apple-notarized. One-time fix, either way:
+          <div className="mt-2 text-[11px]">
+            <span className="text-amber">$</span> <span className="text-ink">xattr -cr &quot;/Applications/Claude Fleet Portal.app&quot;</span>
+            <span className="text-faint"> — then open normally</span>
+          </div>
+          <div className="mt-1 text-[11px]">
+            or open it once → <span className="text-ink">System Settings → Privacy &amp; Security → &quot;Open Anyway&quot;</span> → launch again
+          </div>
+        </div>
+      </Panel>
+
       {/* ── self-update output ── */}
       {updateErr && (
         <Panel className="p-4 mb-5">
