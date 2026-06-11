@@ -8,12 +8,15 @@ import { campaignStatusColor } from '@/lib/status';
 import { usd, ago } from '@/lib/format';
 import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn, Empty, Dot } from '@/components/ui';
 
+/** campaign states that are still consuming budget / spawning workers */
+const LIVE_CAMPAIGN_STATUSES = ['planning', 'spawning', 'running', 'synthesizing'];
+
 function CampaignRow({ c }: { c: Campaign }) {
   const color = campaignStatusColor(c.status);
   const done = c.doneCount ?? 0;
   const total = c.taskCount ?? 0;
   const pct = total ? Math.round((done / total) * 100) : 0;
-  const live = ['planning', 'spawning', 'running', 'synthesizing'].includes(c.status);
+  const live = LIVE_CAMPAIGN_STATUSES.includes(c.status);
   return (
     <Link href={`/orchestrate/${c.id}`} className="block">
       <Panel className="p-4 hover:border-amber/40 transition-colors group" style={{ boxShadow: `inset 2px 0 0 ${color}` }}>
@@ -140,12 +143,46 @@ export default function OrchestratePage() {
           </div>
         </Panel>
 
-        {/* campaign list */}
-        <div className="order-1 lg:order-2">
-          <Kicker>recent campaigns</Kicker>
-          <div className="mt-3 space-y-3">
-            {campaigns.length === 0 ? <Empty>No campaigns yet.</Empty> : campaigns.map((c) => <CampaignRow key={c.id} c={c} />)}
-          </div>
+        {/* campaign list — two blocks: live now / finished */}
+        <div className="order-1 lg:order-2 space-y-5">
+          {(() => {
+            const liveCampaigns = campaigns.filter((c) => LIVE_CAMPAIGN_STATUSES.includes(c.status));
+            const doneCampaigns = campaigns.filter((c) => !LIVE_CAMPAIGN_STATUSES.includes(c.status));
+            return (
+              <>
+                <Panel ticked>
+                  <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+                    <span className="flex items-center gap-2">
+                      <Dot color="#ffb000" live={liveCampaigns.length > 0} size={6} />
+                      <Kicker>live now</Kicker>
+                    </span>
+                    <span className="font-mono tnum text-[12px] text-amber">{String(liveCampaigns.length).padStart(2, '0')}</span>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    {liveCampaigns.length === 0 ? (
+                      <div className="font-mono text-[11px] text-faint">nothing running — launch a campaign on the left</div>
+                    ) : (
+                      liveCampaigns.map((c) => <CampaignRow key={c.id} c={c} />)
+                    )}
+                  </div>
+                </Panel>
+
+                <Panel>
+                  <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+                    <Kicker>finished</Kicker>
+                    <span className="font-mono tnum text-[12px] text-dim">{String(doneCampaigns.length).padStart(2, '0')}</span>
+                  </div>
+                  <div className="p-4 space-y-3 overflow-auto" style={{ maxHeight: '58vh' }}>
+                    {doneCampaigns.length === 0 ? (
+                      <Empty>No finished campaigns yet.</Empty>
+                    ) : (
+                      doneCampaigns.map((c) => <CampaignRow key={c.id} c={c} />)
+                    )}
+                  </div>
+                </Panel>
+              </>
+            );
+          })()}
         </div>
       </div>
     </div>
