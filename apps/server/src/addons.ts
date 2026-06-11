@@ -678,9 +678,9 @@ async function addonInfo(id: string): Promise<AddonInfo | null> {
 
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
 const INSTALLERS: Array<{ cmd: string; args: string[] }> = [
-  { cmd: 'uv', args: ['tool', 'install', 'headroom-ai[proxy]'] },
-  { cmd: 'pipx', args: ['install', 'headroom-ai[proxy]'] },
-  { cmd: 'pip3', args: ['install', '--user', 'headroom-ai[proxy]'] },
+  { cmd: 'uv', args: ['tool', 'install', 'headroom-ai'] },
+  { cmd: 'pipx', args: ['install', 'headroom-ai'] },
+  { cmd: 'pip3', args: ['install', '--user', 'headroom-ai'] },
 ];
 let installInFlight = false;
 
