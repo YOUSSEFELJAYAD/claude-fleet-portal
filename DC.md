@@ -784,3 +784,11 @@ core + pulsing coral heart, 8 swimming cubic-bezier tentacles ending in glowing 
 (9 cards), screenshot tour (fresh §19 shots), install (download vs source), OPEN-SOURCE focus
 (MIT end-to-end, local-first, auditable CI, hackable-without-tokens; stat chips) and footer.
 **LICENSE (MIT, © 2026 YOUSSEF EL JAYAD) added** — the repo previously claimed nothing.
+
+**§20 addendum:** landing page restyled with the PORTAL'S OWN design tokens (Chakra Petch display
+/ Archivo body / JetBrains Mono, exact tailwind palette incl. signal colors, and the
+mission-control body atmosphere: amber/teal vignettes + blueprint grid + scanlines). New
+"how it works" section headlined by the octopus motto: 5 auto-cycling animated pipeline steps
+(Launch → Orchestrate → Watch live → Guardrails → Ship), each with its signal-color accent,
+fill-bar timer, pulse icon, hover-pause + click-select, started by IntersectionObserver; the
+hero motto now anchors to it. Zero console errors.

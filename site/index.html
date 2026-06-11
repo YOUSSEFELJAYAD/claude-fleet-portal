@@ -9,23 +9,46 @@
 <meta property="og:description" content="Open-source mission control for your Claude Code agents." />
 <meta property="og:image" content="assets/icon-512.png" />
 <link rel="icon" href="assets/icon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Archivo:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
+  /* exact tokens from the portal (apps/web tailwind.config + globals.css) */
   :root {
-    --bg: #07080b; --panel: #0e1015; --line: #1d2129; --ink: #e9e7df;
-    --dim: #9aa1ab; --faint: #5b626d; --amber: #ffb000; --coral: #e8704a; --green: #54e08a;
+    --bg: #0a0b0e; --panel: #101217; --panel2: #161922;
+    --line: rgba(255,255,255,0.075); --line2: rgba(255,255,255,0.14);
+    --ink: #e9e7df; --dim: #9aa1ab; --faint: #5b626d;
+    --amber: #ffb000; --amberdeep: #c8780a; --coral: #e8704a;
+    --teal: #39d4cf; --violet: #b08cff; --green: #54e08a; --red: #ff5d5d;
+    --grid: rgba(255,255,255,0.022); --scan: rgba(255,255,255,0.014);
+    --display: "Chakra Petch", system-ui, sans-serif;
+    --sans: "Archivo", system-ui, sans-serif;
+    --monoF: "JetBrains Mono", ui-monospace, Menlo, monospace;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
   html { scroll-behavior: smooth; }
-  body { background: var(--bg); color: var(--ink); font: 16px/1.6 "Avenir Next", "Segoe UI", system-ui, sans-serif; overflow-x: hidden; }
+  body {
+    color: var(--ink); font: 16px/1.6 var(--sans); overflow-x: hidden;
+    /* the portal's mission-control atmosphere: vignettes + blueprint grid + scanlines */
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(1200px 700px at 78% -10%, rgba(255,176,0,.05), transparent 60%),
+      radial-gradient(900px 600px at 0% 110%, rgba(57,212,207,.04), transparent 55%),
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      repeating-linear-gradient(0deg, var(--scan), var(--scan) 1px, transparent 1px, transparent 3px);
+    background-size: auto, auto, 42px 42px, 42px 42px, auto;
+  }
   a { color: var(--amber); text-decoration: none; }
-  .mono { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
+  .mono { font-family: var(--monoF); }
+  h1, h2, h3, .btn, .kicker { font-family: var(--display); }
 
   /* ── hero ── */
   #hero { position: relative; min-height: 100vh; display: flex; align-items: center; justify-content: center; text-align: center; }
   #scene { position: absolute; inset: 0; z-index: 0; }
   .hero-inner { position: relative; z-index: 1; padding: 48px 24px; max-width: 880px; }
   .hero-inner img.logo { width: 108px; height: 108px; border-radius: 26px; box-shadow: 0 0 60px rgba(255,176,0,.35); }
-  h1 { font-size: clamp(40px, 7vw, 76px); letter-spacing: .02em; line-height: 1.05; margin: 26px 0 14px; font-weight: 700; }
+  h1 { font-size: clamp(40px, 7vw, 72px); letter-spacing: .04em; line-height: 1.05; margin: 26px 0 14px; font-weight: 700; text-transform: uppercase; }
   h1 .amber { color: var(--amber); }
   .tagline { color: var(--dim); font-size: clamp(16px, 2.4vw, 21px); max-width: 640px; margin: 0 auto 14px; }
   .oss-chip { display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; color: var(--dim); font-size: 13px; margin-bottom: 26px; background: rgba(14,16,21,.6); backdrop-filter: blur(4px); }
@@ -39,7 +62,7 @@
 
   /* ── sections ── */
   section { max-width: 1120px; margin: 0 auto; padding: 96px 24px; }
-  .kicker { color: var(--amber); font-size: 12.5px; letter-spacing: .22em; text-transform: uppercase; font-weight: 700; }
+  .kicker { color: var(--amber); font-size: 12px; letter-spacing: .28em; text-transform: uppercase; font-weight: 600; }
   h2 { font-size: clamp(26px, 4vw, 40px); margin: 10px 0 18px; }
   .lead { color: var(--dim); max-width: 760px; }
 
@@ -57,7 +80,7 @@
 
   /* install */
   .install-cols { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-top: 42px; }
-  pre { background: #0a0c10; border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; overflow-x: auto; font-size: 13.5px; line-height: 1.7; color: #cfd6df; }
+  pre { font-family: var(--monoF); background: #0a0b0e; border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; overflow-x: auto; font-size: 13.5px; line-height: 1.7; color: #cfd6df; }
   pre .c { color: var(--faint); }
   pre .a { color: var(--amber); }
   .plat { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
@@ -69,6 +92,30 @@
   .stat { border: 1px solid var(--line); border-radius: 12px; padding: 18px 26px; background: var(--panel); }
   .stat b { display: block; font-size: 26px; color: var(--amber); }
   .stat span { color: var(--faint); font-size: 13px; }
+
+
+  /* ── how it works: animated pipeline steps ── */
+  #how h2 { font-size: clamp(20px, 3.2vw, 30px); text-transform: none; letter-spacing: .02em; }
+  #how h2 .oct { color: var(--amber); }
+  .steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-top: 46px; position: relative; }
+  @media (max-width: 980px) { .steps { grid-template-columns: 1fr; } }
+  .step {
+    position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 22px 18px 20px; cursor: pointer; transition: border-color .3s, transform .3s, box-shadow .3s;
+  }
+  .step .n { font-family: var(--monoF); font-size: 11px; color: var(--faint); letter-spacing: .14em; }
+  .step .ico { font-size: 24px; margin: 10px 0 8px; display: inline-block; color: var(--faint); transition: color .3s, transform .3s; }
+  .step h3 { font-size: 15.5px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 6px; }
+  .step p { color: var(--dim); font-size: 13px; line-height: 1.55; }
+  .step .bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 0%; background: var(--accent, var(--amber)); border-radius: 0 0 0 12px; }
+  .step.active { border-color: var(--accent, var(--amber)); transform: translateY(-4px); box-shadow: 0 14px 44px -18px var(--accent, var(--amber)); }
+  .step.active .ico { color: var(--accent, var(--amber)); animation: stepPulse 1.4s ease-in-out infinite; }
+  .step.active .n { color: var(--accent, var(--amber)); }
+  .step.active .bar { animation: fillBar var(--cycle, 2600ms) linear forwards; }
+  .step.done { border-color: var(--line2); }
+  .step.done .ico { color: var(--dim); }
+  @keyframes fillBar { from { width: 0% } to { width: 100% } }
+  @keyframes stepPulse { 0%,100% { transform: scale(1) } 50% { transform: scale(1.18) } }
 
   footer { border-top: 1px solid var(--line); padding: 44px 24px 60px; text-align: center; color: var(--faint); font-size: 13.5px; }
   footer img { width: 38px; border-radius: 9px; vertical-align: middle; margin-bottom: 12px; }
@@ -90,8 +137,48 @@
       <a class="btn btn-ghost" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal">★ Star on GitHub</a>
     </div>
   </div>
-  <div class="hero-foot mono">🐙 one octopus, many arms — your agents under mission control</div>
+  <a class="hero-foot mono" href="#how" style="display:block">🐙 one octopus, many arms — see how it works ↓</a>
 </header>
+
+
+<!-- ── HOW IT WORKS — animated steps ───────────────────────────────────── -->
+<section id="how">
+  <div class="kicker">how it works</div>
+  <h2>🐙 <span class="oct">one octopus, many arms</span> — your agents under mission control</h2>
+  <p class="lead">Five moves from idea to merged code. The portal drives the whole loop — watch it light up.</p>
+  <div class="steps" id="steps">
+    <div class="step" style="--accent: var(--amber)">
+      <div class="n">STEP 01</div><div class="ico">＋</div>
+      <h3>Launch</h3>
+      <p>Describe the task — or start straight on any <span class="mono">/command</span>. Pick model, effort dial, skills and budget.</p>
+      <div class="bar"></div>
+    </div>
+    <div class="step" style="--accent: var(--coral)">
+      <div class="n">STEP 02</div><div class="ico">⛓</div>
+      <h3>Orchestrate</h3>
+      <p>The agent fans out into subagents; campaigns plan whole dependency DAGs with a worker per subtask.</p>
+      <div class="bar"></div>
+    </div>
+    <div class="step" style="--accent: var(--teal)">
+      <div class="n">STEP 03</div><div class="ico">◉</div>
+      <h3>Watch live</h3>
+      <p>The workflow tree, token burn and cost stream to your cockpit in real time. Steer, stop or approve at any moment.</p>
+      <div class="bar"></div>
+    </div>
+    <div class="step" style="--accent: var(--violet)">
+      <div class="n">STEP 04</div><div class="ico">⊘</div>
+      <h3>Guardrails</h3>
+      <p>Budgets auto-kill runaway runs; validation must pass; merge gates wait for your approve — or run full auto.</p>
+      <div class="bar"></div>
+    </div>
+    <div class="step" style="--accent: var(--green)">
+      <div class="n">STEP 05</div><div class="ico">✓</div>
+      <h3>Ship</h3>
+      <p>The PM merges clean work into your branch (or opens the PR) — and the portal keeps itself up to date too.</p>
+      <div class="bar"></div>
+    </div>
+  </div>
+</section>
 
 <!-- ── FEATURES ─────────────────────────────────────────────────────────── -->
 <section id="features">
@@ -290,6 +377,35 @@ renderer.setAnimationLoop((tms) => {
   camera.lookAt(v.set(0, 0, 0));
   renderer.render(scene, camera);
 });
+</script>
+
+<script>
+(() => {
+  const CYCLE = 2600;
+  const steps = [...document.querySelectorAll('#steps .step')];
+  steps.forEach((el) => el.style.setProperty('--cycle', CYCLE + 'ms'));
+  let i = -1, timer = null, paused = false;
+  function activate(n) {
+    i = n % steps.length;
+    steps.forEach((el, k) => {
+      el.classList.toggle('active', k === i);
+      el.classList.toggle('done', k < i);
+      if (k !== i) { const b = el.querySelector('.bar'); b.style.animation = 'none'; void b.offsetWidth; b.style.animation = ''; }
+    });
+  }
+  function tick() { if (!paused) activate(i + 1); }
+  steps.forEach((el, k) => {
+    el.addEventListener('click', () => { activate(k); });
+    el.addEventListener('pointerenter', () => { paused = true; });
+    el.addEventListener('pointerleave', () => { paused = false; });
+  });
+  new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting && !timer) { activate(0); timer = setInterval(tick, CYCLE); }
+      else if (!e.isIntersecting && timer) { clearInterval(timer); timer = null; }
+    }
+  }, { threshold: 0.35 }).observe(document.getElementById('steps'));
+})();
 </script>
 </body>
 </html>
