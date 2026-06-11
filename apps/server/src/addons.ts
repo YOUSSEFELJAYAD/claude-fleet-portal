@@ -80,8 +80,9 @@ const ADDON_DEFS: AddonDef[] = [
       'Routes every claude run through the Headroom transparent proxy, which compresses tool outputs, ' +
       'logs, search results and code before they reach the model — statistically, reversibly ' +
       '(agents get a retrieve tool for originals), and without touching your prompts. ' +
-      'Live savings show up on the Compression page per request. Engine add-on runs (codex/opencode) ' +
-      'talk to their own providers and are not routed.',
+      'Live savings show up on the Compression page per request. Engine add-on runs are routed too: ' +
+      'codex via OPENAI_BASE_URL, opencode for anthropic/openai provider models (other providers ' +
+      'talk to their own endpoints directly).',
     kind: 'builtin' as const,
     docsUrl: 'https://headroom-docs.vercel.app/docs',
     page: '/addons/compression',
@@ -634,6 +635,37 @@ export function addonRunEnv(): Record<string, string> {
   const cfg = compressionConfig();
   if (!cfg.applyToNewRuns) return {};
   return { ANTHROPIC_BASE_URL: endpoint(cfg.port) };
+}
+
+/**
+ * Engine-run variant of addonRunEnv (§22 engine routing). Headroom speaks BOTH wire
+ * protocols — Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`,
+ * base URL with `/v1` suffix per its docs) — so engine traffic can be compressed too,
+ * provider permitting:
+ *   codex                      → OPENAI_BASE_URL=http://127.0.0.1:<port>/v1
+ *   opencode anthropic/<model> → ANTHROPIC_BASE_URL=http://127.0.0.1:<port>
+ *   opencode openai/<model>    → OPENAI_BASE_URL=http://127.0.0.1:<port>/v1
+ *   opencode other providers   → {} (headroom forwards only Anthropic/OpenAI upstreams)
+ * Same gates as the claude path: operator's own base URL is never overridden, the
+ * add-on must be enabled with the proxy verified healthy, and applyToNewRuns true.
+ */
+export function addonRunEnvForEngine(engine: 'claude' | 'codex' | 'opencode', model: string | null | undefined): Record<string, string> {
+  if (engine === 'claude') return addonRunEnv();
+  const { enabled } = loadRow(COMPRESSION_ID);
+  if (!enabled || proxy.status !== 'running') return {};
+  const cfg = compressionConfig();
+  if (!cfg.applyToNewRuns) return {};
+
+  const anthropicEnv: Record<string, string> = process.env.ANTHROPIC_BASE_URL ? {} : { ANTHROPIC_BASE_URL: endpoint(cfg.port) };
+  const openaiEnv: Record<string, string> = process.env.OPENAI_BASE_URL ? {} : { OPENAI_BASE_URL: `${endpoint(cfg.port)}/v1` };
+
+  if (engine === 'codex') return openaiEnv;
+  // opencode: provider is the model-id prefix ('anthropic/…', 'openai/…'); an absent or
+  // unprefixed model means the engine's own default — provider unknown → don't route.
+  const provider = typeof model === 'string' && model.includes('/') ? model.split('/', 1)[0] : null;
+  if (provider === 'anthropic') return anthropicEnv;
+  if (provider === 'openai') return openaiEnv;
+  return {};
 }
 
 // ── AddonInfo assembly ───────────────────────────────────────────────────────────

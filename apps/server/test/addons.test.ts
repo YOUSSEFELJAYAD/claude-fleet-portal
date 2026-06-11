@@ -206,6 +206,13 @@ describe('enable → proxy lifecycle → run env → disable', () => {
     expect(addons.addonRunEnv()).toEqual({ ANTHROPIC_BASE_URL: `http://127.0.0.1:${TEST_PORT}` });
   });
 
+  it('injects engine-appropriate proxy base URLs for codex/opencode provider models', () => {
+    expect(addons.addonRunEnvForEngine('codex', 'gpt-5-codex')).toEqual({ OPENAI_BASE_URL: `http://127.0.0.1:${TEST_PORT}/v1` });
+    expect(addons.addonRunEnvForEngine('opencode', 'anthropic/claude-sonnet-4-5')).toEqual({ ANTHROPIC_BASE_URL: `http://127.0.0.1:${TEST_PORT}` });
+    expect(addons.addonRunEnvForEngine('opencode', 'openai/gpt-5')).toEqual({ OPENAI_BASE_URL: `http://127.0.0.1:${TEST_PORT}/v1` });
+    expect(addons.addonRunEnvForEngine('opencode', 'google/gemini-2.5-pro')).toEqual({});
+  });
+
   it("NEVER overrides an operator's own ANTHROPIC_BASE_URL (corporate gateway)", () => {
     process.env.ANTHROPIC_BASE_URL = 'http://gateway.corp:9999';
     try {
@@ -384,6 +391,23 @@ describe('launch gating — engine disabled check', () => {
         cwd: '/tmp',
         engine: 'codex',
         model: 'claude-opus-4-8',
+        effort: 'low',
+        permissionMode: 'default',
+      }),
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('engine-disabled');
+  });
+
+  it('POST /api/agents with a codex catalog model auto-routes to the disabled codex engine', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents',
+      headers: { ...H(), 'content-type': 'application/json' },
+      payload: JSON.stringify({
+        prompt: 'hello',
+        cwd: '/tmp',
+        model: 'gpt-5-codex',
         effort: 'low',
         permissionMode: 'default',
       }),

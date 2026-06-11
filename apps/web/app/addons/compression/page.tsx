@@ -252,8 +252,8 @@ export default function CompressionPage() {
         {live && (
           <div className="font-mono text-[10.5px] text-faint mt-3 pt-3 border-t hairline">
             {applied.applyToNewRuns
-              ? 'new runs route through the proxy automatically (ANTHROPIC_BASE_URL) — runs already live are untouched'
-              : 'routing is OFF — the proxy runs, but new agents talk to the API directly (enable “apply to new runs” below)'}
+              ? 'new claude runs and compatible engine runs route through the proxy automatically — runs already live are untouched'
+              : 'routing is OFF — the proxy runs, but new agents talk to provider APIs directly (enable “apply to new runs” below)'}
           </div>
         )}
       </Panel>
@@ -326,7 +326,7 @@ export default function CompressionPage() {
               </Field>
             </div>
             <div className="space-y-3 pt-1">
-              <Toggle on={form.applyToNewRuns} onChange={(v) => setForm({ ...form, applyToNewRuns: v })} label="apply to new runs — route every newly launched agent through the proxy" />
+              <Toggle on={form.applyToNewRuns} onChange={(v) => setForm({ ...form, applyToNewRuns: v })} label="apply to new runs — route claude plus compatible codex/opencode runs through the proxy" />
               <Toggle on={form.optimize} onChange={(v) => setForm({ ...form, optimize: v })} label="token compression — the point of all this" />
               <Toggle on={form.cache} onChange={(v) => setForm({ ...form, cache: v })} label="semantic cache — reuse answers for near-identical requests" />
               <Toggle on={form.rateLimit} onChange={(v) => setForm({ ...form, rateLimit: v })} label="rate-limit smoothing — pace bursts instead of erroring" />

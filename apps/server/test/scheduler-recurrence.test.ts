@@ -476,7 +476,7 @@ describe('tick()-level cap guard — actual tick() does not advance next_fire_at
     };
 
     // Drive the actual tick() — next_fire_at must NOT advance for our schedule.
-    __tickForTests();
+    await __tickForTests();
     (registry as any).launch = realLaunch;
 
     expect(ourCallCount).toBe(1); // our schedule was attempted
@@ -490,7 +490,7 @@ describe('tick()-level cap guard — actual tick() does not advance next_fire_at
       return { id: 'tick-run-id' };
     };
 
-    __tickForTests();
+    await __tickForTests();
     (registry as any).launch = realLaunch;
 
     // next_fire_at must have advanced (schedule fired successfully).
@@ -524,7 +524,7 @@ describe('tick()-level cap guard — actual tick() does not advance next_fire_at
       throw Object.assign(new Error('daily spend ceiling'), { statusCode: 409, code: 'daily-cap' });
     };
 
-    __tickForTests();
+    await __tickForTests();
     (registry as any).launch = realLaunch;
 
     const after = (scheduleDb.prepare('SELECT next_fire_at FROM schedules WHERE id=?').get(id) as any).next_fire_at;

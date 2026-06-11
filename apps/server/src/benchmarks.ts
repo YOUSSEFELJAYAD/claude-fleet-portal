@@ -397,7 +397,7 @@ class BenchmarkEngine {
     const judgePrompt = buildJudgePrompt(b.prompt, variantSummaries);
 
     try {
-      const judgeRun = registry.launch({
+      const judgeRun = await registry.launch({
         prompt: judgePrompt,
         cwd: b.cwd,
         model: judgeProfile.model ?? 'claude-opus-4-8',
@@ -490,7 +490,7 @@ class BenchmarkEngine {
       let run: Run;
       try {
         if (v.engine === 'claude') {
-          run = registry.launch({
+          run = await registry.launch({
             prompt: req.prompt,
             cwd: req.cwd,
             model: v.model ?? 'claude-opus-4-8',

@@ -165,7 +165,7 @@ class CampaignEngine {
   }
 
   // ── create ──────────────────────────────────────────────────────────────────
-  create(req: CreateCampaignRequest): Campaign {
+  async create(req: CreateCampaignRequest): Promise<Campaign> {
     if (!req.objective?.trim() || !req.cwd?.trim()) {
       throw Object.assign(new Error('objective and cwd are required'), { statusCode: 400 });
     }
@@ -204,7 +204,7 @@ class CampaignEngine {
     // launch the orchestrator → it returns a structured plan (D-019)
     let run: Run;
     try {
-      run = registry.launch({
+      run = await registry.launch({
         prompt: `OBJECTIVE:\n${req.objective}\n\nDecompose this objective into a minimal dependency-ordered plan of worker subtasks. Return ONLY the structured plan.`,
         cwd: req.cwd,
         model: campaign.model,
@@ -301,7 +301,7 @@ class CampaignEngine {
     campaign.status = 'spawning';
     repo.upsertCampaign(campaign);
     this.emitCampaign(campaign);
-    this.schedule(campaign);
+    void this.schedule(campaign);
   }
 
   private onWorkerDone(campaign: Campaign, run: Run) {
@@ -311,11 +311,11 @@ class CampaignEngine {
     task.status = run.status === 'completed' ? 'completed' : 'failed';
     repo.upsertTask(task);
     this.emitTask(task);
-    this.schedule(campaign);
+    void this.schedule(campaign);
   }
 
   // ── scheduler ─────────────────────────────────────────────────────────────────
-  private schedule(campaign: Campaign) {
+  private async schedule(campaign: Campaign): Promise<void> {
     if (TERMINAL_CAMPAIGN.has(campaign.status) || campaign.status === 'synthesizing') return;
     const tasks = repo.getTasks(campaign.id);
     const byId = new Map(tasks.map((t) => [t.id, t]));
@@ -337,7 +337,7 @@ class CampaignEngine {
       const depsDone = t.dependsOn.every((d) => byId.get(d)?.status === 'completed');
       if (!depsDone) continue;
       try {
-        const run = this.launchWorker(campaign, t, byId);
+        const run = await this.launchWorker(campaign, t, byId);
         t.runId = run.id;
         t.status = 'running';
         repo.upsertTask(t);
@@ -363,7 +363,7 @@ class CampaignEngine {
     if (allTerminal) {
       if (campaign.autoSynthesize && campaign.synthesizerTemplate && !campaign.synthesizerRunId && anyCompleted) {
         try {
-          this.launchSynthesizer(campaign, fresh);
+          await this.launchSynthesizer(campaign, fresh);
         } catch (e: any) {
           if (e?.statusCode === 429 || e?.code === 'daily-cap') {
             // capped (concurrency or §24 daily ceiling): synthesizerRunId is still null
@@ -389,7 +389,7 @@ class CampaignEngine {
     }
   }
 
-  private launchWorker(campaign: Campaign, task: CampaignTask, byId: Map<string, CampaignTask>): Run {
+  private async launchWorker(campaign: Campaign, task: CampaignTask, byId: Map<string, CampaignTask>): Promise<Run> {
     const t = tpl(task.template, 'worker');
     // thread completed-dependency results into the worker prompt for context
     const depContext = task.dependsOn
@@ -420,7 +420,7 @@ class CampaignEngine {
     });
   }
 
-  private launchSynthesizer(campaign: Campaign, tasks: CampaignTask[]) {
+  private async launchSynthesizer(campaign: Campaign, tasks: CampaignTask[]): Promise<void> {
     const t = tpl(campaign.synthesizerTemplate, 'synthesizer');
     const results = tasks
       .filter((x) => x.status === 'completed' && x.runId)
@@ -429,7 +429,7 @@ class CampaignEngine {
         return `### ${x.title}\n${r?.resultText ?? '(no result)'}`;
       })
       .join('\n\n');
-    const run = registry.launch({
+    const run = await registry.launch({
       prompt: `OBJECTIVE:\n${campaign.objective}\n\nThe worker agents produced these results:\n\n${results}\n\nSynthesize them into one coherent final deliverable.`,
       cwd: campaign.cwd,
       model: campaign.model || t.model,
@@ -478,7 +478,7 @@ class CampaignEngine {
     for (const c of repo.listCampaigns()) {
       if (c.status === 'spawning' || c.status === 'running') {
         try {
-          this.schedule(c);
+          void this.schedule(c);
         } catch {
           /* one bad campaign must not starve scheduling for the rest */
         }

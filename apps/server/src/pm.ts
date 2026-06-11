@@ -432,13 +432,13 @@ class PmEngine {
       // created (else the main worktree goes dirty → mergeBranch refuses), and (b) sequentially so
       // the .gitignore commit doesn't race claude's `git worktree add` on the same index (index.lock).
       await ensureWorktreeIgnored(project.rootDir);
-      const run = registry.launch({
+      const run = await registry.launch({
         prompt: buildPrompt(fresh),
         cwd: project.rootDir,
         worktree: wtName,
         projectId: project.id,
         campaignId: null,
-        model: PM_MODEL,
+        model: fresh.model ?? PM_MODEL,
         effort: PM_EFFORT,
         permissionMode: PM_PERMISSION_MODE,
         disallowedTools: disallowedToolsForProject(project),
@@ -507,7 +507,7 @@ class PmEngine {
       // UNRELAXED deny-list (§3.4): campaign workers NEVER push — force pushEnabled false regardless of
       // the project's single-mode relaxation. permissionMode: the same unattended bypass the PM build
       // uses (isolated worktree + push denied → safe), so interactive:false workers don't stall.
-      const campaign = campaigns.create({
+      const campaign = await campaigns.create({
         objective: buildPrompt(fresh),
         cwd: wt.dir,
         budgetPerWorkerUsd: fresh.budgetUsd,
@@ -611,22 +611,9 @@ class PmEngine {
   }
 
   /** Relaunch a fix run for a card already in InProgress, threading validation output (SPEC §5.6). */
-  private launchFix(card: KanbanTask, project: Project): boolean {
+  private launchFix(card: KanbanTask, project: Project): boolean | Promise<boolean> {
     const wtName = card.worktreeName ?? worktreeNameFor(card);
-    try {
-      const run = registry.launch({
-        prompt: fixPrompt(card),
-        cwd: project.rootDir,
-        worktree: wtName,
-        projectId: project.id,
-        campaignId: null,
-        model: PM_MODEL,
-        effort: PM_EFFORT,
-        permissionMode: PM_PERMISSION_MODE,
-        disallowedTools: disallowedToolsForProject(project),
-        budgetUsd: card.budgetUsd,
-        interactive: false,
-      });
+    const onRun = (run: Run): boolean => {
       kanbanRepo.updateTask(card.id, {
         column: 'InProgress',
         executionPhase: 'building',
@@ -634,7 +621,8 @@ class PmEngine {
         worktreeName: wtName,
       });
       return true;
-    } catch (e: any) {
+    };
+    const onError = (e: any): boolean => {
       if (e?.statusCode === 429 || e?.code === 'daily-cap') {
         // capped (concurrency or §24 daily ceiling): the safety tick never retries an
         // InProgress card (and the old run's terminal won't re-fire), so return the card
@@ -648,6 +636,24 @@ class PmEngine {
         lastError: `fix launch failed: ${e?.message ?? e}`,
       });
       return false;
+    };
+    try {
+      const run = registry.launch({
+        prompt: fixPrompt(card),
+        cwd: project.rootDir,
+        worktree: wtName,
+        projectId: project.id,
+        campaignId: null,
+        model: card.model ?? PM_MODEL,
+        effort: PM_EFFORT,
+        permissionMode: PM_PERMISSION_MODE,
+        disallowedTools: disallowedToolsForProject(project),
+        budgetUsd: card.budgetUsd,
+        interactive: false,
+      });
+      return run instanceof Promise ? run.then(onRun).catch(onError) : onRun(run);
+    } catch (e: any) {
+      return onError(e);
     }
   }
 
@@ -826,7 +832,7 @@ class PmEngine {
       });
       return;
     }
-    this.launchFix(card, project);
+    void this.launchFix(card, project);
   }
 
   /**
@@ -1011,7 +1017,7 @@ class PmEngine {
       await mergeAbort(wtDir); // card vanished mid-flight → don't leave a half-merged tree
       return;
     }
-    const launched = this.launchResolve(fresh, project, markerFiles);
+    const launched = await this.launchResolve(fresh, project, markerFiles);
     if (!launched) {
       // launch failed (429 / error) → abort the merge (no half-merged tree) and park in Review for a
       // human; the attempt is counted (consumed) so retries stay bounded.
@@ -1030,16 +1036,16 @@ class PmEngine {
    * only and must NEVER push — the engine performs the merge/push as fleet-pm. Links the run to the
    * card (run_id) so its terminal routes back here. Returns true on success.
    */
-  private launchResolve(card: KanbanTask, project: Project, conflicts: string[]): boolean {
+  private async launchResolve(card: KanbanTask, project: Project, conflicts: string[]): Promise<boolean> {
     const wtName = card.worktreeName ?? worktreeNameFor(card);
     try {
-      const run = registry.launch({
+      const run = await registry.launch({
         prompt: resolvePrompt(card, project, conflicts),
         cwd: project.rootDir,
         worktree: wtName,
         projectId: project.id,
         campaignId: null,
-        model: PM_MODEL,
+        model: card.model ?? PM_MODEL,
         effort: PM_EFFORT,
         permissionMode: PM_PERMISSION_MODE,
         // UNRELAXED (§3.4): the resolve agent edits files only; its push is an engine-side step, so it
@@ -1378,7 +1384,7 @@ class PmEngine {
       lastError: null,
     });
     const fresh = kanbanRepo.getTask(cardId);
-    if (fresh) this.launchFix(fresh, project);
+    if (fresh) await this.launchFix(fresh, project);
   }
 
   /** SHA-ish hash of the worktree branch's diff vs base (stable across identical trees). */

@@ -2,7 +2,7 @@
 import React from 'react';
 import Link from 'next/link';
 import type { KanbanTask, KanbanColumn, ExecutionPhase } from '@fleet/shared';
-import { KANBAN_COLUMNS } from '@fleet/shared';
+import { KANBAN_COLUMNS, engineForModel } from '@fleet/shared';
 import { Dot, Btn } from '@/components/ui';
 import { usd, ago } from '@/lib/format';
 
@@ -125,6 +125,15 @@ export function KanbanCard({ task, projectId, busy = false, onMove, onApprove, o
         </span>
         {task.budgetUsd != null && (
           <span className="font-mono tnum text-[9.5px] text-faint" title="per-run budget (each build / fix / resolve attempt gets this cap)">{usd(task.budgetUsd)}</span>
+        )}
+        {task.model && (
+          <span
+            className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border"
+            style={{ color: engineForModel(task.model) === 'claude' ? '#7b828c' : '#39d4cf', borderColor: engineForModel(task.model) === 'claude' ? '#7b828c40' : '#39d4cf40' }}
+            title={`PM model: ${task.model}`}
+          >
+            {engineForModel(task.model) === 'claude' ? 'claude' : engineForModel(task.model)}
+          </span>
         )}
         {task.prState && (
           <span

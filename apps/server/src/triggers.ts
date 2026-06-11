@@ -360,7 +360,7 @@ async function _doTickTrigger(row: TriggerRow): Promise<void> {
         lr = applyTemplateProfile(lr, view.template);
       }
       try {
-        registry.launch(lr);
+        await registry.launch(lr);
         seen = addToSeen(seen, item.number, pageNums);
       } catch (e: any) {
         // Cap-blocked (429 concurrency or 409 daily-cap): do NOT mark seen — retry next tick.

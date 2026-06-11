@@ -18,13 +18,14 @@ import type {
   RunStatus,
   EffortLevel,
 } from '@fleet/shared';
-import { MODELS } from '@fleet/shared';
+import { MODELS, CLAUDE_MODELS, engineForModel } from '@fleet/shared';
 import { validateConfig } from './config.js';
 import { repo } from './db.js';
 import { RunTree } from './tree.js';
 import { normalize } from './parser.js';
 import { spawnClaude, buildArgs, buildResumeArgs, killProcessGroup, thinkingEnv, type ManagedProcess } from './processManager.js';
-import { getEngineBin, engineLaunchConfig, isEngineEnabled } from './addons.js';
+import { createWorktree } from './git.js';
+import { getEngineBin, engineLaunchConfig, isEngineEnabled, addonRunEnvForEngine } from './addons.js';
 import { buildEngineArgs, parseEngineLine, spawnEngine, type ManagedEngineProcess } from './engines.js';
 
 const TERMINAL: RunStatus[] = ['completed', 'failed', 'killed'];
@@ -283,7 +284,7 @@ class Registry {
   }
 
   // ── lifecycle ───────────────────────────────────────────────────────────────
-  launch(reqIn: LaunchRequest, opts: { _internalRetry?: boolean } = {}): Run {
+  launch(reqIn: LaunchRequest, opts: { _internalRetry?: boolean } = {}): Run | Promise<Run> {
     // §27 review #4 — the retry-tracking fields are INTERNAL: accepted only from
     // maybeRetry itself. An external body smuggling _attempt:-1e9 (or a stored
     // scheduler/trigger launch_request carrying them) would otherwise defeat the
@@ -291,6 +292,38 @@ class Registry {
     if (!opts._internalRetry) {
       delete (reqIn as any)._attempt;
       delete (reqIn as any)._retryOf;
+    }
+
+    // Catalog-driven engine routing — an engine-tagged catalog model id (e.g. 'gpt-5-codex',
+    // 'anthropic/claude-sonnet-4-5') delegates to launchEngine() automatically, so every
+    // subsystem that funnels through launch() (PM, campaigns, scheduler, triggers, planboard)
+    // gains engine-model support with zero engine awareness. Claude-only knobs are STRIPPED
+    // (not rejected): a template/schedule may carry retryPolicy etc., and silently running the
+    // engine one-shot beats failing a background launch. Explicit engine requests keep the
+    // strict launchEngine contract (retryPolicy → 400) untouched.
+    if (!reqIn.engine || reqIn.engine === 'claude') {
+      const derived = engineForModel(reqIn.model);
+      if (derived !== 'claude') {
+        return this.launchEngine({
+          ...reqIn,
+          engine: derived,
+          engineModel: reqIn.engineModel ?? reqIn.model,
+          retryPolicy: null,
+          fastMode: false,
+          workflowsEnabled: false,
+          ultracode: false,
+          // claude thinking levels (think/megathink/…) don't map onto engine levels
+          thinkingLevel: null,
+          jsonSchema: undefined,
+        });
+      }
+    } else {
+      if (reqIn.retryPolicy != null) {
+        throw Object.assign(new Error('retryPolicy is not supported on engine add-on runs'), { statusCode: 400 });
+      }
+      // Defensive: an explicit engine request that reaches launch() (instead of server.ts'
+      // launchEngine branch) is forwarded rather than silently spawned as a claude run.
+      return this.launchEngine(reqIn);
     }
     const activeCount = [...this.live.values()].filter((lr) => !isTerminal(lr.run.status)).length;
     if (activeCount >= this.config.maxConcurrentRuns) {
@@ -324,7 +357,8 @@ class Registry {
       if (rp.maxRetries !== 1 && rp.maxRetries !== 2) {
         throw Object.assign(new Error('retryPolicy.maxRetries must be 1 or 2'), { statusCode: 400 });
       }
-      if (rp.escalateModel != null && !MODELS.some((m) => m.id === rp.escalateModel)) {
+      // escalation is a claude-run feature — engine-tagged catalog models are not escalation targets
+      if (rp.escalateModel != null && !CLAUDE_MODELS.some((m) => m.id === rp.escalateModel)) {
         throw Object.assign(new Error(`retryPolicy.escalateModel '${rp.escalateModel}' is not a known model id`), { statusCode: 400 });
       }
     }
@@ -464,6 +498,19 @@ class Registry {
       throw Object.assign(new Error(`Working directory does not exist: ${reqIn.cwd}`), { statusCode: 400 });
     }
 
+    // Engine CLIs have no `--worktree` flag — when the request asks for one (PM build/fix/
+    // resolve launches), create it server-side (same `.claude/worktrees/<name>` dir and
+    // `worktree-<name>` branch the claude CLI would produce, so validate/merge find it
+    // unchanged) and point the engine's cwd at it. Idempotent across attempts.
+    let cwd = reqIn.cwd;
+    if (reqIn.worktree) {
+      const wt = await createWorktree(reqIn.cwd, reqIn.worktree, `worktree-${reqIn.worktree}`);
+      if (!wt.ok) {
+        throw Object.assign(new Error(`worktree create failed: ${wt.error ?? 'unknown'}`), { statusCode: 400 });
+      }
+      cwd = wt.dir;
+    }
+
     const cfg = engineLaunchConfig(engine);
     const resolvedModel = reqIn.engineModel ?? (cfg as any).defaultModel ?? engine;
 
@@ -473,7 +520,7 @@ class Registry {
       id: sessionId,
       sessionId,
       task: reqIn.prompt,
-      cwd: reqIn.cwd,
+      cwd,
       model: resolvedModel,
       engine,
       fastMode: false,
@@ -530,7 +577,9 @@ class Registry {
     };
     this.live.set(sessionId, lr);
 
-    const args = buildEngineArgs(engine, reqIn, cfg);
+    // reqIn.cwd may differ from the run's effective cwd (worktree) — codex embeds
+    // the cwd in its argv (`--cd`), so the args must be built from the resolved dir.
+    const args = buildEngineArgs(engine, { ...reqIn, cwd }, cfg);
     this.startEngineProcess(lr, engine, bin, args);
     this.emitRun(lr);
     return run;
@@ -549,6 +598,10 @@ class Registry {
     let totalTokIn = 0;
     let totalTokOut = 0;
 
+    // §22 engine routing — when the compression add-on proxy is up (and the model's
+    // provider is proxyable), inject the matching base-URL env so the engine's LLM
+    // traffic flows through headroom exactly like claude runs do.
+    const proxyEnv = addonRunEnvForEngine(engine, lr.run.model);
     lr.engineProc = spawnEngine(engine, bin, args, lr.run.cwd, {
       onLine: (obj) => {
         if (lr.killed) return;
@@ -645,7 +698,7 @@ class Registry {
         this.notifyTerminal(lr);
         this.scheduleEvict(lr.run.id);
       },
-    });
+    }, proxyEnv);
 
     lr.run.pid = lr.engineProc.pid ?? null;
     repo.upsertRun(lr.run);
@@ -819,9 +872,8 @@ class Registry {
       _retryOf: lr.run.id,
     } as any;
 
-    try {
-      this.launch(retryReq, { _internalRetry: true });
-    } catch (e: any) {
+    // launch() is async now (engine routing) — a guardrail rejection surfaces on the promise.
+    void Promise.resolve().then(() => this.launch(retryReq, { _internalRetry: true })).catch((e: any) => {
       // Guardrail-blocked retry (daily-cap 409 or concurrency 429): drop silently, note on error.
       const note = e?.code === 'daily-cap'
         ? ' · auto-retry skipped: daily cap'
@@ -829,7 +881,7 @@ class Registry {
       lr.run.error = (lr.run.error ?? '') + note;
       repo.upsertRun(lr.run);
       console.warn(`[registry] retry dropped for run ${lr.run.id}:`, e?.message ?? e);
-    }
+    });
   }
 
   private onExit(lr: LiveRun, code: number | null, _signal: NodeJS.Signals | null) {

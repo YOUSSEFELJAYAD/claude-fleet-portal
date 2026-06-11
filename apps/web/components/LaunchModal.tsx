@@ -7,13 +7,7 @@ import { CLAUDE_TOOLS, MODELS } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn } from './ui';
 import { MultiPicker } from './MultiPicker';
 import { PackBar } from './PackBar';
-
-/** Engine options available in the segmented control (claude is always shown). */
-const ENGINE_LABELS: Record<string, string> = {
-  claude: 'Claude (default)',
-  codex: 'Codex (ChatGPT)',
-  opencode: 'OpenCode',
-};
+import { ModelSelect, customModelEngine, modelEngine } from './ModelSelect';
 
 const union = (base: string[], add: string[]) => [...base, ...add.filter((x) => !base.includes(x))];
 
@@ -40,8 +34,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
   /** Engine add-ons that are currently enabled (id only). claude is always available. */
-  const [enabledEngines, setEnabledEngines] = useState<string[]>([]);
-  const [selectedEngine, setSelectedEngine] = useState<RunEngine>('claude');
+  const [enabledEngines, setEnabledEngines] = useState<RunEngine[]>([]);
   const [engineModel, setEngineModel] = useState('');
   const [thinkingLevel, setThinkingLevel] = useState('');
 
@@ -93,7 +86,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
       .then((addons) => {
         const engines = addons
           .filter((a) => (a.id === 'codex' || a.id === 'opencode') && a.enabled)
-          .map((a) => a.id);
+          .map((a) => a.id as RunEngine);
         setEnabledEngines(engines);
       })
       .catch(() => {}); // no enabled engines ≠ broken form
@@ -110,9 +103,20 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   }, [cwd]);
 
   const selectedModel = models.find((m) => m.id === model);
+  const selectedEngine = modelEngine(models.length ? models : MODELS, model);
+  const selectedCustomEngine = customModelEngine(model);
   const effectiveEffort = ultracode ? 'xhigh' : effort;
 
   const isEngineRun = selectedEngine !== 'claude';
+
+  function pickModel(next: string) {
+    const nextEngine = modelEngine(models.length ? models : MODELS, next);
+    if (nextEngine !== selectedEngine) {
+      setEngineModel('');
+      setThinkingLevel('');
+    }
+    setModel(next);
+  }
 
   // Group templates by role for optgroup rendering
   const TEMPLATE_ROLES = ['orchestrator', 'worker', 'reviewer', 'synthesizer'] as const;
@@ -172,7 +176,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             prompt: effectivePrompt,
             cwd,
             engine: selectedEngine,
-            engineModel: engineModel.trim() || undefined,
+            engineModel: selectedCustomEngine ? engineModel.trim() || undefined : model,
             // send sane defaults the server validation accepts; the engine branch ignores them
             model: 'claude-opus-4-8',
             effort: 'high',
@@ -238,58 +242,23 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="p-6 grid grid-cols-2 gap-5">
-            {/* ── engine selector (only shown when at least one engine add-on is enabled) ── */}
-            {enabledEngines.length > 0 && (
-              <div className="col-span-2">
-                <Kicker>engine</Kicker>
-                <div className="mt-2 flex items-center gap-1 flex-wrap">
-                  {(['claude', ...enabledEngines] as RunEngine[]).map((eng) => (
-                    <button
-                      key={eng}
-                      onClick={() => {
-                        // engine-model formats differ (codex: bare id; opencode: provider/model)
-                        // — a stale value from the previous engine would submit garbage.
-                        // thinkingLevel options differ per engine too — reset both on switch.
-                        if (eng !== selectedEngine) {
-                          setEngineModel('');
-                          setThinkingLevel('');
-                        }
-                        setSelectedEngine(eng);
-                      }}
-                      className="font-mono text-[11px] px-3 py-1.5 border transition-colors"
-                      style={{
-                        background: selectedEngine === eng ? 'rgba(255,176,0,0.12)' : 'transparent',
-                        borderColor: selectedEngine === eng ? 'rgba(255,176,0,0.5)' : 'var(--color-line)',
-                        color: selectedEngine === eng ? '#ffb000' : 'var(--color-dim)',
-                      }}
-                    >
-                      {ENGINE_LABELS[eng] ?? eng}
-                    </button>
-                  ))}
+            <div className="col-span-2">
+              <Field label="model" hint={isEngineRun ? 'engine add-on run · one-shot flat timeline' : 'claude native run'}>
+                <ModelSelect
+                  models={models.length ? models : MODELS}
+                  value={model}
+                  onChange={pickModel}
+                  enabledEngines={enabledEngines}
+                  customValue={engineModel}
+                  onCustomValueChange={setEngineModel}
+                />
+              </Field>
+              {isEngineRun && (
+                <div className="font-mono text-[10.5px] text-faint mt-1.5">
+                  stop works; resume/input/permission, workflows, retry, fast mode and per-run budget enforcement are not available
                 </div>
-                {isEngineRun && (
-                  <div className="font-mono text-[10.5px] text-faint mt-1.5">
-                    one-shot · flat timeline · stop works; resume/input/permission do not
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ── engine model input (shown only for engine runs) ── */}
-            {isEngineRun && (
-              <div className="col-span-2">
-                <Field
-                  label="engine model"
-                  hint={selectedEngine === 'codex' ? 'blank = codex CLI default · e.g. gpt-5-codex' : 'blank = opencode default · e.g. anthropic/claude-sonnet-4-5'}
-                >
-                  <Input
-                    value={engineModel}
-                    onChange={(e) => setEngineModel(e.target.value)}
-                    placeholder={selectedEngine === 'codex' ? 'gpt-5-codex · blank = engine default' : 'anthropic/claude-sonnet-4-5 · blank = engine default'}
-                  />
-                </Field>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* ── thinking level — engine runs ── */}
             {isEngineRun && (
@@ -477,19 +446,6 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             <Field label="working directory" hint="cwd">
               <Input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="/path/to/project" />
             </Field>
-
-            {/* model select — claude only */}
-            {!isEngineRun && (
-              <Field label="model">
-                <Select value={model} onChange={(e) => setModel(e.target.value)}>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label} · ${m.inputPerM}/${m.outputPerM}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            )}
 
             {/* fast mode / interactive / brief — claude only */}
             {!isEngineRun && (

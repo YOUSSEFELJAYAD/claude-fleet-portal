@@ -3,11 +3,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, type McpServerInfo } from '@/lib/api';
-import type { AgentTemplate, EffortLevel, PermissionMode, SkillInfo, ToolPack } from '@fleet/shared';
+import type { AgentTemplate, EffortLevel, PermissionMode, SkillInfo, ToolPack, ModelInfo, RunEngine } from '@fleet/shared';
 import { CLAUDE_TOOLS } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Textarea, Select, Btn } from '@/components/ui';
 import { MultiPicker } from '@/components/MultiPicker';
 import { PackBar } from '@/components/PackBar';
+import { ModelSelect, modelEngine } from '@/components/ModelSelect';
 
 const union = (base: string[], add: string[]) => [...base, ...add.filter((x) => !base.includes(x))];
 
@@ -24,7 +25,8 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
   const router = useRouter();
   const [t, setT] = useState<AgentTemplate | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [meta, setMeta] = useState<{ models: { id: string; label: string }[]; efforts: string[]; permissionModes: string[] } | null>(null);
+  const [meta, setMeta] = useState<{ models: ModelInfo[]; efforts: string[]; permissionModes: string[] } | null>(null);
+  const [enabledEngines, setEnabledEngines] = useState<RunEngine[]>([]);
   const [catalog, setCatalog] = useState<SkillInfo[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
 
@@ -64,6 +66,9 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
   useEffect(() => {
     api.template(id).then(hydrate).catch((e: any) => setLoadErr(e?.message || 'failed to load template'));
     api.meta().then((m) => setMeta(m as any)).catch(() => {});
+    api.addons()
+      .then((addons) => setEnabledEngines(addons.filter((a) => (a.id === 'codex' || a.id === 'opencode') && a.enabled).map((a) => a.id as RunEngine)))
+      .catch(() => {});
     api.skills().then(setCatalog).catch(() => setCatalog([]));
     api.mcp().then((r) => setMcpServers(r.servers)).catch(() => {});
   }, [id]);
@@ -269,11 +274,16 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
               </Select>
             </Field>
             <Field label="model">
-              <Select value={model} onChange={(e) => setModel(e.target.value)}>
-                {(meta?.models ?? [{ id: model, label: model }]).map((m) => (
-                  <option key={m.id} value={m.id}>{m.label ?? m.id}</option>
-                ))}
-              </Select>
+              <ModelSelect
+                models={meta?.models ?? (model ? [{ id: model, label: model, inputPerM: 0, outputPerM: 0, contextWindow: 0, maxOutput: 0, fastModeCapable: false }] : [])}
+                value={model}
+                onChange={setModel}
+                enabledEngines={enabledEngines}
+                allowCustom={false}
+              />
+              {modelEngine(meta?.models ?? [], model) !== 'claude' && (
+                <div className="font-mono text-[10px] text-faint mt-1.5">engine-tagged template · launches route through the matching add-on</div>
+              )}
             </Field>
             <Field label="effort">
               <Select value={effort} onChange={(e) => setEffort(e.target.value as EffortLevel)}>

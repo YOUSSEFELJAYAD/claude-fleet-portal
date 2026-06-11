@@ -23,7 +23,7 @@ import type {
   ExecutionPhase,
   KanbanBoardMessage,
 } from '@fleet/shared';
-import { KANBAN_COLUMNS } from '@fleet/shared';
+import { KANBAN_COLUMNS, MODELS } from '@fleet/shared';
 import db from './db.js';
 import { planHasCycle, planHasDupIds } from './campaigns.js';
 import { pm } from './pm.js'; // circular but runtime-safe: pm uses kanbanRepo only inside methods
@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS kanban_tasks (
   health_check_url TEXT,
   health_check_regex TEXT,
   resolve_attempt_count INTEGER NOT NULL DEFAULT 0,
-  max_resolve_attempts INTEGER NOT NULL DEFAULT 2
+  max_resolve_attempts INTEGER NOT NULL DEFAULT 2,
+  model TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_kanban_project ON kanban_tasks(project_id, "column", "rank");
 CREATE INDEX IF NOT EXISTS idx_kanban_run ON kanban_tasks(run_id);
@@ -88,6 +89,7 @@ for (const ddl of [
   'ALTER TABLE kanban_tasks ADD COLUMN health_check_regex TEXT',
   'ALTER TABLE kanban_tasks ADD COLUMN resolve_attempt_count INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE kanban_tasks ADD COLUMN max_resolve_attempts INTEGER NOT NULL DEFAULT 2',
+  'ALTER TABLE kanban_tasks ADD COLUMN model TEXT',
   'CREATE INDEX IF NOT EXISTS idx_kanban_campaign ON kanban_tasks(campaign_id)',
 ]) {
   try {
@@ -98,6 +100,7 @@ for (const ddl of [
 }
 
 const KANBAN_COLS = new Set<string>(KANBAN_COLUMNS);
+const MODEL_IDS = new Set<string>(MODELS.map((m) => m.id));
 const PHASES = new Set<ExecutionPhase>([
   'idle',
   'building',
@@ -156,7 +159,7 @@ const COLS = `
   worktree_name, attempt_count, max_attempts, budget_usd, validation_output, last_diff_hash,
   merge_sha, last_error, created_at, updated_at,
   mode, pr_url, pr_state, server_start_command, health_check_url, health_check_regex,
-  resolve_attempt_count, max_resolve_attempts
+  resolve_attempt_count, max_resolve_attempts, model
 `;
 
 const getTaskStmt = db.prepare(`SELECT ${COLS} FROM kanban_tasks WHERE id = ?`);
@@ -188,14 +191,14 @@ const insertStmt = db.prepare(`
     worktree_name, attempt_count, max_attempts, budget_usd, validation_output, last_diff_hash,
     merge_sha, last_error, created_at, updated_at,
     mode, pr_url, pr_state, server_start_command, health_check_url, health_check_regex,
-    resolve_attempt_count, max_resolve_attempts
+    resolve_attempt_count, max_resolve_attempts, model
   ) VALUES (
     @id, @project_id, @column, @execution_phase, @title, @description, @acceptance_criteria,
     @validation_command, @priority, @rank, @depends_on, @assignee, @labels, @run_id, @campaign_id,
     @worktree_name, @attempt_count, @max_attempts, @budget_usd, @validation_output, @last_diff_hash,
     @merge_sha, @last_error, @created_at, @updated_at,
     @mode, @pr_url, @pr_state, @server_start_command, @health_check_url, @health_check_regex,
-    @resolve_attempt_count, @max_resolve_attempts
+    @resolve_attempt_count, @max_resolve_attempts, @model
   )
 `);
 
@@ -212,7 +215,7 @@ const updateStmt = db.prepare(`
     mode = @mode, pr_url = @pr_url, pr_state = @pr_state,
     server_start_command = @server_start_command, health_check_url = @health_check_url,
     health_check_regex = @health_check_regex, resolve_attempt_count = @resolve_attempt_count,
-    max_resolve_attempts = @max_resolve_attempts
+    max_resolve_attempts = @max_resolve_attempts, model = @model
   WHERE id = @id
 `);
 
@@ -262,6 +265,7 @@ function rowToTask(r: any): KanbanTask {
     healthCheckRegex: r.health_check_regex ?? null,
     resolveAttemptCount: r.resolve_attempt_count ?? 0,
     maxResolveAttempts: r.max_resolve_attempts ?? 2,
+    model: r.model ?? null,
   };
 }
 
@@ -301,7 +305,17 @@ function taskToRow(t: KanbanTask): Record<string, unknown> {
     health_check_regex: t.healthCheckRegex,
     resolve_attempt_count: t.resolveAttemptCount,
     max_resolve_attempts: t.maxResolveAttempts,
+    model: t.model,
   };
+}
+
+function parseModelOverride(v: unknown): { ok: true; model: string | null | undefined } | { ok: false; error: string } {
+  if (v === undefined) return { ok: true, model: undefined };
+  if (v === null || v === '') return { ok: true, model: null };
+  const model = String(v).trim();
+  if (!model) return { ok: true, model: null };
+  if (!MODEL_IDS.has(model)) return { ok: false, error: 'unknown model id' };
+  return { ok: true, model };
 }
 
 // ── board pub/sub (mirror CampaignEngine.subs) ─────────────────────────────────
@@ -412,6 +426,7 @@ export const kanbanRepo = {
       healthCheckRegex: req.healthCheckRegex ?? null,
       resolveAttemptCount: 0,
       maxResolveAttempts: req.maxResolveAttempts ?? 2,
+      model: req.model ?? null,
     };
     insertStmt.run(taskToRow(task));
     broadcastTask(task);
@@ -515,6 +530,11 @@ export function registerKanbanRoutes(app: FastifyInstance) {
       // validate deps against the project graph (id generated inside createTask, but the
       // candidate id is brand-new so self-dep is impossible here; cycle/unknown still checked).
       validateDependsOn(pid, '__new__', dependsOn);
+      const modelParsed = parseModelOverride(body.model);
+      if (!modelParsed.ok) {
+        reply.code(400);
+        return { error: modelParsed.error };
+      }
       const createReq: CreateKanbanTaskRequest = {
         projectId: pid, // from the URL, never body.projectId
         title,
@@ -536,6 +556,7 @@ export function registerKanbanRoutes(app: FastifyInstance) {
         healthCheckRegex:
           body.healthCheckRegex === null ? null : body.healthCheckRegex != null ? String(body.healthCheckRegex) : undefined,
         maxResolveAttempts: body.maxResolveAttempts != null ? Number(body.maxResolveAttempts) : undefined,
+        model: modelParsed.model,
       };
       const created = kanbanRepo.createTask(createReq);
       void pm.tick(pid); // pick up immediately if the card landed in Ready (else ≤10s safety tick)
@@ -617,6 +638,14 @@ export function registerKanbanRoutes(app: FastifyInstance) {
         }
         // resolve attempt cap (#9).
         if (body.maxResolveAttempts != null) patch.maxResolveAttempts = Number(body.maxResolveAttempts);
+        if ('model' in body) {
+          if (existing.column !== 'Backlog' && existing.column !== 'Ready') {
+            return { code: 409 as const, error: 'model can only be changed while the card is in Backlog or Ready' };
+          }
+          const parsed = parseModelOverride(body.model);
+          if (!parsed.ok) return { code: 400 as const, error: parsed.error };
+          patch.model = parsed.model ?? null;
+        }
 
         // ── depends_on (re-validated against the project graph) ───────────────
         if (Array.isArray(body.dependsOn)) {

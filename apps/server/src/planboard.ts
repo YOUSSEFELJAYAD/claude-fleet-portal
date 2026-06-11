@@ -276,7 +276,7 @@ class Planboard {
    * so it is owned by neither existing engine. Planning is allowed regardless of
    * pause/ceiling (gating applies to execution, not planning — spec §4 #3).
    */
-  create(projectId: string, objective: string, targetColumn?: KanbanColumn): PlanDraft {
+  async create(projectId: string, objective: string, targetColumn?: KanbanColumn): Promise<PlanDraft> {
     const project = projectsRepo.getProject(projectId);
     if (!project) throw Object.assign(new Error('project not found'), { statusCode: 404 });
     const obj = objective.trim();
@@ -302,7 +302,7 @@ class Planboard {
     const orchT = orchestratorTemplate();
     let run: Run;
     try {
-      run = registry.launch({
+      run = await registry.launch({
         prompt: `OBJECTIVE:\n${obj}\n\nDecompose this objective into a minimal dependency-ordered plan of subtasks suitable for kanban cards. Return ONLY the structured plan.`,
         cwd: project.rootDir,
         model: orchT.model,
@@ -424,7 +424,7 @@ export function registerPlanboardRoutes(app: FastifyInstance) {
       const body = (req.body as any) ?? {};
       const objective = String(body.objective ?? '');
       const targetColumn = typeof body.targetColumn === 'string' ? (body.targetColumn as KanbanColumn) : undefined;
-      return planboard.create(pid, objective, targetColumn);
+      return await planboard.create(pid, objective, targetColumn);
     } catch (e: any) {
       reply.code(e.statusCode ?? 500);
       return { error: e.message };

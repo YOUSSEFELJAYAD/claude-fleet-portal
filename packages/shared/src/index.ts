@@ -307,6 +307,10 @@ export interface ModelInfo {
   contextWindow: number;
   maxOutput: number;
   fastModeCapable: boolean;
+  /** Which engine CLI executes this model. Absent = 'claude' (native).
+   *  Engine-tagged models are only offered when their engine add-on is enabled,
+   *  and launching one routes through the engine launch path automatically. */
+  engine?: RunEngine;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -672,6 +676,10 @@ export interface KanbanTask {
   // ── v2 #9: conflict-resolution agent ──────────────────────────────────────────
   resolveAttemptCount: number;
   maxResolveAttempts: number;
+  /** Catalog model id the PM uses for this card's build/fix/resolve runs.
+   *  Engine-tagged ids (codex/opencode) delegate the card to that engine.
+   *  null = PM default (claude-opus-4-8). */
+  model: string | null;
 }
 
 export interface CreateKanbanTaskRequest {
@@ -691,6 +699,8 @@ export interface CreateKanbanTaskRequest {
   healthCheckUrl?: string | null; // #5
   healthCheckRegex?: string | null; // #5
   maxResolveAttempts?: number; // #9
+  /** Catalog model id for this card's runs (null/omitted = PM default). */
+  model?: string | null;
 }
 
 export type KanbanBoardMessage =
@@ -929,7 +939,91 @@ export const MODELS: ModelInfo[] = [
     maxOutput: 64_000,
     fastModeCapable: false,
   },
+  // ── engine add-on models (§24) — offered only when the matching add-on is enabled.
+  //    Pricing is display-only (engines expose no cost stream; costUsd stays 0).
+  {
+    id: 'gpt-5-codex',
+    label: 'GPT-5 Codex',
+    inputPerM: 1.25,
+    outputPerM: 10,
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    fastModeCapable: false,
+    engine: 'codex',
+  },
+  {
+    id: 'gpt-5',
+    label: 'GPT-5',
+    inputPerM: 1.25,
+    outputPerM: 10,
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    fastModeCapable: false,
+    engine: 'codex',
+  },
+  {
+    id: 'gpt-5-codex-mini',
+    label: 'GPT-5 Codex Mini',
+    inputPerM: 0.25,
+    outputPerM: 2,
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    fastModeCapable: false,
+    engine: 'codex',
+  },
+  {
+    id: 'anthropic/claude-opus-4-8',
+    label: 'Claude Opus 4.8 (OpenCode)',
+    inputPerM: 5,
+    outputPerM: 25,
+    contextWindow: 1_000_000,
+    maxOutput: 128_000,
+    fastModeCapable: false,
+    engine: 'opencode',
+  },
+  {
+    id: 'anthropic/claude-sonnet-4-5',
+    label: 'Claude Sonnet 4.5 (OpenCode)',
+    inputPerM: 3,
+    outputPerM: 15,
+    contextWindow: 200_000,
+    maxOutput: 64_000,
+    fastModeCapable: false,
+    engine: 'opencode',
+  },
+  {
+    id: 'openai/gpt-5',
+    label: 'GPT-5 (OpenCode)',
+    inputPerM: 1.25,
+    outputPerM: 10,
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    fastModeCapable: false,
+    engine: 'opencode',
+  },
+  {
+    id: 'google/gemini-2.5-pro',
+    label: 'Gemini 2.5 Pro (OpenCode)',
+    inputPerM: 1.25,
+    outputPerM: 10,
+    contextWindow: 1_000_000,
+    maxOutput: 65_000,
+    fastModeCapable: false,
+    engine: 'opencode',
+  },
 ];
+
+/** Claude-native subset of the catalog (fast mode, retry escalation, pricing truth). */
+export const CLAUDE_MODELS: ModelInfo[] = MODELS.filter((m) => !m.engine || m.engine === 'claude');
+
+/** Engine that executes a given catalog model id. Unknown ids default to 'claude'
+ *  (the historical behavior — free-text engine models always travel with an explicit
+ *  `engine` on the LaunchRequest instead). */
+export function engineForModel(modelId: string | null | undefined): RunEngine {
+  if (!modelId) return 'claude';
+  const m = MODELS.find((x) => x.id === modelId);
+  return m?.engine ?? 'claude';
+}
 
 export const EFFORT_LEVELS: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 

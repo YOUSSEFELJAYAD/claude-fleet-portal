@@ -104,6 +104,22 @@ describe('W1 — createTask defaults (Backlog / idle / end-of-column rank) + per
     expect(card.priority).toBe(0);
     expect(card.runId).toBeNull();
     expect(card.campaignId).toBeNull();
+    expect(card.model).toBeNull();
+  });
+
+  it('persists a catalog engine model override on create', async () => {
+    const pid = makeProject();
+    const res = await createCardViaRoute(pid, { title: 'engine card', model: 'gpt-5-codex' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().model).toBe('gpt-5-codex');
+    expect(kanbanRepo.getTask(res.json().id).model).toBe('gpt-5-codex');
+  });
+
+  it('rejects an unknown card model id', async () => {
+    const pid = makeProject();
+    const res = await createCardViaRoute(pid, { title: 'bad model card', model: 'not-a-real-model' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/unknown model id/i);
   });
 
   it('a second card in the same column is appended at the END (rank strictly greater)', () => {

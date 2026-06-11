@@ -307,7 +307,7 @@ export function buildServer() {
       }
     }
     try {
-      return registry.launch(normalizedBody);
+      return await registry.launch(normalizedBody);
     } catch (e: any) {
       reply.code(e.statusCode ?? 500);
       return { error: e.message, ...(e.code ? { code: e.code } : {}) };
@@ -558,7 +558,7 @@ export function buildServer() {
   // ── campaigns (Orchestration Mode) ──────────────────────────────────────────
   app.post('/api/campaigns', async (req, reply) => {
     try {
-      return campaigns.create(req.body as CreateCampaignRequest);
+      return await campaigns.create(req.body as CreateCampaignRequest);
     } catch (e: any) {
       reply.code(e.statusCode ?? 500);
       return { error: e.message };

@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { api, type Benchmark, type BenchmarkDetail, type BenchmarkVariant, type CreateBenchmarkRequest } from '@/lib/api';
 import { usd, ago, dur } from '@/lib/format';
 import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn, Empty, Dot } from '@/components/ui';
-import type { AgentTemplate } from '@fleet/shared';
+import { ModelSelect, customModelEngine, customModelValue, modelEngine } from '@/components/ModelSelect';
+import type { AgentTemplate, ModelInfo, RunEngine } from '@fleet/shared';
 
 // ── thinking level option sets (mirrors LaunchModal) ──────────────────────────
 
@@ -55,7 +56,6 @@ function runStatusColor(s: string): string {
   return '#5b626d';
 }
 
-const ENGINES = ['claude', 'codex', 'opencode'] as const;
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 const DEFAULT_VARIANT: BenchmarkVariant = { engine: 'claude', model: 'claude-opus-4-8', effort: 'high' };
@@ -93,13 +93,39 @@ function VariantRow({
   onChange,
   onRemove,
   canRemove,
+  models,
+  enabledEngines,
 }: {
   variant: BenchmarkVariant;
   index: number;
   onChange: (v: BenchmarkVariant) => void;
   onRemove: () => void;
   canRemove: boolean;
+  models: ModelInfo[];
+  enabledEngines: RunEngine[];
 }) {
+  const knownEngineModel = variant.engine !== 'claude' && variant.engineModel && models.some((m) => m.id === variant.engineModel)
+    ? variant.engineModel
+    : null;
+  const modelValue = variant.engine === 'claude'
+    ? variant.model ?? 'claude-opus-4-8'
+    : knownEngineModel ?? customModelValue(variant.engine as Exclude<RunEngine, 'claude'>);
+  const customEngine = customModelEngine(modelValue);
+
+  function pickModel(value: string) {
+    const eng = modelEngine(models, value);
+    const custom = customModelEngine(value);
+    if (custom) {
+      onChange({ ...variant, engine: custom, model: undefined, engineModel: variant.engine === custom ? variant.engineModel : undefined, thinkingLevel: undefined });
+      return;
+    }
+    if (eng === 'claude') {
+      onChange({ ...variant, engine: 'claude', model: value, engineModel: undefined, thinkingLevel: undefined });
+      return;
+    }
+    onChange({ ...variant, engine: eng, model: undefined, engineModel: value, thinkingLevel: undefined });
+  }
+
   return (
     <div className="border hairline p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
@@ -116,33 +142,21 @@ function VariantRow({
             onChange={(e) => onChange({ ...variant, label: e.target.value || undefined })}
           />
         </Field>
-        <Field label="engine">
-          <Select value={variant.engine} onChange={(e) => onChange({ ...variant, engine: e.target.value as any })}>
-            {ENGINES.map((eng) => <option key={eng} value={eng}>{eng}</option>)}
-          </Select>
+        <Field label="model">
+          <ModelSelect
+            models={models}
+            value={modelValue}
+            onChange={pickModel}
+            enabledEngines={enabledEngines}
+            customValue={customEngine ? variant.engineModel ?? '' : ''}
+            onCustomValueChange={(value) => customEngine && onChange({ ...variant, engine: customEngine, model: undefined, engineModel: value || undefined })}
+          />
         </Field>
         <Field label="effort">
           <Select value={variant.effort ?? 'high'} onChange={(e) => onChange({ ...variant, effort: e.target.value })}>
             {EFFORTS.map((ef) => <option key={ef} value={ef}>{ef}</option>)}
           </Select>
         </Field>
-        {variant.engine === 'claude' ? (
-          <Field label="model">
-            <Input
-              value={variant.model ?? ''}
-              placeholder="claude-opus-4-8"
-              onChange={(e) => onChange({ ...variant, model: e.target.value || undefined })}
-            />
-          </Field>
-        ) : (
-          <Field label="engine model">
-            <Input
-              value={variant.engineModel ?? ''}
-              placeholder="engine default"
-              onChange={(e) => onChange({ ...variant, engineModel: e.target.value || undefined })}
-            />
-          </Field>
-        )}
         <Field label="thinking level">
           {variant.engine === 'claude' ? (
             <Select
@@ -214,6 +228,10 @@ function ResultsTable({ detail }: { detail: BenchmarkDetail }) {
 
 export default function BenchmarksPage() {
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([
+    { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', inputPerM: 0, outputPerM: 0, contextWindow: 0, maxOutput: 0, fastModeCapable: false },
+  ]);
+  const [enabledEngines, setEnabledEngines] = useState<RunEngine[]>([]);
   const [benchmarkList, setBenchmarkList] = useState<Benchmark[]>([]);
 
   const [prompt, setPrompt] = useState('');
@@ -263,6 +281,13 @@ export default function BenchmarksPage() {
   useEffect(() => {
     aliveRef.current = true;
     api.templates().then(setTemplates).catch(() => {});
+    api.meta().then((m) => aliveRef.current && setModels(m.models)).catch(() => {});
+    api.addons()
+      .then((addons) => {
+        if (!aliveRef.current) return;
+        setEnabledEngines(addons.filter((a) => (a.id === 'codex' || a.id === 'opencode') && a.enabled).map((a) => a.id as RunEngine));
+      })
+      .catch(() => {});
     reload();
     const t = setTimeout(function tick() {
       if (!aliveRef.current) return;
@@ -392,6 +417,8 @@ export default function BenchmarksPage() {
                     onChange={(updated) => updateVariant(i, updated)}
                     onRemove={() => removeVariant(i)}
                     canRemove={variants.length > 2}
+                    models={models}
+                    enabledEngines={enabledEngines}
                   />
                 ))}
               </div>

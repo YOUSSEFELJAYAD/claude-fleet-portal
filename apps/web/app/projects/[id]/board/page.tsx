@@ -1,11 +1,12 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import type { KanbanTask, KanbanColumn, KanbanBoardMessage, Project } from '@fleet/shared';
+import type { KanbanTask, KanbanColumn, KanbanBoardMessage, Project, ModelInfo, RunEngine } from '@fleet/shared';
 import { API } from '@/lib/api';
 import { Kicker, Panel, Btn, Field, Input, Textarea, Select, Empty } from '@/components/ui';
 import { KanbanBoard } from '@/components/KanbanBoard';
 import { DiffView } from '@/components/DiffView';
+import { ModelSelect, modelEngine } from '@/components/ModelSelect';
 
 // ── inlined per-project board SSE hook ──────────────────────────────────────────
 // lib/live.ts is off-limits to edit, so this lives here. Mirrors `useCampaign`:
@@ -77,6 +78,10 @@ export default function BoardPage({ params }: { params: { id: string } }) {
   const { tasks, connected, error } = useBoard(projectId);
 
   const [project, setProject] = useState<Project | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([
+    { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', inputPerM: 0, outputPerM: 0, contextWindow: 0, maxOutput: 0, fastModeCapable: false },
+  ]);
+  const [enabledEngines, setEnabledEngines] = useState<RunEngine[]>([]);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -90,6 +95,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
   const [budgetUsd, setBudgetUsd] = useState('');
   const [maxAttempts, setMaxAttempts] = useState('3');
   const [column, setColumn] = useState<KanbanColumn>('Backlog');
+  const [model, setModel] = useState('');
   // v2 #4 — single (one build run) vs campaign (orchestrator+worker sub-DAG). Immutable once the card
   // leaves Backlog (the server rejects a mode edit outside Backlog), so it's only offered at create.
   const [mode, setMode] = useState<'single' | 'campaign'>('single');
@@ -100,6 +106,16 @@ export default function BoardPage({ params }: { params: { id: string } }) {
     fetch(`${API}/api/projects/${projectId}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((p) => alive && setProject(p))
+      .catch(() => {});
+    fetch(`${API}/api/meta`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((m) => alive && m?.models && setModels(m.models))
+      .catch(() => {});
+    fetch(`${API}/api/addons`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((addons: Array<{ id: string; enabled: boolean }>) => {
+        if (alive) setEnabledEngines(addons.filter((a) => (a.id === 'codex' || a.id === 'opencode') && a.enabled).map((a) => a.id as RunEngine));
+      })
       .catch(() => {});
     return () => {
       alive = false;
@@ -150,6 +166,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
         budgetUsd: budgetUsd.trim() ? Number(budgetUsd) : undefined,
         column,
         mode,
+        model: model || null,
       }),
     });
     if (!ok) return;
@@ -162,6 +179,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
     setBudgetUsd('');
     setMaxAttempts('3');
     setColumn('Backlog');
+    setModel('');
     setMode('single');
     setShowCreate(false);
   }
@@ -304,6 +322,21 @@ export default function BoardPage({ params }: { params: { id: string } }) {
                 <option value="single">single</option>
                 <option value="campaign">campaign</option>
               </Select>
+            </Field>
+            <Field label="model" hint="blank = PM default; engine models delegate the card to that add-on">
+              <ModelSelect
+                models={models}
+                value={model}
+                onChange={setModel}
+                enabledEngines={enabledEngines}
+                allowCustom={false}
+                defaultOption={{ value: '', label: 'PM default · Claude Opus 4.8' }}
+              />
+              {model && modelEngine(models, model) !== 'claude' && (
+                <div className="text-faint font-mono text-[10px] mt-1.5">
+                  engine card · disallowed-tools and per-run budget caps are not enforced by engine CLIs
+                </div>
+              )}
             </Field>
             <div className="flex items-center gap-2">
               <Btn type="submit" variant="solid" disabled={busy || !title.trim()}>

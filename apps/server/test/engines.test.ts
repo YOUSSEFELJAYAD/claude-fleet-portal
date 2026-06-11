@@ -385,6 +385,7 @@ describe('parseEngineLine — opencode', () => {
 describe('end-to-end fake engine spawn (opencode shape)', () => {
   const binDir = mkdtempSync(join(tmpdir(), 'fleet-fake-engine-'));
   const FAKE_BIN = join(binDir, 'fake-engine');
+  const ENV_BIN = join(binDir, 'fake-engine-env');
 
   beforeAll(() => {
     // Fake engine: writes 3 JSONL lines then exits 0
@@ -401,6 +402,14 @@ process.exit(0);
 `,
     );
     chmodSync(FAKE_BIN, 0o755);
+    writeFileSync(
+      ENV_BIN,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: 'text', part: { text: process.env.OPENAI_BASE_URL || '' } }) + '\\n');
+process.exit(0);
+`,
+    );
+    chmodSync(ENV_BIN, 0o755);
   });
 
   it('spawnEngine + parseEngineLine: collects message text + tokens, exits 0', async () => {
@@ -430,5 +439,23 @@ process.exit(0);
     expect(collected.text).toBe('all done');
     expect(collected.tokIn).toBe(10);
     expect(collected.tokOut).toBe(5);
+  });
+
+  it('spawnEngine merges extraEnv into the child process environment', async () => {
+    const { spawnEngine } = await import('../src/engines.js');
+    let text = '';
+
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawnEngine('opencode', ENV_BIN, ['run', '--format', 'json', 'task'], '/tmp', {
+        onLine: (obj) => {
+          text = parseEngineLine('opencode', obj).resultText ?? text;
+        },
+        onStderr: () => {},
+        onExit: (code) => code === 0 ? resolve() : reject(new Error(`exit ${code}`)),
+      }, { OPENAI_BASE_URL: 'http://127.0.0.1:8787/v1' });
+      setTimeout(() => { proc.kill(); reject(new Error('timeout')); }, 5000).unref();
+    });
+
+    expect(text).toBe('http://127.0.0.1:8787/v1');
   });
 });

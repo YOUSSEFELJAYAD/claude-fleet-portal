@@ -2,8 +2,9 @@
  * Engine runner (§24) — pure builders + parser + spawner for the Codex and
  * OpenCode add-on CLIs.  Every exported function is side-effect-free except
  * `spawnEngine`, which mirrors spawnClaude's contract (detached, JSONL stdout,
- * process-group kill) but is simpler: no stdin protocol, no auth env from
- * addons, no --session-id.
+ * process-group kill) but is simpler: no stdin protocol, no --session-id.
+ * Add-on env (e.g. the compression proxy's OPENAI_BASE_URL / ANTHROPIC_BASE_URL)
+ * is injected by the caller via `extraEnv` (registry → addonRunEnvForEngine).
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { LaunchRequest, RunEngine } from '@fleet/shared';
@@ -258,8 +259,9 @@ const MAX_PARTIAL_BYTES = 32 * 1024 * 1024;
 /**
  * Spawn a headless engine CLI.  Mirrors spawnClaude's contract (detached,
  * JSONL stdout newline-buffered, process-group kill, SIGTERM→SIGKILL cascade)
- * but simpler: stdin is closed immediately (no protocol), and there is no
- * auth/addon env injection (engines manage their own credentials).
+ * but simpler: stdin is closed immediately (no protocol). Engines manage their
+ * own credentials; `extraEnv` carries add-on env (compression proxy base URLs)
+ * and wins over the inherited server env.
  */
 export function spawnEngine(
   engine: RunEngine,
@@ -267,8 +269,9 @@ export function spawnEngine(
   args: string[],
   cwd: string,
   handlers: EngineHandlers,
+  extraEnv: Record<string, string> = {},
 ): ManagedEngineProcess {
-  const env: Record<string, string> = { ...process.env as Record<string, string> };
+  const env: Record<string, string> = { ...process.env as Record<string, string>, ...extraEnv };
   if (engine === 'opencode') {
     env.OPENCODE_DISABLE_AUTOUPDATE = '1';
   }

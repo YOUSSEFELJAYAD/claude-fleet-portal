@@ -316,7 +316,7 @@ function applyTemplateProfile(lr: LaunchRequest, templateName: string): LaunchRe
 }
 
 // ── tick ──────────────────────────────────────────────────────────────────────
-function tick() {
+async function tick(): Promise<void> {
   const now = Date.now();
   let due: ScheduleRow[];
   try {
@@ -341,7 +341,7 @@ function tick() {
         effort: parsed.effort || 'high',
         permissionMode: parsed.permissionMode || 'default',
       };
-      const run = registry.launch(parsed);
+      const run = await registry.launch(parsed);
       runId = run?.id ?? null;
       launched = true;
     } catch (e: any) {
@@ -378,12 +378,12 @@ function tick() {
   }
 }
 
-/** Exported for tests only — calls one synchronous tick cycle. Do NOT use in production code. */
-export const __tickForTests: () => void = tick;
+/** Exported for tests only — calls one tick cycle. Do NOT use in production code. */
+export const __tickForTests = tick;
 
 /** Wire the recurring scheduler tick. Called once by the main loop on boot. */
 export function startScheduler() {
-  const t = setInterval(tick, 30_000);
+  const t = setInterval(() => void tick(), 30_000);
   // Never keep the Node process alive solely for the scheduler.
   t.unref();
   return t;
@@ -586,7 +586,7 @@ export function registerScheduleRoutes(app: FastifyInstance) {
       permissionMode: parsed.permissionMode || 'default',
     };
     try {
-      const run = registry.launch(parsed);
+      const run = await registry.launch(parsed);
       const now = Date.now();
       // Advance the next slot only for an enabled schedule (manual run counts as a firing).
       const next = existing.enabled ? computeNextFire(existing, now) : existing.next_fire_at;

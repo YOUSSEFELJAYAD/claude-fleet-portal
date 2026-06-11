@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Claude Fleet Portal — mission control for your Claude Code agents</title>
-<meta name="description" content="Open-source mission control for Claude Code: launch, monitor and orchestrate a fleet of local agents with live cost guardrails, an autonomous PM, campaigns and one-click updates. MIT licensed." />
+<title>Claude Fleet Portal — mission control for Claude, Codex and OpenCode agents</title>
+<meta name="description" content="Open-source mission control for Claude Code, Codex and OpenCode: launch, monitor and orchestrate local agent fleets with unified model routing, compression proxying, live guardrails, autonomous PM, campaigns and one-click updates. MIT licensed." />
 <meta property="og:title" content="Claude Fleet Portal" />
-<meta property="og:description" content="Open-source mission control for your Claude Code agents." />
+<meta property="og:description" content="Open-source mission control for Claude, Codex and OpenCode agents." />
 <meta property="og:image" content="assets/icon-512.png" />
 <link rel="icon" href="assets/icon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -126,11 +126,100 @@
   @keyframes fillBar { from { width: 0% } to { width: 100% } }
   @keyframes stepPulse { 0%,100% { transform: scale(1) } 50% { transform: scale(1.18) } }
 
+  /* ── sticky nav ── */
+  #topnav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(10,11,14,.88); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 28px; height: 52px; font-family: var(--display);
+    transition: box-shadow .3s;
+  }
+  #topnav.scrolled { box-shadow: 0 4px 30px rgba(0,0,0,.4); }
+  .nav-brand { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }
+  .nav-brand img { width: 30px; height: 30px; border-radius: 7px; }
+  .nav-brand .amber { color: var(--amber); }
+  .nav-links { display: flex; gap: 6px; }
+  .nav-links a {
+    font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+    padding: 6px 12px; border-radius: 6px; transition: color .2s, background .2s;
+  }
+  .nav-links a:hover, .nav-links a.active { color: var(--amber); background: rgba(255,176,0,.08); }
+  .nav-cta { display: flex; gap: 8px; }
+  .nav-cta .btn { padding: 8px 18px; font-size: 12.5px; }
+  @media (max-width: 860px) {
+    .nav-links { display: none; }
+    .nav-cta .btn:last-child { display: none; }
+  }
+
+  /* push hero below fixed nav */
+  #hero { padding-top: 52px; }
+
+  /* ── documentation section ── */
+  #docs .doc-grid { display: grid; grid-template-columns: 240px 1fr; gap: 0; margin-top: 42px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--panel); }
+  @media (max-width: 860px) { #docs .doc-grid { grid-template-columns: 1fr; } }
+  .doc-sidebar { background: var(--bg); border-right: 1px solid var(--line); padding: 20px 0; }
+  .doc-sidebar a {
+    display: block; padding: 10px 22px; font-family: var(--display); font-size: 12px;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--dim); border-left: 2px solid transparent;
+    transition: color .2s, border-color .2s, background .2s;
+  }
+  .doc-sidebar a:hover, .doc-sidebar a.active { color: var(--amber); border-left-color: var(--amber); background: rgba(255,176,0,.04); }
+  .doc-content { padding: 32px 36px; }
+  @media (max-width: 860px) { .doc-content { padding: 24px 20px; } }
+  .doc-content .doc-section { display: none; }
+  .doc-content .doc-section.active { display: block; }
+  .doc-content h3 { font-size: 22px; margin-bottom: 14px; letter-spacing: .03em; }
+  .doc-content h4 { font-size: 15px; color: var(--amber); margin: 22px 0 8px; letter-spacing: .06em; text-transform: uppercase; }
+  .doc-content p { color: var(--dim); font-size: 14.5px; line-height: 1.7; margin-bottom: 12px; }
+  .doc-content ul { color: var(--dim); font-size: 14px; line-height: 1.7; padding-left: 20px; margin-bottom: 14px; }
+  .doc-content li { margin-bottom: 6px; }
+  .doc-content li span.mono { color: var(--ink); }
+  .doc-content code { font-family: var(--monoF); font-size: 12.5px; background: rgba(255,176,0,.08); color: var(--amber); padding: 2px 7px; border-radius: 4px; }
+  .doc-tip { border: 1px solid rgba(255,176,0,.25); background: rgba(255,176,0,.04); border-radius: 10px; padding: 14px 18px; margin: 18px 0; }
+  .doc-tip .doc-tip-head { font-family: var(--display); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--amber); margin-bottom: 6px; }
+  .doc-tip p { font-size: 13px; margin-bottom: 0; }
+
+  /* ── releases section ── */
+  #releases .release-timeline { margin-top: 42px; position: relative; padding-left: 28px; }
+  #releases .release-timeline::before { content: ''; position: absolute; left: 6px; top: 8px; bottom: 8px; width: 1px; background: var(--line2); }
+  .release-entry { position: relative; margin-bottom: 28px; }
+  .release-entry::before { content: ''; position: absolute; left: -24px; top: 8px; width: 9px; height: 9px; border-radius: 50%; background: var(--faint); border: 2px solid var(--panel); }
+  .release-entry.current::before { background: var(--amber); box-shadow: 0 0 12px rgba(255,176,0,.5); }
+  .release-entry.current .release-tag { color: var(--amber); border-color: rgba(255,176,0,.4); }
+  .release-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .release-title { font-family: var(--display); font-size: 17px; color: var(--ink); letter-spacing: .03em; }
+  .release-tag { font-family: var(--monoF); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; padding: 3px 8px; border: 1px solid var(--line); border-radius: 5px; color: var(--dim); }
+  .release-date { font-family: var(--monoF); font-size: 10.5px; color: var(--faint); }
+  .release-body { color: var(--dim); font-size: 13.5px; line-height: 1.65; }
+  .release-body ul { padding-left: 18px; margin: 8px 0; }
+  .release-body li { margin-bottom: 4px; }
+  .release-body code { font-family: var(--monoF); font-size: 12px; background: rgba(255,176,0,.08); color: var(--amber); padding: 1px 6px; border-radius: 3px; }
+  .release-more { display: inline-flex; align-items: center; gap: 6px; margin-top: 24px; font-family: var(--display); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--amber); border: 1px solid rgba(255,176,0,.3); padding: 8px 18px; border-radius: 8px; transition: background .2s; }
+  .release-more:hover { background: rgba(255,176,0,.08); }
+
   footer { border-top: 1px solid var(--line); padding: 44px 24px 60px; text-align: center; color: var(--faint); font-size: 13.5px; }
   footer img { width: 38px; border-radius: 9px; vertical-align: middle; margin-bottom: 12px; }
 </style>
 </head>
 <body>
+
+<!-- ── STICKY NAV ────────────────────────────────────────────────────────── -->
+<nav id="topnav">
+  <a class="nav-brand" href="#hero"><img src="assets/icon.png" alt="" /> <span class="amber">Fleet</span> Portal</a>
+  <div class="nav-links">
+    <a href="#how">How it works</a>
+    <a href="#features">Features</a>
+    <a href="#docs">Docs</a>
+    <a href="#tour">Screenshots</a>
+    <a href="#releases">Releases</a>
+    <a href="#install">Install</a>
+  </div>
+  <div class="nav-cta">
+    <a class="btn btn-amber" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest" style="font-size:12px;padding:8px 18px">Download</a>
+    <a class="btn btn-ghost" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal" style="font-size:12px;padding:8px 18px">GitHub</a>
+  </div>
+</nav>
 
 <!-- ── HERO with three.js fleet ─────────────────────────────────────────── -->
 <header id="hero">
@@ -138,8 +227,8 @@
   <div class="hero-inner">
     <img class="logo" src="assets/icon.png" alt="Claude Fleet Portal logo" />
     <h1>Claude <span class="amber">Fleet</span> Portal</h1>
-    <p class="tagline">Mission control for your Claude Code agents — launch, watch and orchestrate
-      a whole fleet from one cockpit, with live cost guardrails and an autonomous PM.</p>
+    <p class="tagline">Mission control for Claude Code, Codex and OpenCode agents — launch, watch and orchestrate
+      a whole fleet from one cockpit, with live cost guardrails, compression routing and an autonomous PM.</p>
     <div class="oss-chip">⚖ <b>100% open source</b> · MIT licensed · built in the open</div>
     <div class="cta">
       <a class="btn btn-amber" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest">⇩ Download for macOS · Windows · Linux</a>
@@ -159,7 +248,7 @@
     <div class="step" style="--accent: var(--amber)">
       <div class="n">STEP 01</div><div class="ico">＋</div>
       <h3>Launch</h3>
-      <p>Describe the task — or start straight on any <span class="mono">/command</span>. Pick model, effort dial, skills and budget.</p>
+      <p>Describe the task — or start straight on any <span class="mono">/command</span>. Pick Claude, Codex or OpenCode models from one dropdown.</p>
       <div class="bar"></div>
     </div>
     <div class="step" style="--accent: var(--coral)">
@@ -193,14 +282,16 @@
 <section id="features">
   <div class="kicker">capabilities</div>
   <h2>Everything your fleet needs</h2>
-  <p class="lead">The portal owns Claude Code sessions end to end: it spawns them headless, parses the
-    live event stream, rebuilds the orchestrator → subagent hierarchy and streams it to your browser —
+  <p class="lead">The portal owns local agent sessions end to end: native Claude runs plus Codex and OpenCode engine add-ons.
+    It spawns them headless, parses live events, rebuilds orchestrator → subagent hierarchy and streams it to your browser —
     with full control over every run.</p>
   <div class="grid">
-    <div class="card"><div class="ico">◉</div><h3>Fleet dashboard</h3><p>Every run live: status, model and effort, cost gauge heating toward the budget ceiling, token burn, subagent count &amp; depth.</p></div>
+    <div class="card"><div class="ico">◉</div><h3>Fleet dashboard</h3><p>Every run live: status, engine, model and effort, cost gauge heating toward the budget ceiling, token burn, subagent count &amp; depth.</p></div>
+    <div class="card"><div class="ico">▣</div><h3>Unified model routing</h3><p>One model picker everywhere: Claude catalog entries, Codex models and OpenCode provider/model IDs. Engine-tagged models route automatically.</p></div>
     <div class="card"><div class="ico">⧉</div><h3>Live workflow trees</h3><p>Root → subagents at any depth with per-node streaming timelines, span waterfalls and OTLP telemetry. Stop, steer, resume, approve.</p></div>
-    <div class="card"><div class="ico">◫</div><h3>Autonomous PM</h3><p>Attach a git repo, drop cards on the Kanban board — the agent PM builds in isolated worktrees, validates, gates and merges. PR mode and a conflict-resolution agent included.</p></div>
+    <div class="card"><div class="ico">◫</div><h3>Autonomous PM</h3><p>Attach a git repo, drop cards on the Kanban board — delegate each card to Claude, Codex or OpenCode, with isolated worktrees, validation, gates and merges.</p></div>
     <div class="card"><div class="ico">⛓</div><h3>Campaigns</h3><p>One objective in, a planned dependency DAG out — a real worker agent per subtask, run in parallel, merged by a synthesizer.</p></div>
+    <div class="card"><div class="ico">◌</div><h3>Compression proxy</h3><p>Headroom can compress Claude traffic and compatible engine traffic too: Codex through OpenAI base URL, OpenCode for Anthropic/OpenAI models.</p></div>
     <div class="card"><div class="ico">⊞</div><h3>Agent library</h3><p>12 tuned profiles — Debugger, Test Writer, Security Auditor, Frontend Builder… — fully editable, with skills that genuinely shape the spawned agent.</p></div>
     <div class="card"><div class="ico">⊕</div><h3>Your whole Claude setup</h3><p>Every skill and slash-command from your installed plugins, surfaced and attachable. Launch a run directly on any /command.</p></div>
     <div class="card"><div class="ico">⊘</div><h3>Hard guardrails</h3><p>Budget ceilings enforced twice (CLI flag + server auto-kill), concurrency caps, per-project spend ceilings, daily tracking.</p></div>
@@ -222,6 +313,296 @@
     </div>
     <img class="shot" src="assets/template.png" alt="Agent profile editor with skill picker" loading="lazy" />
   </div>
+</section>
+
+<!-- ── DOCUMENTATION ────────────────────────────────────────────────────── -->
+<section id="docs">
+  <div class="kicker">documentation</div>
+  <h2>How it works — in depth</h2>
+  <p class="lead">Everything you need to know to get the most out of your fleet. Select a topic to dive in.</p>
+
+  <div class="doc-grid">
+    <div class="doc-sidebar">
+      <a href="#" class="active" data-doc="getting-started">Getting started</a>
+      <a href="#" data-doc="launching-agents">Launching agents</a>
+      <a href="#" data-doc="orchestration">Orchestration</a>
+      <a href="#" data-doc="engines-compression">Engines & compression</a>
+      <a href="#" data-doc="live-monitoring">Live monitoring</a>
+      <a href="#" data-doc="guardrails-budgets">Guardrails & budgets</a>
+      <a href="#" data-doc="autonomous-pm">Autonomous PM</a>
+      <a href="#" data-doc="templates-skills">Templates & skills</a>
+      <a href="#" data-doc="self-updates">Self-updates</a>
+    </div>
+    <div class="doc-content">
+
+      <!-- Getting started -->
+      <div class="doc-section active" id="doc-getting-started">
+        <h3>Getting started</h3>
+        <p>Claude Fleet Portal is a locally-hosted mission control for your Claude Code agents. It spawns headless <code>claude -p</code> processes, parses their live event streams and surfaces everything in a single cockpit UI.</p>
+
+        <h4>Prerequisites</h4>
+        <ul>
+          <li><span class="mono">Node.js 20+</span> and <span class="mono">pnpm</span> (if building from source)</li>
+          <li>The <a href="https://claude.com/claude-code">Claude Code CLI</a> installed globally (optional — a free deterministic mock is included)</li>
+          <li>macOS, Windows or Linux</li>
+        </ul>
+
+        <h4>Quick start</h4>
+        <p>The fastest path is the prebuilt desktop app — download it from the <a href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest">latest release</a>, open it, and you are in. No Node, no pnpm, no checkout needed.</p>
+        <p>If you prefer building from source:</p>
+        <ul>
+          <li><code>git clone</code> the repo and run <code>./install.sh</code></li>
+          <li>Then <code>./start.sh</code> — the web UI opens at <span class="mono">:4318</span>, the control plane listens on <span class="mono">:4319</span></li>
+          <li>Use <code>./start.sh --mock</code> for a free tour with no API tokens</li>
+        </ul>
+
+        <div class="doc-tip">
+          <div class="doc-tip-head">Tip</div>
+          <p>The mock mode replays deterministic streams from <code>tools/mock-claude.mjs</code> — great for developing or demoing without spending tokens.</p>
+        </div>
+      </div>
+
+      <!-- Launching agents -->
+      <div class="doc-section" id="doc-launching-agents">
+        <h3>Launching agents</h3>
+        <p>Click the <span class="mono">+ Launch Agent</span> button in the top header to open the launch dialog. Claude models run through the native Claude Code path; Codex and OpenCode selections route through their enabled engine add-ons automatically.</p>
+
+        <h4>Configuration options</h4>
+        <ul>
+          <li><strong>Task prompt</strong> — describe what the agent should do, or start with any <code>/command</code></li>
+          <li><strong>Working directory</strong> — the repo or folder the agent operates in</li>
+          <li><strong>Model & effort</strong> — select Claude, Codex or OpenCode models from one grouped picker; Claude runs keep the effort dial (low / medium / high / max)</li>
+          <li><strong>Budget ceiling</strong> — hard USD limit; the server auto-kills runs that hit it</li>
+          <li><strong>Template</strong> — pick from 12 pre-tuned agent profiles (Debugger, Test Writer, etc.)</li>
+          <li><strong>Skills & slash-commands</strong> — attach skills from your installed plugins</li>
+        </ul>
+
+        <h4>What happens after launch</h4>
+        <p>The control plane spawns the right CLI process, assigns it a run ID, and begins parsing the event stream. Within seconds the run card appears on your dashboard with live status, engine, model, tokens and available cost tracking.</p>
+      </div>
+
+      <!-- Orchestration -->
+      <div class="doc-section" id="doc-orchestration">
+        <h3>Orchestration & campaigns</h3>
+        <p>Single agents are powerful — but orchestrated fleets ship faster. The portal supports two orchestration modes:</p>
+
+        <h4>Subagent trees</h4>
+        <p>When a root agent spawns subagents, the portal automatically reconstructs the full hierarchy. You see the tree in real time: each node shows its own timeline, token burn and status. You can stop, steer or approve any node independently.</p>
+
+        <h4>Campaigns</h4>
+        <p>Campaigns take orchestration further. Give the portal a single high-level objective and it plans a dependency DAG — one real worker agent per subtask, run in parallel where possible. A synthesizer agent merges the results when all workers complete.</p>
+        <ul>
+          <li>Navigate to <span class="mono">/orchestrate</span> to create a campaign</li>
+          <li>The planner breaks your objective into subtasks with dependencies</li>
+          <li>Workers execute in parallel, respecting the DAG order</li>
+          <li>The synthesizer collects outputs and produces the final result</li>
+        </ul>
+
+        <div class="doc-tip">
+          <div class="doc-tip-head">Example</div>
+          <p>Objective: "Refactor the auth module to use JWT tokens". The planner might create subtasks for (1) audit current auth, (2) design JWT schema, (3) implement token generation, (4) update middleware, (5) write tests — each assigned to a worker agent.</p>
+        </div>
+      </div>
+
+      <!-- Engines & compression -->
+      <div class="doc-section" id="doc-engines-compression">
+        <h3>Engines & compression</h3>
+        <p>Claude is still the native full-feature engine, but Codex and OpenCode now participate in the same model catalog. If an add-on is enabled, its curated models appear beside Claude models in every picker.</p>
+
+        <h4>Unified model pickers</h4>
+        <ul>
+          <li><strong>Launch modal</strong> — choose Claude, Codex or OpenCode from grouped model options, with a custom engine model field when needed</li>
+          <li><strong>Templates, schedules and benchmarks</strong> — engine-tagged catalog models route to the matching CLI at launch time</li>
+          <li><strong>Kanban cards</strong> — assign a model per card; engine models delegate PM build/fix/resolve attempts to Codex or OpenCode</li>
+        </ul>
+
+        <h4>Engine behavior</h4>
+        <p>Engine add-ons are one-shot headless runs with a flat timeline. Stop works; Claude-only features such as resume/input, subagent trees, retry escalation and per-run cost streams stay on the native Claude path.</p>
+
+        <h4>Headroom compression routing</h4>
+        <p>The Compression add-on can proxy compatible engine traffic too. Codex routes through <code>OPENAI_BASE_URL=http://127.0.0.1:&lt;port&gt;/v1</code>. OpenCode routes through <code>ANTHROPIC_BASE_URL</code> for <code>anthropic/*</code> models and <code>OPENAI_BASE_URL</code> for <code>openai/*</code> models; other providers talk directly to their endpoints.</p>
+      </div>
+
+      <!-- Live monitoring -->
+      <div class="doc-section" id="doc-live-monitoring">
+        <h3>Live monitoring</h3>
+        <p>Every run streams data to your browser via Server-Sent Events (SSE). No polling, no refresh — the cockpit updates in real time.</p>
+
+        <h4>Fleet dashboard</h4>
+        <p>The root view shows every run as a card: status, model, effort dial, cost gauge, token burn, subagent count and depth. Filter by status (live / done / failed / killed) or search by task description.</p>
+
+        <h4>Run detail view</h4>
+        <p>Click any run card to drill into its detail page. You get:</p>
+        <ul>
+          <li><strong>Workflow tree</strong> — the full root-to-subagent hierarchy with per-node streaming</li>
+          <li><strong>Timeline</strong> — chronological view of every tool call, message and decision</li>
+          <li><strong>Span waterfall</strong> — duration bars for each operation, like a profiler</li>
+          <li><strong>OTLP telemetry overlay</strong> — OpenTelemetry spans when enabled</li>
+          <li><strong>File viewer</strong> — browse files the agent has read or written</li>
+          <li><strong>Diff view</strong> — see code changes as they happen</li>
+        </ul>
+
+        <h4>Steering controls</h4>
+        <p>You are not a passive observer. At any point you can stop a run, send a follow-up message, approve a pending action, or kill a runaway agent.</p>
+      </div>
+
+      <!-- Guardrails & budgets -->
+      <div class="doc-section" id="doc-guardrails-budgets">
+        <h3>Guardrails & budgets</h3>
+        <p>Production fleets need hard limits. The portal enforces them at two levels.</p>
+
+        <h4>Budget ceilings</h4>
+        <ul>
+          <li><strong>Per-run ceiling</strong> — set when launching; the CLI flag enforces it and the server double-checks with an auto-kill</li>
+          <li><strong>Per-project ceiling</strong> — aggregate spend limit for all runs in a project</li>
+          <li><strong>Daily tracking</strong> — the sidebar gauge shows cumulative daily spend, heating from green through amber to red</li>
+        </ul>
+
+        <h4>Concurrency & safety</h4>
+        <ul>
+          <li>Configurable concurrency caps — limit how many agents run simultaneously</li>
+          <li>Validation gates — require checks to pass before results are accepted</li>
+          <li>Merge gates — hold merges for your explicit approval, or run in full-auto mode</li>
+        </ul>
+
+        <div class="doc-tip">
+          <div class="doc-tip-head">Safety first</div>
+          <p>All data stays on your machine. The portal is local-first by design — your code, API keys and spend data never leave your network.</p>
+        </div>
+      </div>
+
+      <!-- Autonomous PM -->
+      <div class="doc-section" id="doc-autonomous-pm">
+        <h3>Autonomous PM</h3>
+        <p>The Project Manager mode turns the portal into an autonomous development pipeline.</p>
+
+        <h4>How it works</h4>
+        <ul>
+          <li>Attach a git repository to a project</li>
+          <li>Add cards to the Kanban board describing tasks</li>
+          <li>The PM agent picks up cards, builds in isolated git worktrees, validates the output, and gates the merge</li>
+          <li>Each card can use the PM default or a specific Claude, Codex or OpenCode model</li>
+          <li>PR mode opens pull requests instead of merging directly</li>
+          <li>A conflict-resolution agent handles merge conflicts automatically</li>
+        </ul>
+
+        <h4>Kanban board</h4>
+        <p>The board at <span class="mono">/projects/[id]/board</span> shows columns for backlog, in progress, review and done. Cards move automatically as agents work through them. You can assign engine models to specific cards, drag cards to reprioritize, add new ones, or block a card from being picked up.</p>
+      </div>
+
+      <!-- Templates & skills -->
+      <div class="doc-section" id="doc-templates-skills">
+        <h3>Templates & skills</h3>
+        <p>Agent templates are pre-tuned profiles that shape how the spawned agent behaves.</p>
+
+        <h4>Built-in templates</h4>
+        <p>The portal ships with 12 templates: Debugger, Test Writer, Security Auditor, Frontend Builder, Refactor Expert, Documentation Writer, and more. Each template defines a system prompt, default model, effort level and attached skills. Custom templates can now store engine-tagged model IDs too.</p>
+
+        <h4>Custom templates</h4>
+        <p>Create your own templates at <span class="mono">/templates</span>. Define the persona, attach specific skills and slash-commands, set default configuration, and save. Your custom templates appear in the launch dialog alongside the built-in ones.</p>
+
+        <h4>Skills & plugins</h4>
+        <p>Every skill and slash-command from your installed Claude Code plugins is surfaced in the portal. Attach them to individual runs or bake them into templates. Launch a run directly on any <code>/command</code> — the portal handles the rest.</p>
+      </div>
+
+      <!-- Self-updates -->
+      <div class="doc-section" id="doc-self-updates">
+        <h3>Self-updates</h3>
+        <p>The portal keeps itself current automatically.</p>
+
+        <h4>How updates work</h4>
+        <ul>
+          <li>The server checks GitHub Releases in the background on a regular interval</li>
+          <li>When a new version is found, an amber dot appears on the Releases nav entry</li>
+          <li>Click <span class="mono">Update to vX.Y.Z</span> — the server runs <code>git pull --ff-only</code> and <code>pnpm install</code></li>
+          <li>Dev watchers reload automatically; in production, a simple restart picks up the changes</li>
+          <li>Desktop builds point you at the new installer download instead</li>
+        </ul>
+
+        <h4>Version tracking</h4>
+        <p>The Releases page at <span class="mono">/releases</span> shows the installed version, current commit SHA, latest release, update status, and the full changelog for every published release.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── RELEASES ─────────────────────────────────────────────────────────── -->
+<section id="releases">
+  <div class="kicker">changelog</div>
+  <h2>Releases</h2>
+  <p class="lead">Track every version, see what shipped, and stay up to date.</p>
+
+  <div class="release-timeline">
+    <div class="release-entry current">
+      <div class="release-head">
+        <span class="release-title">Unified Models, Engine Delegation & Add-on Routing</span>
+        <span class="release-tag">v0.4.4</span>
+        <span class="release-date">current</span>
+      </div>
+      <div class="release-body">
+        <ul>
+          <li>Unified model catalog for Claude, Codex and OpenCode</li>
+          <li>Codex/OpenCode model pickers across launch, templates, schedules, benchmarks and Kanban</li>
+          <li>Kanban PM card delegation to engine models with server-created worktrees</li>
+          <li>Compression proxy routing for Codex and compatible OpenCode providers</li>
+          <li>Campaign planner with dependency DAG execution</li>
+          <li>Add-on framework: Compression, Codex, OpenCode add-ons</li>
+          <li>Live span waterfall and OTLP telemetry overlay</li>
+          <li>Self-update system with GitHub Releases integration</li>
+          <li>Desktop app builds for macOS, Windows, Linux</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="release-entry">
+      <div class="release-head">
+        <span class="release-title">Projects, Teams & Benchmarks</span>
+        <span class="release-tag">v0.3.0</span>
+      </div>
+      <div class="release-body">
+        <ul>
+          <li>Project management with git repo attachment</li>
+          <li>Team workspaces for shared fleet access</li>
+          <li>Benchmark runner for comparing agent configurations</li>
+          <li>Compare view for side-by-side run analysis</li>
+          <li>Notification system with configurable alerts</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="release-entry">
+      <div class="release-head">
+        <span class="release-title">Fleet Dashboard & Core Runtime</span>
+        <span class="release-tag">v0.2.0</span>
+      </div>
+      <div class="release-body">
+        <ul>
+          <li>Fleet dashboard with live SSE streaming</li>
+          <li>Run detail view with workflow trees and timelines</li>
+          <li>Agent template library (12 built-in profiles)</li>
+          <li>Budget ceilings with server-side auto-kill</li>
+          <li>History and metrics tracking</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="release-entry">
+      <div class="release-head">
+        <span class="release-title">Initial Release</span>
+        <span class="release-tag">v0.1.0</span>
+      </div>
+      <div class="release-body">
+        <ul>
+          <li>Process manager for headless <code>claude -p</code> sessions</li>
+          <li>Stream parser for Claude Code event protocol</li>
+          <li>Basic web UI with run cards and launch modal</li>
+          <li>Mock mode with deterministic replay</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <a class="release-more" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases">View all releases on GitHub ↗</a>
 </section>
 
 <!-- ── INSTALL ──────────────────────────────────────────────────────────── -->
@@ -269,7 +650,7 @@ cd claude-fleet-portal
     mock + 350-test hermetic suite mean you can hack on it without spending a token.</p>
   <div class="stats">
     <div class="stat"><b>MIT</b><span>license — use it anywhere</span></div>
-    <div class="stat"><b>350+</b><span>deterministic server tests</span></div>
+    <div class="stat"><b>660+</b><span>deterministic server tests</span></div>
     <div class="stat"><b>3 OS</b><span>installers, built by public CI</span></div>
     <div class="stat"><b>100%</b><span>local — nothing leaves your machine</span></div>
   </div>
@@ -283,7 +664,7 @@ cd claude-fleet-portal
 <footer>
   <img src="assets/icon.png" alt="" /><br/>
   🐙 one octopus, many arms · MIT © 2026 <a href="https://github.com/YOUSSEFELJAYAD">YOUSSEF EL JAYAD</a> ·
-  ✳ powered by <a href="https://claude.com/claude-code">Claude Code</a> · not affiliated with Anthropic
+  ✳ powered by <a href="https://claude.com/claude-code">Claude Code</a>, Codex and OpenCode · not affiliated with Anthropic
 </footer>
 
 <!-- ── three.js fleet octopus ───────────────────────────────────────────── -->
@@ -421,6 +802,59 @@ renderer.setAnimationLoop((tms) => {
       else if (!e.isIntersecting && timer) { clearInterval(timer); timer = null; }
     }
   }, { threshold: 0.35 }).observe(document.getElementById('steps'));
+})();
+</script>
+
+<!-- ── documentation tabs ──────────────────────────────────────────────── -->
+<script>
+(() => {
+  const sidebar = document.querySelector('.doc-sidebar');
+  if (!sidebar) return;
+  const links = [...sidebar.querySelectorAll('a')];
+  const sections = [...document.querySelectorAll('.doc-section')];
+
+  links.forEach((link) => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const target = link.dataset.doc;
+      links.forEach((l) => l.classList.remove('active'));
+      link.classList.add('active');
+      sections.forEach((s) => {
+        s.classList.toggle('active', s.id === 'doc-' + target);
+      });
+    });
+  });
+})();
+</script>
+
+<!-- ── nav scroll shadow + active section highlight ───────────────────── -->
+<script>
+(() => {
+  const nav = document.getElementById('topnav');
+  const navLinks = [...nav.querySelectorAll('.nav-links a')];
+  const sectionIds = navLinks.map((a) => a.getAttribute('href').replace('#', ''));
+
+  // add shadow on scroll
+  window.addEventListener('scroll', () => {
+    nav.classList.toggle('scrolled', window.scrollY > 40);
+  }, { passive: true });
+
+  // highlight active nav link based on scroll position
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        const id = entry.target.id;
+        navLinks.forEach((link) => {
+          link.classList.toggle('active', link.getAttribute('href') === '#' + id);
+        });
+      }
+    });
+  }, { rootMargin: '-80px 0px -60% 0px', threshold: 0 });
+
+  sectionIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) observer.observe(el);
+  });
 })();
 </script>
 </body>

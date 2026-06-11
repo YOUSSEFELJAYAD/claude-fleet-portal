@@ -2,7 +2,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Kicker, Panel, Empty, Btn, Field, Input, Select, Textarea, Toggle, Dot } from '@/components/ui';
+import { ModelSelect, customModelEngine, modelEngine } from '@/components/ModelSelect';
 import { clock, ago, dur } from '@/lib/format';
+import type { ModelInfo, RunEngine } from '@fleet/shared';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
@@ -11,6 +13,8 @@ interface LaunchRequestLite {
   prompt: string;
   cwd: string;
   model: string;
+  engine?: RunEngine;
+  engineModel?: string | null;
   effort: string;
   permissionMode?: string;
 }
@@ -30,11 +34,6 @@ interface Schedule {
   lastFiredAt: number | null;
   nextFireAt: number | null;
   createdAt: number;
-}
-
-interface ModelInfo {
-  id: string;
-  label: string;
 }
 
 interface TemplateInfo {
@@ -109,6 +108,8 @@ export default function SchedulesPage() {
   const [prompt, setPrompt] = useState('');
   const [cwd, setCwd] = useState('');
   const [model, setModel] = useState('claude-opus-4-8');
+  const [engineModel, setEngineModel] = useState('');
+  const [enabledEngines, setEnabledEngines] = useState<RunEngine[]>([]);
   const [effort, setEffort] = useState('high');
 
   const [submitting, setSubmitting] = useState(false);
@@ -154,6 +155,14 @@ export default function SchedulesPage() {
       })
       .catch(() => { /* templates optional */ });
 
+    fetch(API + '/api/addons')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((addons: Array<{ id: string; enabled: boolean }>) => {
+        if (!aliveRef.current) return;
+        setEnabledEngines(addons.filter((a) => (a.id === 'codex' || a.id === 'opencode') && a.enabled).map((a) => a.id as RunEngine));
+      })
+      .catch(() => { /* add-ons optional */ });
+
     // Unmount-safe setTimeout chain for countdown refresh
     let handle: ReturnType<typeof setTimeout>;
     const tick = () => {
@@ -197,9 +206,14 @@ export default function SchedulesPage() {
       return setFormErr('weekly time must be HH:MM');
     }
 
+    const customEngine = customModelEngine(model);
+    const launchRequest: LaunchRequestLite = customEngine
+      ? { prompt: prompt.trim(), cwd: cwd.trim(), model: 'claude-opus-4-8', effort, engine: customEngine, engineModel: engineModel.trim() || null }
+      : { prompt: prompt.trim(), cwd: cwd.trim(), model, effort };
+
     const body: any = {
       name: name.trim(),
-      launch_request: { prompt: prompt.trim(), cwd: cwd.trim(), model, effort },
+      launch_request: launchRequest,
     };
 
     if (recurrence !== null) {
@@ -267,7 +281,8 @@ export default function SchedulesPage() {
     }
   }
 
-  const models = meta?.models ?? [{ id: 'claude-opus-4-8', label: 'Opus 4.8' }];
+  const models = meta?.models ?? [{ id: 'claude-opus-4-8', label: 'Opus 4.8', inputPerM: 0, outputPerM: 0, contextWindow: 0, maxOutput: 0, fastModeCapable: false }];
+  const selectedEngine = modelEngine(models, model);
   const efforts = meta?.efforts ?? ['low', 'medium', 'high', 'xhigh', 'max'];
 
   return (
@@ -447,13 +462,15 @@ export default function SchedulesPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <Field label="model">
-                <Select value={model} onChange={(e) => setModel(e.target.value)}>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-                </Select>
+                <ModelSelect
+                  models={models}
+                  value={model}
+                  onChange={setModel}
+                  enabledEngines={enabledEngines}
+                  customValue={engineModel}
+                  onCustomValueChange={setEngineModel}
+                />
+                {selectedEngine !== 'claude' && <div className="text-faint font-mono text-[10px] mt-1.5">engine add-on run · retry/workflows unavailable</div>}
               </Field>
               <Field label="effort">
                 <Select value={effort} onChange={(e) => setEffort(e.target.value)}>
