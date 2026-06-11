@@ -269,13 +269,13 @@ export default function CompressionPage() {
                 once and the portal manages it from there — start, stop, health, restarts.
               </div>
               <div className="font-mono text-[11px] text-ink mt-3 px-3 py-2 border border-line2 bg-black/40 inline-block">
-                <span className="text-amber">$</span> pip install &quot;headroom-ai&quot;
+                <span className="text-amber">$</span> uv tool install --python 3.13 &quot;headroom-ai[proxy]&quot;
               </div>
               <div className="mt-4 flex items-center gap-3">
                 <Btn variant="solid" onClick={() => act('install')} disabled={busy != null}>
                   {busy === 'install' ? 'installing… (can take a minute)' : '⇩ Install for me'}
                 </Btn>
-                <span className="font-mono text-[10px] text-faint">tries uv → pipx → pip3, whichever you have</span>
+                <span className="font-mono text-[10px] text-faint">tries uv → pipx → pip with Python 3.10–3.13</span>
               </div>
             </>
           )}

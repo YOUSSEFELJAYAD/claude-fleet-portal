@@ -197,17 +197,38 @@ export function validateCompressionConfig(input: unknown): CompressionConfig {
 const DETECT_TTL_MS = 60_000;
 let detectCache: { at: number; bin: string | null; version: string | null } | null = null;
 
+const HEADROOM_PACKAGE = 'headroom-ai[proxy]';
+const SUPPORTED_HEADROOM_PYTHONS = ['3.13', '3.12', '3.11', '3.10'];
+
+function unique(xs: string[]): string[] {
+  return Array.from(new Set(xs.filter(Boolean)));
+}
+
+function executableCandidates(name: string): string[] {
+  const candidates = [
+    name,
+    path.join(HOME, '.local', 'bin', name),
+    `/opt/homebrew/bin/${name}`,
+    `/usr/local/bin/${name}`,
+  ];
+  if (process.env.XDG_BIN_HOME) candidates.push(path.join(process.env.XDG_BIN_HOME, name));
+  return unique(candidates);
+}
+
 /** Where `headroom` may live: PATH, plus the dirs uv/pipx/pip --user install into
  *  (GUI-launched desktop apps often miss those in PATH). HEADROOM_BIN, when set,
  *  is AUTHORITATIVE — no fallback scanning behind an explicit operator override. */
 function binCandidates(): string[] {
   if (process.env.HEADROOM_BIN) return [process.env.HEADROOM_BIN];
-  return [
+  const candidates = [
     'headroom',
+    ...executableCandidates('headroom').slice(1),
     path.join(HOME, '.local', 'bin', 'headroom'),
+    ...SUPPORTED_HEADROOM_PYTHONS.map((v) => path.join(HOME, 'Library', 'Python', v, 'bin', 'headroom')),
     '/opt/homebrew/bin/headroom',
     '/usr/local/bin/headroom',
   ];
+  return unique(candidates);
 }
 
 async function detectHeadroom(force = false): Promise<{ bin: string | null; version: string | null }> {
@@ -674,42 +695,119 @@ async function addonInfo(id: string): Promise<AddonInfo | null> {
   };
 }
 
-// ── dependency install (uv → pipx → pip3, first available) ──────────────────────
+// ── dependency install (uv → pipx → pip, first available) ───────────────────────
 
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
-const INSTALLERS: Array<{ cmd: string; args: string[] }> = [
-  { cmd: 'uv', args: ['tool', 'install', 'headroom-ai'] },
-  { cmd: 'pipx', args: ['install', 'headroom-ai'] },
-  { cmd: 'pip3', args: ['install', '--user', 'headroom-ai'] },
-];
 let installInFlight = false;
+
+interface Installer {
+  cmd: string;
+  args: string[];
+  label: string;
+}
+
+async function executableAvailable(cmd: string, args = ['--version']): Promise<boolean> {
+  try {
+    await execFileAsync(cmd, args, { timeout: 15_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pythonCandidates(): string[] {
+  const names = [
+    ...SUPPORTED_HEADROOM_PYTHONS.map((v) => `python${v}`),
+    'python3',
+  ];
+  const candidates: string[] = [];
+  for (const name of names) {
+    candidates.push(name, path.join(HOME, '.local', 'bin', name), `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, `/usr/bin/${name}`);
+    if (process.env.XDG_BIN_HOME) candidates.push(path.join(process.env.XDG_BIN_HOME, name));
+  }
+  return unique(candidates);
+}
+
+async function detectSupportedPython(): Promise<{ cmd: string; version: string } | null> {
+  for (const cmd of pythonCandidates()) {
+    try {
+      const { stdout } = await execFileAsync(
+        cmd,
+        ['-c', 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'],
+        { timeout: 15_000 },
+      );
+      const version = stdout.trim();
+      const m = version.match(/^3\.(\d+)$/);
+      const minor = m ? Number(m[1]) : NaN;
+      if (minor >= 10 && minor <= 13) return { cmd, version };
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
+async function headroomInstallers(): Promise<{ installers: Installer[]; python: { cmd: string; version: string } | null }> {
+  const installers: Installer[] = [];
+  const uv = (await Promise.all(executableCandidates('uv').map(async (cmd) => ((await executableAvailable(cmd)) ? cmd : null)))).find(Boolean);
+  if (uv) {
+    installers.push({
+      cmd: uv,
+      args: ['tool', 'install', '--python', '3.13', HEADROOM_PACKAGE],
+      label: `${uv} tool install --python 3.13 ${HEADROOM_PACKAGE}`,
+    });
+  }
+
+  const python = await detectSupportedPython();
+  if (!python) return { installers, python };
+
+  const pipx = (await Promise.all(executableCandidates('pipx').map(async (cmd) => ((await executableAvailable(cmd)) ? cmd : null)))).find(Boolean);
+  if (pipx) {
+    installers.push({
+      cmd: pipx,
+      args: ['install', '--python', python.cmd, HEADROOM_PACKAGE],
+      label: `${pipx} install --python ${python.cmd} ${HEADROOM_PACKAGE}`,
+    });
+  }
+
+  if (await executableAvailable(python.cmd, ['-m', 'pip', '--version'])) {
+    installers.push({
+      cmd: python.cmd,
+      args: ['-m', 'pip', 'install', '--user', HEADROOM_PACKAGE],
+      label: `${python.cmd} -m pip install --user ${HEADROOM_PACKAGE}`,
+    });
+  }
+
+  return { installers, python };
+}
 
 async function installHeadroom(): Promise<AddonInstallResult> {
   const steps: SelfUpdateStep[] = [];
   const trunc = (s: string) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
 
-  let installer: { cmd: string; args: string[] } | null = null;
-  for (const cand of INSTALLERS) {
-    try {
-      await execFileAsync(cand.cmd, ['--version'], { timeout: 15_000 });
-      installer = cand;
-      break;
-    } catch {
-      /* not available — try the next */
-    }
-  }
+  const { installers, python } = await headroomInstallers();
+  const installer = installers[0] ?? null;
   steps.push({
-    step: 'detect a Python package installer (uv / pipx / pip3)',
-    ok: !!installer,
-    output: installer ? `using ${installer.cmd}` : 'none found — install Python 3.10+ first',
+    step: 'detect a supported Python',
+    ok: !!python || !!installers.find((i) => i.cmd.endsWith('/uv') || i.cmd === 'uv'),
+    output: python
+      ? `using ${python.cmd} (${python.version}); Headroom currently supports Python 3.10–3.13`
+      : 'no local Python 3.10–3.13 found; uv will try managed Python 3.13 if available',
   });
-  if (!installer) return { ok: false, steps, note: 'No Python installer found. Install Python 3.10+, then retry.' };
+  steps.push({
+    step: 'detect a Python package installer (uv / pipx / pip)',
+    ok: !!installer,
+    output: installer
+      ? `using ${installer.label}`
+      : 'none found — install uv, pipx, or Python 3.10–3.13 with pip, then retry',
+  });
+  if (!installer) return { ok: false, steps, note: 'No compatible Python installer found. Install uv or Python 3.10–3.13, then retry.' };
 
   try {
-    const { stdout, stderr } = await execFileAsync(installer.cmd, installer.args, { timeout: INSTALL_TIMEOUT_MS });
-    steps.push({ step: `${installer.cmd} ${installer.args.join(' ')}`, ok: true, output: trunc(stdout + stderr) });
+    const { stdout, stderr } = await execFileAsync(installer.cmd, installer.args, { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024 });
+    steps.push({ step: installer.label, ok: true, output: trunc(stdout + stderr) });
   } catch (e: any) {
-    steps.push({ step: `${installer.cmd} ${installer.args.join(' ')}`, ok: false, output: trunc(String(e?.stderr ?? e?.message ?? e)) });
+    steps.push({ step: installer.label, ok: false, output: trunc(String(e?.stderr ?? e?.message ?? e)) });
     return { ok: false, steps, note: 'Install failed — output above. You can also run it manually in a terminal.' };
   }
 
@@ -717,7 +815,7 @@ async function installHeadroom(): Promise<AddonInstallResult> {
   steps.push({
     step: 'verify the headroom binary',
     ok: !!det.bin,
-    output: det.bin ? `${det.bin}${det.version ? ` (v${det.version})` : ''}` : 'installed, but `headroom` is not on PATH — add ~/.local/bin to PATH',
+    output: det.bin ? `${det.bin}${det.version ? ` (v${det.version})` : ''}` : 'installed, but `headroom` is not on PATH — add ~/.local/bin or ~/Library/Python/<version>/bin to PATH',
   });
   return {
     ok: !!det.bin,
