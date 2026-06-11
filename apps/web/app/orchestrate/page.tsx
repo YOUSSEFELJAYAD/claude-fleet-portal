@@ -100,15 +100,17 @@ export default function OrchestratePage() {
         Give one orchestrator agent an objective — it decomposes the work and the portal auto-spawns a fleet of worker agents to execute it.
       </p>
 
-      <div className="grid lg:grid-cols-[1fr_minmax(360px,420px)] gap-5">
-        {/* launch form */}
-        <Panel ticked className="p-5 self-start order-2 lg:order-1">
-          <Kicker>new campaign</Kicker>
-          <div className="mt-3 space-y-4">
+      <div className="space-y-5">
+        {/* ── block 1 · new campaign ─────────────────────────────────────────── */}
+        <Panel ticked>
+          <div className="px-4 py-3 border-b hairline">
+            <Kicker>new campaign</Kicker>
+          </div>
+          <div className="p-5 space-y-4">
             <Field label="objective">
               <Textarea rows={3} value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="e.g. Audit the payments module for bugs and ship fixes" autoFocus />
             </Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <Field label="working directory"><Input value={cwd} onChange={(e) => setCwd(e.target.value)} /></Field>
               <Field label="max parallel workers" hint="≤16">
                 <Input type="number" min={1} max={16} value={maxParallel} onChange={(e) => setMaxParallel(Number(e.target.value))} />
@@ -143,47 +145,50 @@ export default function OrchestratePage() {
           </div>
         </Panel>
 
-        {/* campaign list — two blocks: live now / finished */}
-        <div className="order-1 lg:order-2 space-y-5">
-          {(() => {
-            const liveCampaigns = campaigns.filter((c) => LIVE_CAMPAIGN_STATUSES.includes(c.status));
-            const doneCampaigns = campaigns.filter((c) => !LIVE_CAMPAIGN_STATUSES.includes(c.status));
-            return (
-              <>
-                <Panel ticked>
-                  <div className="flex items-center justify-between px-4 py-3 border-b hairline">
-                    <span className="flex items-center gap-2">
-                      <Dot color="#ffb000" live={liveCampaigns.length > 0} size={6} />
-                      <Kicker>live now</Kicker>
-                    </span>
-                    <span className="font-mono tnum text-[12px] text-amber">{String(liveCampaigns.length).padStart(2, '0')}</span>
-                  </div>
-                  <div className="p-4 space-y-3">
-                    {liveCampaigns.length === 0 ? (
-                      <div className="font-mono text-[11px] text-faint">nothing running — launch a campaign on the left</div>
-                    ) : (
-                      liveCampaigns.map((c) => <CampaignRow key={c.id} c={c} />)
-                    )}
-                  </div>
-                </Panel>
+        {(() => {
+          const liveCampaigns = campaigns.filter((c) => LIVE_CAMPAIGN_STATUSES.includes(c.status));
+          const doneCampaigns = campaigns.filter((c) => !LIVE_CAMPAIGN_STATUSES.includes(c.status));
+          return (
+            <>
+              {/* ── block 2 · live now ─────────────────────────────────────────── */}
+              <Panel ticked>
+                <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+                  <span className="flex items-center gap-2">
+                    <Dot color="#ffb000" live={liveCampaigns.length > 0} size={6} />
+                    <Kicker>live now</Kicker>
+                  </span>
+                  <span className="font-mono tnum text-[12px] text-amber">{String(liveCampaigns.length).padStart(2, '0')}</span>
+                </div>
+                <div className="p-4">
+                  {liveCampaigns.length === 0 ? (
+                    <div className="font-mono text-[11px] text-faint">nothing running — launch a campaign above</div>
+                  ) : (
+                    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {liveCampaigns.map((c) => <CampaignRow key={c.id} c={c} />)}
+                    </div>
+                  )}
+                </div>
+              </Panel>
 
-                <Panel>
-                  <div className="flex items-center justify-between px-4 py-3 border-b hairline">
-                    <Kicker>finished</Kicker>
-                    <span className="font-mono tnum text-[12px] text-dim">{String(doneCampaigns.length).padStart(2, '0')}</span>
-                  </div>
-                  <div className="p-4 space-y-3 overflow-auto" style={{ maxHeight: '58vh' }}>
-                    {doneCampaigns.length === 0 ? (
-                      <Empty>No finished campaigns yet.</Empty>
-                    ) : (
-                      doneCampaigns.map((c) => <CampaignRow key={c.id} c={c} />)
-                    )}
-                  </div>
-                </Panel>
-              </>
-            );
-          })()}
-        </div>
+              {/* ── block 3 · finished ─────────────────────────────────────────── */}
+              <Panel>
+                <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+                  <Kicker>finished</Kicker>
+                  <span className="font-mono tnum text-[12px] text-dim">{String(doneCampaigns.length).padStart(2, '0')}</span>
+                </div>
+                <div className="p-4 overflow-auto" style={{ maxHeight: '60vh' }}>
+                  {doneCampaigns.length === 0 ? (
+                    <Empty>No finished campaigns yet.</Empty>
+                  ) : (
+                    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {doneCampaigns.map((c) => <CampaignRow key={c.id} c={c} />)}
+                    </div>
+                  )}
+                </div>
+              </Panel>
+            </>
+          );
+        })()}
       </div>
     </div>
   );

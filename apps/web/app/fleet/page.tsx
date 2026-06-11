@@ -12,7 +12,7 @@ export default function FleetSchedulerPage() {
   const [status, setStatus] = useState<FleetStatus | null>(null);
   const [statusErr, setStatusErr] = useState<string | null>(null);
   const [cfg, setCfg] = useState<FleetConfig | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [cfgOpen, setCfgOpen] = useState(false); // config lives in a POPUP, not inline
   const [busy, setBusy] = useState(false);
   const [cfgErr, setCfgErr] = useState<string | null>(null);
 
@@ -45,7 +45,13 @@ export default function FleetSchedulerPage() {
 
   function patch<K extends keyof FleetConfig>(k: K, v: FleetConfig[K]) {
     setCfg((c) => (c ? { ...c, [k]: v } : c));
-    setSaved(false);
+  }
+
+  function openConfig() {
+    // refetch on open — a previously cancelled edit must not leak into this session
+    api.fleetConfig().then(setCfg).catch(() => {});
+    setCfgErr(null);
+    setCfgOpen(true);
   }
 
   async function save() {
@@ -55,7 +61,7 @@ export default function FleetSchedulerPage() {
     try {
       const next = await api.setFleetConfig(cfg);
       setCfg(next);
-      setSaved(true);
+      setCfgOpen(false); // saved → dismiss; the snapshot below reflects it live
       // refresh the snapshot immediately so pool/quotas reflect the new reserve.
       api.fleetStatus().then(setStatus).catch(() => {});
     } catch (e: any) {
@@ -69,13 +75,18 @@ export default function FleetSchedulerPage() {
 
   return (
     <div className="max-w-5xl">
-      <Kicker>cross-project scheduler · v2 #7</Kicker>
-      <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-1">Fleet Scheduler</h1>
-      <p className="font-mono text-[11px] text-faint mb-5 leading-relaxed">
-        Admission-only fair-share of the single global concurrency pool across projects by priority.
-        Running runs are never preempted; a project over its fair-share quota simply has its Ready
-        cards retried on the next tick.
-      </p>
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
+        <div>
+          <Kicker>cross-project scheduler · v2 #7</Kicker>
+          <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-1">Fleet Scheduler</h1>
+          <p className="font-mono text-[11px] text-faint leading-relaxed">
+            Admission-only fair-share of the single global concurrency pool across projects by priority.
+            Running runs are never preempted; a project over its fair-share quota simply has its Ready
+            cards retried on the next tick.
+          </p>
+        </div>
+        <Btn onClick={openConfig}>⚙ Fleet Config</Btn>
+      </div>
 
       {/* ── live allocation snapshot ─────────────────────────────────────── */}
       <Panel className="p-4 mb-5 grid grid-cols-4 gap-5" ticked>
@@ -96,7 +107,8 @@ export default function FleetSchedulerPage() {
         >
           <span className="font-display tracking-wide">PM POOL DEADLOCKED.</span> The pool is 0
           (reserve {status.config.reserveSlotsForNonPm} ≥ maxConcurrentRuns {status.maxConcurrentRuns})
-          while projects have Ready cards — nothing will launch. Lower the reserve below, or raise
+          while projects have Ready cards — nothing will launch. Lower the reserve in{' '}
+          <button onClick={openConfig} className="underline" style={{ color: '#ff5d5d' }}>⚙ Fleet Config</button>, or raise
           global maxConcurrentRuns in settings.
         </div>
       )}
@@ -165,52 +177,74 @@ export default function FleetSchedulerPage() {
         not here. This page edits only the fleet-wide knobs below.
       </p>
 
-      {/* ── editable fleet config ────────────────────────────────────────── */}
-      <Panel className="p-6 max-w-2xl">
-        <Kicker>fleet config</Kicker>
-        {!cfg ? (
-          <div className="font-mono text-faint text-[12px] mt-3">loading config…</div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-6 mt-3">
-              <Field label="reserve slots for non-PM" hint="held back from PM pool">
-                <Input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={cfg.reserveSlotsForNonPm}
-                  onChange={(e) => patch('reserveSlotsForNonPm', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-                />
-              </Field>
-              <Field label="fleet spend ceiling" hint="USD / day · blank = no cap">
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.5"
-                  placeholder="no cap"
-                  value={ceilingEmpty ? '' : cfg.fleetSpendCeilingUsd ?? ''}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    // blank → null (no ceiling); validateFleetConfig accepts null. Don't coerce empty→0.
-                    patch('fleetSpendCeilingUsd', raw === '' ? null : Number(raw));
-                  }}
-                />
-              </Field>
-            </div>
+      {/* ── fleet config popup (same design language as the other portal modals) ── */}
+      {cfgOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-16 px-4"
+          style={{ background: 'rgba(4,5,7,0.78)' }}
+          onClick={() => setCfgOpen(false)}
+        >
+          <Panel ticked className="w-full max-w-[520px]">
+            <div onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b hairline">
+                <div>
+                  <Kicker>scheduler settings</Kicker>
+                  <div className="font-display text-[16px] text-ink tracking-wide mt-1">Fleet Config</div>
+                </div>
+                <button onClick={() => setCfgOpen(false)} className="text-faint hover:text-ink font-mono text-lg leading-none">✕</button>
+              </div>
 
-            <p className="font-mono text-[10px] text-faint mt-4 leading-relaxed">
-              The PM pool is <span className="text-dim">maxConcurrentRuns − reserveSlotsForNonPm</span>; campaign / non-PM
-              workers draw from the reserved slots. A null ceiling means no fleet-wide daily spend gate.
-            </p>
+              <div className="p-5">
+                {!cfg ? (
+                  <div className="font-mono text-faint text-[12px]">loading config…</div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-5">
+                      <Field label="reserve slots for non-PM" hint="held back from PM pool">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={cfg.reserveSlotsForNonPm}
+                          onChange={(e) => patch('reserveSlotsForNonPm', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                        />
+                      </Field>
+                      <Field label="fleet spend ceiling" hint="USD / day · blank = no cap">
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.5"
+                          placeholder="no cap"
+                          value={ceilingEmpty ? '' : cfg.fleetSpendCeilingUsd ?? ''}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            // blank → null (no ceiling); validateFleetConfig accepts null. Don't coerce empty→0.
+                            patch('fleetSpendCeilingUsd', raw === '' ? null : Number(raw));
+                          }}
+                        />
+                      </Field>
+                    </div>
+                    <p className="font-mono text-[10px] text-faint mt-4 leading-relaxed">
+                      The PM pool is <span className="text-dim">maxConcurrentRuns − reserveSlotsForNonPm</span>; campaign / non-PM
+                      workers draw from the reserved slots. A null ceiling means no fleet-wide daily spend gate.
+                    </p>
+                    {cfgErr && (
+                      <div className="font-mono text-[11px] mt-3" style={{ color: '#ff5d5d' }}>{cfgErr}</div>
+                    )}
+                  </>
+                )}
+              </div>
 
-            <div className="mt-6 flex items-center gap-3">
-              <Btn variant="solid" onClick={save} disabled={busy}>{busy ? 'saving…' : 'Save Fleet Config'}</Btn>
-              {saved && <span className="font-mono text-[11px]" style={{ color: '#54e08a' }}>✓ saved</span>}
-              {cfgErr && <span className="font-mono text-[11px]" style={{ color: '#ff5d5d' }}>{cfgErr}</span>}
+              <div className="px-5 py-4 border-t hairline flex items-center justify-end gap-2">
+                <Btn onClick={() => setCfgOpen(false)}>Cancel</Btn>
+                <Btn variant="solid" onClick={save} disabled={busy || !cfg}>
+                  {busy ? 'saving…' : 'Save Fleet Config'}
+                </Btn>
+              </div>
             </div>
-          </>
-        )}
-      </Panel>
+          </Panel>
+        </div>
+      )}
     </div>
   );
 }
