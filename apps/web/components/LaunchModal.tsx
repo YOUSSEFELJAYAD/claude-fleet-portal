@@ -2,8 +2,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, type McpServerInfo } from '@/lib/api';
-import type { ModelInfo, SkillInfo, SubagentInfo, EffortLevel, PermissionMode, ToolPack, RunEngine } from '@fleet/shared';
-import { CLAUDE_TOOLS } from '@fleet/shared';
+import type { AgentTemplate, ModelInfo, SkillInfo, SubagentInfo, EffortLevel, PermissionMode, ToolPack, RunEngine } from '@fleet/shared';
+import { CLAUDE_TOOLS, MODELS } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn } from './ui';
 import { MultiPicker } from './MultiPicker';
 import { PackBar } from './PackBar';
@@ -43,6 +43,11 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [enabledEngines, setEnabledEngines] = useState<string[]>([]);
   const [selectedEngine, setSelectedEngine] = useState<RunEngine>('claude');
   const [engineModel, setEngineModel] = useState('');
+
+  const [templates, setTemplates] = useState<AgentTemplate[]>([]);
+  const [templateId, setTemplateId] = useState('');
+  const [appendSys, setAppendSys] = useState('');
+  const [sysOpen, setSysOpen] = useState(false);
 
   const [prompt, setPrompt] = useState('');
   const [cwd, setCwd] = useState('/Users/jd');
@@ -87,6 +92,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
         setEnabledEngines(engines);
       })
       .catch(() => {}); // no enabled engines ≠ broken form
+    api.templates().then(setTemplates).catch(() => {});
   }, []);
   const toolOptions = useMemo(() => buildToolOptions(mcpServers), [mcpServers]);
   useEffect(() => {
@@ -102,6 +108,36 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const effectiveEffort = ultracode ? 'xhigh' : effort;
 
   const isEngineRun = selectedEngine !== 'claude';
+
+  // Group templates by role for optgroup rendering
+  const TEMPLATE_ROLES = ['orchestrator', 'worker', 'reviewer', 'synthesizer'] as const;
+  const templatesByRole = useMemo(() => {
+    const map: Record<string, AgentTemplate[]> = {};
+    for (const t of templates) {
+      const r = t.role || 'other';
+      (map[r] ??= []).push(t);
+    }
+    return map;
+  }, [templates]);
+
+  function applyTemplate(id: string) {
+    setTemplateId(id);
+    if (!id) {
+      setAppendSys('');
+      return;
+    }
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    setAppendSys(t.systemPrompt);
+    setSysOpen(true); // auto-expand when a template is applied
+    if (MODELS.find((m) => m.id === t.model)) setModel(t.model);
+    setFastMode(t.fastMode);
+    setEffort(t.effort as EffortLevel);
+    setPermissionMode(t.permissionMode as PermissionMode);
+    setAllowedTools(t.allowedTools ?? []);
+    setChosenSkills(t.skills ?? []);
+    setBudget(t.budgetUsd != null ? String(t.budgetUsd) : '');
+  }
 
   // A picked /command becomes the head of the prompt — CLAUDE ONLY: codex/opencode
   // have no claude slash-commands, and a stale selection from before an engine switch
@@ -147,6 +183,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             skills: chosenSkills.filter((s) => s !== command),
             subagentProfile: subagentProfile || null,
             budgetUsd: budget.trim() ? Number(budget) : null,
+            appendSystemPrompt: appendSys.trim() || undefined,
           });
       onClose();
       router.push(`/runs/${run.id}`);
@@ -218,6 +255,40 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
+            {/* ── agent profile (template) picker — claude only ── */}
+            {!isEngineRun && (
+              <div className="col-span-2">
+                <Field label="agent profile · template" hint="applies its system prompt, model, tools, skills & budget — everything stays editable">
+                  <Select value={templateId} onChange={(e) => applyTemplate(e.target.value)}>
+                    <option value="">— blank agent (no profile) —</option>
+                    {TEMPLATE_ROLES.map((role) =>
+                      templatesByRole[role]?.length ? (
+                        <optgroup key={role} label={role}>
+                          {templatesByRole[role].map((t) => (
+                            <option key={t.id} value={t.id} title={t.description}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ) : null
+                    )}
+                    {/* any roles not in the fixed list */}
+                    {Object.entries(templatesByRole)
+                      .filter(([role]) => !(TEMPLATE_ROLES as readonly string[]).includes(role))
+                      .map(([role, ts]) => (
+                        <optgroup key={role} label={role}>
+                          {ts.map((t) => (
+                            <option key={t.id} value={t.id} title={t.description}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                  </Select>
+                </Field>
+              </div>
+            )}
+
             {/* /command selector — claude only */}
             {!isEngineRun && (
               <div className="col-span-2">
@@ -272,6 +343,38 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
                 </div>
               )}
             </div>
+
+            {/* ── agent instructions (system prompt) — claude only ── */}
+            {!isEngineRun && (
+              <div className="col-span-2">
+                <button
+                  type="button"
+                  onClick={() => setSysOpen((v) => !v)}
+                  className="font-mono text-[10.5px] text-faint hover:text-ink transition-colors flex items-center gap-1.5"
+                >
+                  <span>{sysOpen ? '▾' : '▸'}</span>
+                  {!sysOpen && appendSys.trim() ? (
+                    <span style={{ color: '#ffb000' }}>agent instructions · ACTIVE ({appendSys.length} chars)</span>
+                  ) : (
+                    <span>agent instructions · system prompt</span>
+                  )}
+                </button>
+                {sysOpen && (
+                  <div className="mt-2">
+                    <Textarea
+                      rows={6}
+                      value={appendSys}
+                      onChange={(e) => setAppendSys(e.target.value)}
+                      placeholder="how this agent should work — appended via --append-system-prompt"
+                      className="w-full"
+                    />
+                    <div className="font-mono text-[9.5px] text-faint mt-1">
+                      how this agent should work — appended via --append-system-prompt
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <Field label="working directory" hint="cwd">
               <Input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="/path/to/project" />

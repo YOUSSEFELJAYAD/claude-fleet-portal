@@ -942,3 +942,17 @@ independently verified; 19 confirmed, ALL fixed):**
 - Known accepted gap (documented, not fixed): daily spend is bucketed by started_at — a run
   crossing midnight attributes post-midnight accrual to the previous day.
 - Suite: 466 pass + 2 by-design skips (+2 regression tests: resume-cap, nested turn.failed).
+
+## 25. Template-driven agent creation (launch = claude-style profiles) (2026-06-11)
+
+User: creating an agent should have the same profile machinery claude has — also templates.
+Sonnet implemented, Fable reviewed (clean — no findings).
+- LaunchModal (claude engine only): "agent profile · template" select (grouped by role) —
+  applying a template fills EVERYTHING it defines (system prompt → --append-system-prompt,
+  model, fast mode, effort, permission mode, allowed tools, skills, budget), all still editable;
+  '— blank agent —' clears only the instructions. New collapsible "agent instructions · system
+  prompt" textarea (amber ACTIVE chip when collapsed-but-set) so ad-hoc agents get working
+  instructions without a template. Engine runs (codex/opencode) see neither and never send
+  appendSystemPrompt. No server changes (LaunchRequest.appendSystemPrompt already existed).
+- Template detail page: "launch with this profile" quick-launch panel (prompt + cwd + ▶) using
+  the CURRENT edit state — tweak, launch, navigate to the run.

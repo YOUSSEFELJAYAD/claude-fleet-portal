@@ -42,6 +42,12 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  // ── quick launch state ────────────────────────────────────────────────────
+  const [launchPrompt, setLaunchPrompt] = useState('');
+  const [launchCwd, setLaunchCwd] = useState('/Users/jd');
+  const [launchBusy, setLaunchBusy] = useState(false);
+  const [launchErr, setLaunchErr] = useState<string | null>(null);
+
   function hydrate(tpl: AgentTemplate) {
     setT(tpl);
     setRole(tpl.role);
@@ -122,6 +128,34 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
     }
   }
 
+  async function quickLaunch() {
+    if (!t) return;
+    if (!launchPrompt.trim()) {
+      setLaunchErr('A task prompt is required.');
+      return;
+    }
+    setLaunchBusy(true);
+    setLaunchErr(null);
+    try {
+      const run = await api.launch({
+        prompt: launchPrompt,
+        cwd: launchCwd,
+        model,
+        fastMode: t.fastMode,
+        effort,
+        permissionMode,
+        allowedTools: allowedTools.length ? allowedTools : undefined,
+        skills: skills.length ? skills : undefined,
+        budgetUsd: budget.trim() ? Number(budget) : null,
+        appendSystemPrompt: systemPrompt.trim() || undefined,
+      });
+      router.push(`/runs/${run.id}`);
+    } catch (e: any) {
+      setLaunchErr(e?.message || 'launch failed');
+      setLaunchBusy(false);
+    }
+  }
+
   if (loadErr) {
     return (
       <div className="font-mono text-[12px] text-sig-failed">
@@ -195,6 +229,33 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
 
         {/* ── right: profile knobs ───────────────────────────────────────────── */}
         <div className="space-y-5">
+          {/* ── quick launch ─────────────────────────────────────────────────── */}
+          <Panel className="p-4 space-y-3">
+            <Kicker>launch with this profile</Kicker>
+            <Field label="task prompt">
+              <Textarea
+                rows={2}
+                value={launchPrompt}
+                onChange={(e) => setLaunchPrompt(e.target.value)}
+                placeholder="Describe the task for the agent…"
+                className="w-full"
+              />
+            </Field>
+            <Field label="working directory" hint="cwd">
+              <Input
+                value={launchCwd}
+                onChange={(e) => setLaunchCwd(e.target.value)}
+                placeholder="/path/to/project"
+              />
+            </Field>
+            <div className="flex items-center gap-3 flex-wrap">
+              <Btn variant="solid" onClick={quickLaunch} disabled={launchBusy}>
+                {launchBusy ? 'Launching…' : '▶ Launch'}
+              </Btn>
+              {launchErr && <span className="font-mono text-[11px]" style={{ color: '#ff5d5d' }}>{launchErr}</span>}
+            </div>
+          </Panel>
+
           <Panel className="p-4 space-y-3">
             <Kicker>profile</Kicker>
             <Field label="description">
