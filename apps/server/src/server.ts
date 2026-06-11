@@ -14,16 +14,21 @@ import { listSkills, listSubagents } from './catalog.js';
 import { listTeams, readTeam, watchTeam, isSafeId } from './teamWatcher.js';
 // Lane B additive features (self-contained modules; each owns its tables/routes).
 import { registerMetricsRoutes } from './metrics.js';
+import { registerInboxRoutes } from './inbox.js'; // F6 — approval inbox
 import { registerScheduleRoutes, startScheduler } from './scheduler.js';
 import { registerMcpRoutes } from './mcp.js';
 import { registerNotifierRoutes, initNotifier } from './notifier.js';
 import { registerExportRoutes } from './exporter.js';
 import { registerScoreRoutes } from './scores.js';
 import { registerTagsRoutes } from './tags.js';
+import { registerSearchRoutes } from './search.js'; // F7 — full-text transcript search
 import { registerOtelRoutes } from './otel.js'; // H6
+import { registerMemoryRoutes, initMemory } from './memory.js'; // F9 — fleet memory
 import { registerReleaseRoutes } from './release.js';
+import { registerBenchmarkRoutes } from './benchmarks.js'; // F4+F5 — benchmark mode + best-of-N
 import { registerAddonRoutes } from './addons.js'; // §22 — add-on marketplace (compression/headroom)
 import { registerPackRoutes } from './packs.js'; // §23 — tool/skill packs (launch presets)
+import { registerPortabilityRoutes } from './portability.js'; // F10 — config as code (export/import)
 // Agent-PM / Kanban feature (spec docs/superpowers/specs/2026-06-09-agent-pm-kanban-design.md).
 // Import order matters: projects BEFORE kanban (kanban_tasks references a project; tables created on import).
 import { registerProjectsRoutes } from './projects.js';
@@ -32,6 +37,7 @@ import { registerFileviewRoutes } from './fileview.js';
 import { registerFileeditRoutes } from './fileedit.js'; // v2 #1 — file CRUD + commit (opt-in per project)
 import { registerPlanboardRoutes, planboard } from './planboard.js'; // v2 #3 — objective → Ready cards
 import { registerFleetRoutes, assertCapAboveReserve } from './fleet.js'; // v2 #7 — cross-project fleet scheduler (admission)
+import { registerTriggersRoutes, startTriggerPoller } from './triggers.js'; // F1 — GitHub triggers
 import { pm } from './pm.js';
 
 /** H21 — a cwd query must be an absolute path with no traversal/null byte (or absent). */
@@ -100,7 +106,7 @@ function sse(reply: FastifyReply, req: FastifyRequest): { send: (obj: unknown) =
 // emitted; bad types are a 400 instead of a stored time bomb (a non-array allowedTools used
 // to crash registry.launch later, mid-campaign).
 const TEMPLATE_ROLES = new Set(['orchestrator', 'worker', 'reviewer', 'synthesizer']);
-function validateTemplateFields(body: any): { fields: Partial<AgentTemplate> } | { error: string } {
+export function validateTemplateFields(body: any): { fields: Partial<AgentTemplate> } | { error: string } {
   const f: Partial<AgentTemplate> = {};
   const strArray = (v: unknown): string[] | null =>
     Array.isArray(v) && v.every((x) => typeof x === 'string')
@@ -190,6 +196,7 @@ export function buildServer() {
 
   // Lane B additive features — register routes + start background workers.
   registerMetricsRoutes(app); // A2
+  registerInboxRoutes(app); // F6 — approval inbox
   registerScheduleRoutes(app); // A4
   startScheduler(); // A4 — interval tick (unref'd)
   registerMcpRoutes(app); // A5
@@ -198,10 +205,15 @@ export function buildServer() {
   registerExportRoutes(app); // A9
   registerScoreRoutes(app); // A7
   registerTagsRoutes(app); // A8
+  registerSearchRoutes(app); // F7 — full-text transcript search
   registerOtelRoutes(app); // H6 — OTLP receiver (/v1/metrics, /v1/logs) + /api/agents/:id/otel
+  registerMemoryRoutes(app); // F9 — fleet memory (compounding knowledge)
+  initMemory(); // F9 — subscribe to run-terminal events
   registerReleaseRoutes(app); // §15 — release page + GitHub update check / self-update
+  registerBenchmarkRoutes(app); // F4+F5 — benchmark mode + best-of-N
   registerAddonRoutes(app); // §22 — add-on marketplace + headroom compression-proxy lifecycle
   registerPackRoutes(app); // §23 — tool/skill packs (launch presets)
+  registerPortabilityRoutes(app); // F10 — config as code (export/import)
 
   // Agent-PM / Kanban — projects BEFORE kanban (FK), then the viewer; then start the PM engine.
   registerProjectsRoutes(app);
@@ -210,6 +222,8 @@ export function buildServer() {
   registerFileeditRoutes(app); // v2 #1 — opt-in file CRUD + commit (per-project editing_enabled gate)
   registerPlanboardRoutes(app); // v2 #3 — plan-board (objective → Ready cards)
   registerFleetRoutes(app); // v2 #7 — fleet config + status (admission gate is in pm.launchBuild)
+  registerTriggersRoutes(app); // F1 — GitHub triggers
+  startTriggerPoller(); // F1 — 120s poll interval (unref'd)
   planboard.init(); // subscribe onRunTerminal — partitioned (§3.7): acts only on its own planning runs
   pm.init(); // subscribe onRunTerminal + safety tick
   void pm.reconcile().catch(() => {}); // boot guardrail: reset cards whose run died (async: aborts mid-resolve worktrees)
@@ -312,7 +326,9 @@ export function buildServer() {
       reply.code(404);
       return { error: 'not found' };
     }
-    return { run, nodes: registry.getNodes(id) };
+    // F3 — cheap indexed lookup for the run that retried this one (null if none).
+    const retriedBy = repo.getRetriedBy(id);
+    return { run, nodes: registry.getNodes(id), retriedBy };
   });
 
   app.get('/api/agents/:id/tree', async (req, reply) => {

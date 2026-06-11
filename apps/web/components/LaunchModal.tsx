@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, type McpServerInfo } from '@/lib/api';
-import type { AgentTemplate, ModelInfo, SkillInfo, SubagentInfo, EffortLevel, PermissionMode, ToolPack, RunEngine } from '@fleet/shared';
+import type { AgentTemplate, ModelInfo, SkillInfo, SubagentInfo, EffortLevel, PermissionMode, ToolPack, RunEngine, RetryPolicy } from '@fleet/shared';
 import { CLAUDE_TOOLS, MODELS } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn } from './ui';
 import { MultiPicker } from './MultiPicker';
@@ -67,6 +67,10 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [command, setCommand] = useState(''); // optional /command the run starts on
   const [subagentProfile, setSubagentProfile] = useState('');
   const [budget, setBudget] = useState('');
+  const [memoryRecall, setMemoryRecall] = useState(false); // F9 — fleet memory recall
+  // F3 — auto-retry: '' = off, 'once' = once, 'once-escalate' = once→escalate, 'twice-escalate' = twice→escalate
+  const [retryMode, setRetryMode] = useState('');
+  const [escalateTarget, setEscalateTarget] = useState('claude-opus-4-8');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -154,6 +158,15 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setErr(null);
     try {
+      // F3 — build retryPolicy from the selected retryMode (claude only)
+      const retryPolicy: RetryPolicy | undefined = (() => {
+        if (isEngineRun || !retryMode) return undefined;
+        if (retryMode === 'once') return { maxRetries: 1 };
+        if (retryMode === 'once-escalate') return { maxRetries: 1, escalateModel: escalateTarget };
+        if (retryMode === 'twice-escalate') return { maxRetries: 2, escalateModel: escalateTarget };
+        return undefined;
+      })();
+
       const run = isEngineRun
         ? await api.launch({
             prompt: effectivePrompt,
@@ -178,15 +191,31 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             interactive,
             brief,
             permissionMode,
-            allowedTools: allowedTools.length ? allowedTools : undefined,
+            allowedTools: (() => {
+              // F9 — union mcp__personal-rag into allowedTools when memory recall is on
+              const base = allowedTools.length ? allowedTools : [];
+              if (memoryRecall && !base.includes('mcp__personal-rag')) {
+                return [...base, 'mcp__personal-rag'];
+              }
+              return base.length ? base : undefined;
+            })(),
             disallowedTools: disallowedTools.length ? disallowedTools : undefined,
             worktree: worktree.trim() || undefined,
             // the picked /command's instructions auto-load with the command — never double-inject
             skills: chosenSkills.filter((s) => s !== command),
             subagentProfile: subagentProfile || null,
             budgetUsd: budget.trim() ? Number(budget) : null,
-            appendSystemPrompt: appendSys.trim() || undefined,
+            // F9 — compose memory recall block into appendSystemPrompt without overwriting user text
+            appendSystemPrompt: (() => {
+              const memBlock = memoryRecall
+                ? `MEMORY: before starting, search the operator's knowledge base for relevant past runs/notes (personal-rag MCP search tool if available) and apply what was learned.`
+                : '';
+              const base = appendSys.trim();
+              if (base && memBlock) return `${base}\n\n${memBlock}`;
+              return base || memBlock || undefined;
+            })(),
             thinkingLevel: thinkingLevel || undefined,
+            retryPolicy: retryPolicy ?? null,
           });
       onClose();
       router.push(`/runs/${run.id}`);
@@ -408,6 +437,39 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
                       how this agent should work — appended via --append-system-prompt
                     </div>
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* F9 — memory recall toggle — claude only */}
+            {!isEngineRun && (
+              <div className="col-span-2 flex items-center gap-3">
+                <Toggle on={memoryRecall} onChange={setMemoryRecall} />
+                <div>
+                  <div className="font-display text-[11px] text-dim tracking-wide uppercase">memory recall</div>
+                  <div className="text-faint font-mono text-[10px]">search past runs via personal-rag before starting</div>
+                </div>
+              </div>
+            )}
+
+            {/* F3 — auto-retry — claude only */}
+            {!isEngineRun && (
+              <div className="col-span-2 flex items-center gap-4 flex-wrap">
+                <Field label="auto-retry on failure" hint="fires only on status 'failed'">
+                  <Select value={retryMode} onChange={(e) => setRetryMode(e.target.value)}>
+                    <option value="">off</option>
+                    <option value="once">retry once</option>
+                    <option value="once-escalate">retry once → escalate</option>
+                    <option value="twice-escalate">retry twice → escalate</option>
+                  </Select>
+                </Field>
+                {(retryMode === 'once-escalate' || retryMode === 'twice-escalate') && (
+                  <Field label="escalate to" hint="model used on the final retry">
+                    <Select value={escalateTarget} onChange={(e) => setEscalateTarget(e.target.value)}>
+                      <option value="claude-opus-4-8">claude-opus-4-8</option>
+                      <option value="claude-fable-5">claude-fable-5</option>
+                    </Select>
+                  </Field>
                 )}
               </div>
             )}

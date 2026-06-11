@@ -1,8 +1,9 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import type { Project, Run } from '@fleet/shared';
+import type { TriggerView, CreateTriggerRequest } from '@/lib/api';
+import type { Project, Run, AgentTemplate } from '@fleet/shared';
 import { statusMeta } from '@/lib/status';
 import { usd, clock } from '@/lib/format';
 import { Panel, Kicker, Stat, Gauge, Empty, Dot } from '@/components/ui';
@@ -34,6 +35,275 @@ function Tab({ href, label }: { href: string; label: string }) {
     </Link>
   );
 }
+
+// ── Triggers Panel ─────────────────────────────────────────────────────────────
+
+interface TriggersPanelProps {
+  projectId: string;
+  // Note: the Project type carries no owner/repo slug (only rootDir + remoteName),
+  // so the repo input starts empty — the user fills it in (finding #6).
+}
+
+function TriggersPanel({ projectId }: TriggersPanelProps) {
+  const projectRepo: string | null = null; // no slug available client-side
+  const [triggers, setTriggers] = useState<TriggerView[]>([]);
+  const [templates, setTemplates] = useState<AgentTemplate[]>([]);
+  const [tErr, setTErr] = useState<string | null>(null);
+  const aliveRef = useRef(true);
+
+  // Add-form state
+  const [addKind, setAddKind] = useState<'issue-label' | 'pr-opened'>('issue-label');
+  const [addRepo, setAddRepo] = useState(projectRepo ?? '');
+  const [addLabel, setAddLabel] = useState('');
+  const [addAction, setAddAction] = useState<'card' | 'run'>('card');
+  const [addTemplate, setAddTemplate] = useState('');
+  const [addErr, setAddErr] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  function loadTriggers() {
+    if (!aliveRef.current) return;
+    api.listTriggers()
+      .then((ts) => { if (aliveRef.current) setTriggers(ts.filter((t) => t.projectId === projectId)); })
+      .catch(() => { /* silently ignore — polling */ });
+  }
+
+  useEffect(() => {
+    aliveRef.current = true;
+    loadTriggers();
+    api.templates()
+      .then((ts) => { if (aliveRef.current) setTemplates(ts); })
+      .catch(() => {});
+
+    function schedule() {
+      if (!aliveRef.current) return;
+      const t = setTimeout(() => {
+        loadTriggers();
+        schedule();
+      }, 8000);
+      return t;
+    }
+    const t = setTimeout(() => {
+      loadTriggers();
+      schedule();
+    }, 8000);
+    return () => {
+      aliveRef.current = false;
+      clearTimeout(t);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  async function handleAdd() {
+    setAddErr(null);
+    const body: CreateTriggerRequest = {
+      repo: addRepo.trim(),
+      kind: addKind,
+      config: addKind === 'issue-label' ? { label: addLabel.trim() } : {},
+      action: addAction,
+      project_id: projectId,
+      template: addAction === 'run' && addTemplate ? addTemplate : null,
+      enabled: true,
+    };
+    setAdding(true);
+    try {
+      await api.createTrigger(body);
+      loadTriggers();
+      setAddLabel('');
+      setAddRepo(projectRepo ?? '');
+    } catch (e: any) {
+      setAddErr(e?.message ?? 'failed to create trigger');
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleToggle(t: TriggerView) {
+    try {
+      await api.updateTrigger(t.id, { enabled: !t.enabled });
+      loadTriggers();
+    } catch (e: any) {
+      setTErr(e?.message ?? 'update failed');
+    }
+  }
+
+  async function handleDelete(t: TriggerView) {
+    try {
+      await api.deleteTrigger(t.id);
+      setTriggers((prev) => prev.filter((x) => x.id !== t.id));
+    } catch (e: any) {
+      setTErr(e?.message ?? 'delete failed');
+    }
+  }
+
+  async function handlePoll(t: TriggerView) {
+    try {
+      const updated = await api.pollTrigger(t.id);
+      setTriggers((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+    } catch (e: any) {
+      setTErr(e?.message ?? 'poll failed');
+    }
+  }
+
+  return (
+    <Panel className="overflow-hidden mb-5">
+      {/* header row */}
+      <div className="px-4 py-3 border-b hairline flex items-center justify-between">
+        <Kicker>github triggers</Kicker>
+        <span className="font-mono text-[10px] text-faint">auto-create cards or runs from issues / PRs</span>
+      </div>
+      <div className="p-4">
+        {tErr && (
+          <div className="mb-3 font-mono text-[11px] px-2 py-1 border" style={{ color: '#ff5d5d', borderColor: '#ff5d5d30', background: 'rgba(255,93,93,0.05)' }}>
+            {tErr}{' '}
+            <button onClick={() => setTErr(null)} className="underline">dismiss</button>
+          </div>
+        )}
+
+        {/* trigger list */}
+        {triggers.length > 0 && (
+          <div className="mb-4 divide-y divide-white/[0.04] border border-line2">
+            {triggers.map((t) => (
+              <div key={t.id} className="px-3 py-2 flex items-center gap-3 text-[11px]">
+                <span className="font-mono text-faint w-[80px] shrink-0">{t.kind}</span>
+                <span className="font-mono text-dim truncate flex-1">{t.repo}</span>
+                {t.kind === 'issue-label' && (
+                  <span className="font-mono text-faint shrink-0">
+                    label: <span className="text-amber">{String(t.config.label ?? '')}</span>
+                  </span>
+                )}
+                <span className="font-mono text-faint shrink-0">
+                  &rarr; <span className="text-ink">{t.action}</span>
+                </span>
+                {t.lastError && (
+                  <span className="font-mono shrink-0 max-w-[200px] truncate" style={{ color: '#ff5d5d' }} title={t.lastError}>
+                    ! {t.lastError}
+                  </span>
+                )}
+                {/* enabled toggle */}
+                <button
+                  onClick={() => handleToggle(t)}
+                  className="shrink-0 font-mono text-[10px] px-1.5 py-0.5 border transition-colors"
+                  style={
+                    t.enabled
+                      ? { color: '#54e08a', borderColor: '#54e08a40' }
+                      : { color: '#5b626d', borderColor: '#5b626d40' }
+                  }
+                >
+                  {t.enabled ? 'on' : 'off'}
+                </button>
+                {/* poll now */}
+                <button
+                  onClick={() => handlePoll(t)}
+                  className="shrink-0 font-display uppercase tracking-wider text-[10px] px-2 py-0.5 border border-line2 text-dim hover:text-ink hover:border-amber/60 transition-colors"
+                >
+                  poll
+                </button>
+                {/* delete */}
+                <button
+                  onClick={() => handleDelete(t)}
+                  className="shrink-0 font-mono text-[12px] text-faint hover:text-red-400 transition-colors"
+                  title="remove trigger"
+                >
+                  &times;
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {triggers.length === 0 && (
+          <p className="font-mono text-[11px] text-faint mb-4">no triggers yet — add one below</p>
+        )}
+
+        {/* add form */}
+        <div className="flex flex-wrap gap-2 items-end">
+          {/* kind */}
+          <div className="flex flex-col gap-1">
+            <span className="font-mono text-[10px] text-faint uppercase tracking-wider">kind</span>
+            <select
+              value={addKind}
+              onChange={(e) => setAddKind(e.target.value as 'issue-label' | 'pr-opened')}
+              className="font-mono text-[11px] bg-surface border border-line2 px-2 py-1 text-ink"
+            >
+              <option value="issue-label">issue-label</option>
+              <option value="pr-opened">pr-opened</option>
+            </select>
+          </div>
+
+          {/* repo */}
+          <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
+            <span className="font-mono text-[10px] text-faint uppercase tracking-wider">repo (owner/name)</span>
+            <input
+              value={addRepo}
+              onChange={(e) => setAddRepo(e.target.value)}
+              placeholder="owner/name"
+              className="font-mono text-[11px] bg-surface border border-line2 px-2 py-1 text-ink placeholder:text-faint"
+            />
+          </div>
+
+          {/* label (only for issue-label) */}
+          {addKind === 'issue-label' && (
+            <div className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] text-faint uppercase tracking-wider">label</span>
+              <input
+                value={addLabel}
+                onChange={(e) => setAddLabel(e.target.value)}
+                placeholder="e.g. agent"
+                className="font-mono text-[11px] bg-surface border border-line2 px-2 py-1 text-ink placeholder:text-faint w-[120px]"
+              />
+            </div>
+          )}
+
+          {/* action */}
+          <div className="flex flex-col gap-1">
+            <span className="font-mono text-[10px] text-faint uppercase tracking-wider">action</span>
+            <select
+              value={addAction}
+              onChange={(e) => setAddAction(e.target.value as 'card' | 'run')}
+              className="font-mono text-[11px] bg-surface border border-line2 px-2 py-1 text-ink"
+            >
+              <option value="card">card</option>
+              <option value="run">run</option>
+            </select>
+          </div>
+
+          {/* template (only for run) */}
+          {addAction === 'run' && (
+            <div className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] text-faint uppercase tracking-wider">template</span>
+              <select
+                value={addTemplate}
+                onChange={(e) => setAddTemplate(e.target.value)}
+                className="font-mono text-[11px] bg-surface border border-line2 px-2 py-1 text-ink"
+              >
+                <option value="">none</option>
+                {templates.map((tpl) => (
+                  <option key={tpl.id} value={tpl.name}>{tpl.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <button
+            onClick={handleAdd}
+            disabled={adding}
+            className="font-display uppercase tracking-wider text-[11px] px-3 py-1 border border-amber/50 text-amber hover:bg-amber/10 transition-colors disabled:opacity-50 self-end"
+          >
+            {adding ? 'adding…' : '+ add'}
+          </button>
+        </div>
+
+        {addErr && (
+          <div className="mt-2 font-mono text-[11px]" style={{ color: '#ff5d5d' }}>
+            {addErr}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+// ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function ProjectHub({ params }: { params: { id: string } }) {
   const { id } = params;
@@ -177,6 +447,9 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
           </Link>
         </div>
       </Panel>
+
+      {/* F1 — GitHub triggers panel */}
+      <TriggersPanel projectId={id} />
 
       {/* scoped runs */}
       <div className="mb-3 flex items-baseline justify-between">

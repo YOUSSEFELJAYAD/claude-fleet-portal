@@ -160,6 +160,8 @@ export interface Run {
   structuredOutput: unknown | null;
   /** OS process group id of the spawned `claude` child — lets stop/reconcile work across server restarts. */
   pid: number | null;
+  /** F3 — auto-retry chain: id of the run this is a retry of (null if not a retry). */
+  retryOf?: string | null;
   // ── derived rollups (PRD §7.1) ─────────────────────────────
   subagentCount: number;
   liveSubagents: number;
@@ -170,6 +172,13 @@ export interface Run {
 // ─────────────────────────────────────────────────────────────────────────────
 // Launch request (PRD §7.2)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** F3 — auto-retry with escalation policy. maxRetries: 1 or 2; escalateModel swapped in on
+ *  the FINAL attempt when set. Engine runs → 400 at launch (not supported v1). */
+export interface RetryPolicy {
+  maxRetries: 1 | 2;
+  escalateModel?: string | null;
+}
 
 export interface LaunchRequest {
   prompt: string;
@@ -214,6 +223,10 @@ export interface LaunchRequest {
    *  (0/4000/10000/31999), absent = adaptive default. codex: minimal|low|medium|high →
    *  -c model_reasoning_effort. opencode: passed to --variant verbatim. */
   thinkingLevel?: string | null;
+  /** F3 — auto-retry with escalation. Engine runs → 400. Campaign/project runs → ignored. */
+  retryPolicy?: RetryPolicy | null;
+  /** F3 — internal: how many retries have already fired in this chain (0-based). */
+  _attempt?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

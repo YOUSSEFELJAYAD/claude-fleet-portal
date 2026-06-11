@@ -283,7 +283,15 @@ class Registry {
   }
 
   // ── lifecycle ───────────────────────────────────────────────────────────────
-  launch(reqIn: LaunchRequest): Run {
+  launch(reqIn: LaunchRequest, opts: { _internalRetry?: boolean } = {}): Run {
+    // §27 review #4 — the retry-tracking fields are INTERNAL: accepted only from
+    // maybeRetry itself. An external body smuggling _attempt:-1e9 (or a stored
+    // scheduler/trigger launch_request carrying them) would otherwise defeat the
+    // retry cap and yield an unbounded autonomous spend chain.
+    if (!opts._internalRetry) {
+      delete (reqIn as any)._attempt;
+      delete (reqIn as any)._retryOf;
+    }
     const activeCount = [...this.live.values()].filter((lr) => !isTerminal(lr.run.status)).length;
     if (activeCount >= this.config.maxConcurrentRuns) {
       throw Object.assign(new Error(`Max concurrent runs reached (${this.config.maxConcurrentRuns})`), {
@@ -304,6 +312,21 @@ class Registry {
         new Error('thinkingLevel must be one of off, think, megathink, ultrathink'),
         { statusCode: 400 },
       );
+    }
+
+    // F3 — validate retryPolicy
+    if (reqIn.retryPolicy != null) {
+      // engine runs are not supported in v1
+      if (reqIn.engine && reqIn.engine !== 'claude') {
+        throw Object.assign(new Error('retryPolicy is not supported on engine add-on runs'), { statusCode: 400 });
+      }
+      const rp = reqIn.retryPolicy;
+      if (rp.maxRetries !== 1 && rp.maxRetries !== 2) {
+        throw Object.assign(new Error('retryPolicy.maxRetries must be 1 or 2'), { statusCode: 400 });
+      }
+      if (rp.escalateModel != null && !MODELS.some((m) => m.id === rp.escalateModel)) {
+        throw Object.assign(new Error(`retryPolicy.escalateModel '${rp.escalateModel}' is not a known model id`), { statusCode: 400 });
+      }
     }
 
     // ultracode preset (DC.md D-007/D-008): force xhigh effort + tighter budget default.
@@ -345,6 +368,8 @@ class Registry {
       subagentProfile: req.subagentProfile ?? null,
       resultText: null,
       structuredOutput: null,
+      // F3 — carries the id of the run being retried when this is an auto-retry
+      retryOf: (req as any)._retryOf ?? null,
       subagentCount: 0,
       liveSubagents: 0,
       maxDepth: 0,
@@ -388,6 +413,11 @@ class Registry {
    */
   async launchEngine(reqIn: LaunchRequest): Promise<Run> {
     const engine = reqIn.engine!;
+    // §27 review #18 — engine runs are one-shot: retryPolicy unsupported (enforced HERE,
+    // not in launch(), which engine requests never reach).
+    if (reqIn.retryPolicy != null) {
+      throw Object.assign(new Error('retryPolicy is not supported on engine add-on runs'), { statusCode: 400 });
+    }
 
     // §26 — validate thinkingLevel FIRST (before the engine-enabled / binary checks) so an
     // invalid level always returns 400 regardless of add-on state, making the test deterministic.
@@ -755,6 +785,53 @@ class Registry {
     lr.run.status = status;
   }
 
+  /**
+   * F3 — auto-retry with escalation. Called after notifyTerminal for failed (non-killed,
+   * non-completed) runs that carry a retryPolicy and are NOT campaign/project runs.
+   * Fires the retry through the full guardrail surface; a blocked retry is DROPPED
+   * with a note appended to the failed run's error field.
+   */
+  private maybeRetry(lr: LiveRun) {
+    const rp = lr.req.retryPolicy;
+    if (!rp) return; // no policy
+    if (lr.run.status !== 'failed') return; // only retry on failed (never killed / completed)
+    if (lr.run.campaignId || lr.run.projectId) return; // campaign/PM own retries
+    if (lr.run.engine && lr.run.engine !== 'claude') return; // engine runs not supported
+
+    const attempt = lr.req._attempt ?? 0; // 0 = original run; 1 = first retry; etc.
+    if (attempt >= rp.maxRetries) return; // exhausted
+
+    const nextAttempt = attempt + 1;
+    const isFinal = nextAttempt >= rp.maxRetries;
+
+    // Swap model to escalateModel on the FINAL attempt when set.
+    let model = lr.req.model;
+    if (isFinal && rp.escalateModel) {
+      model = rp.escalateModel;
+    }
+
+    // Build the retry request carrying attempt tracking.
+    const retryReq: LaunchRequest = {
+      ...lr.req,
+      model,
+      _attempt: nextAttempt,
+      // internal field: the failed run's id so launch() can set retryOf on the new run row
+      _retryOf: lr.run.id,
+    } as any;
+
+    try {
+      this.launch(retryReq, { _internalRetry: true });
+    } catch (e: any) {
+      // Guardrail-blocked retry (daily-cap 409 or concurrency 429): drop silently, note on error.
+      const note = e?.code === 'daily-cap'
+        ? ' · auto-retry skipped: daily cap'
+        : ` · auto-retry skipped: ${e?.message ?? 'guardrail'}`;
+      lr.run.error = (lr.run.error ?? '') + note;
+      repo.upsertRun(lr.run);
+      console.warn(`[registry] retry dropped for run ${lr.run.id}:`, e?.message ?? e);
+    }
+  }
+
   private onExit(lr: LiveRun, code: number | null, _signal: NodeJS.Signals | null) {
     // The run was deleted (or replaced by a resume) while the child was still dying —
     // upserting now would re-INSERT the deleted rows, re-broadcast a ghost run, and
@@ -792,6 +869,9 @@ class Registry {
     repo.upsertRun(lr.run);
     this.emitRun(lr);
     this.notifyTerminal(lr);
+    // F3 — fire auto-retry AFTER notifyTerminal so campaign/PM subscribers see the
+    // terminal state first; the retry (if allowed) will be a brand-new run.
+    this.maybeRetry(lr);
     this.scheduleEvict(lr.run.id);
   }
 

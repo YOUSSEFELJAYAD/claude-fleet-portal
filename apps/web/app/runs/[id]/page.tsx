@@ -28,6 +28,13 @@ export default function RunDetail({ params }: { params: { id: string } }) {
   const [showResume, setShowResume] = useState(false);
   const [busy, setBusy] = useState(false);
   const [, force] = useState(0);
+  // F3 — retrieve retriedBy (the run that retried this one, if any)
+  const [retriedBy, setRetriedBy] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.getRun(id).then((r) => { if (alive) setRetriedBy(r.retriedBy); }).catch(() => {});
+    return () => { alive = false; };
+  }, [id]);
 
   const live = run ? LIVE_STATUSES.includes(run.status) : false;
   useEffect(() => {
@@ -113,6 +120,21 @@ export default function RunDetail({ params }: { params: { id: string } }) {
             <span>·</span>
             <span className="truncate">{run.cwd}</span>
           </div>
+          {/* F3 — retry chain links */}
+          {(run.retryOf || retriedBy) && (
+            <div className="font-mono text-[11px] mt-1.5 flex gap-3 flex-wrap">
+              {run.retryOf && (
+                <Link href={`/runs/${run.retryOf}`} className="text-amber hover:underline">
+                  ↩ retry of {run.retryOf.slice(0, 8)}
+                </Link>
+              )}
+              {retriedBy && (
+                <Link href={`/runs/${retriedBy}`} className="text-amber hover:underline">
+                  ↪ retried as {retriedBy.slice(0, 8)}
+                </Link>
+              )}
+            </div>
+          )}
           {run.error && (run.status === 'failed' || run.status === 'killed') && (
             <div className="font-mono text-[11px] mt-2 px-3 py-2 border max-w-3xl" style={{ color: '#ff5d5d', borderColor: '#ff5d5d40', background: 'rgba(255,93,93,0.05)' }}>
               {run.error.slice(0, 400)}

@@ -974,3 +974,48 @@ reviewed (clean) + re-verified suite/typecheck.
 - LaunchModal: "thinking depth" select for claude AND engine runs (per-engine option sets),
   reset on engine switch (cross-engine levels are invalid), included in both submit branches,
   footer spawn hint reflects it. Tests +17 → suite 483 pass + 2 by-design skips.
+
+## 27. v0.4 feature batch — PRD-driven multi-agent build (2026-06-11)
+
+User: implement ALL proposed features except remote/mobile as one batch, full PRD in one file,
+dedicated subagents per task (sonnet/haiku by complexity), Fable reviews everything deeply —
+"this stays production ready".
+
+**Process** (docs/PRD-v0.4-features.md is the spec): 4 implementation waves of parallel
+subagents with disjoint file ownership + unique wiring anchors in shared files; Fable gate
+between waves (line-by-line diff review, fresh suite+typecheck, live UI); then a 54-agent
+adversarial verification workflow (6 dimensions × refuting verifiers) over the whole batch;
+then 1 Fable + 4 sonnet FIX clusters; final re-gate.
+
+**Shipped** (all per PRD v1 scope):
+- F1 GitHub triggers (poll via gh; issue-label/pr-opened → Kanban card or template-profiled run)
+- F2 recurring schedules (every/daily/weekly grammar, pure nextFire(), template at fire time)
+- F3 auto-retry with escalation (retry_of chain links, full guardrail surface on retries)
+- F4+F5 benchmarks (engine/model matrix + best-of-N with structured judge verdict)
+- F6 approval inbox (+ rail badge derived from the existing fleet stream)
+- F7 full-text transcript search (FTS5, graceful fallback, XSS-safe snippets)
+- F8 notification channels (slack/discord/generic, https-only) + 50/80/100% spend alerts
+- F9 fleet memory (md+jsonl capture, recall toggle wiring personal-rag into launches)
+- F10 config-as-code (export/import with per-item skip-and-report)
+
+**Adversarial verification: 46 confirmed findings (1 critical, 13 major), ALL fixed.** The
+themes worth remembering:
+- AUTONOMOUS SPEND is where everything bites: trigger ticks lacked overlap guards (double
+  launches), stale full-row persists could resurrect a disabled trigger, hardcoded model
+  defaults made template models dead code in BOTH triggers and scheduler (operators pointing
+  triggers at haiku templates would have run opus-4-8/high on every labeled issue), smuggled
+  internal _attempt fields could defeat the retry cap (now stripped at the door, internal-only
+  via launch(req,{_internalRetry})), and cap-blocked benchmark judges stranded benchmarks
+  forever (now a 45s DB-state sweep owns judge-retry AND restart convergence).
+- CRITICAL: benchmark kill() raced its own judge launch — fixed with the campaigns H2
+  terminal-before-kill pattern; judge now also requires ≥1 COMPLETED variant.
+- TEST HONESTY was its own dimension and earned it: 9 tests looked like coverage but could
+  not fail (vacuous fixtures, dead fixture branches, asserting via routes that bypass the
+  code under test, and a fixture broken twice over — process.exit() truncating piped stdout
+  AND per-test CLAUDE_BIN swaps being no-ops because config.ts freezes it at import; replaced
+  with a FAKE_MODE runtime dispatcher).
+- Misc systemic: fleet-config import bypassed the sealed cap≤reserve guard; legacy webhook
+  leaked full run transcripts; '..' path traversal past the repo regex into gh API paths.
+
+Suite: 483 → **658 pass + 2 by-design skips** (38 files); 3/3 typecheck; every new surface
+verified live. Junk templates an import test leaked into the live dev DB were removed.

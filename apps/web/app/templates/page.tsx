@@ -72,6 +72,10 @@ export default function TemplatesPage() {
   const [budget, setBudget] = useState('3');
   const [err, setErr] = useState<string | null>(null);
 
+  // export/import state
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const importFileRef = React.useRef<HTMLInputElement>(null);
+
   async function create() {
     if (!name.trim()) {
       setErr('name required');
@@ -102,6 +106,37 @@ export default function TemplatesPage() {
     }
   }
 
+  async function handleExport() {
+    try {
+      const setup = await api.exportSetup();
+      const blob = new Blob([JSON.stringify(setup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'fleet-setup.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setImportMsg(`Export failed: ${e.message}`);
+    }
+  }
+
+  async function handleImport(file: File) {
+    try {
+      const text = await file.text();
+      const setup = JSON.parse(text);
+      const result = await api.importSetup(setup);
+      const counts = `${result.templates.created} templates created, ${result.templates.updated} updated; ${result.packs.created} packs created, ${result.packs.updated} updated`;
+      const msg = result.errors.length > 0
+        ? `Import completed with errors: ${counts}; ${result.errors.length} item(s) skipped`
+        : `Import successful: ${counts}`;
+      setImportMsg(msg);
+      reload();
+    } catch (e: any) {
+      setImportMsg(`Import failed: ${e.message}`);
+    }
+  }
+
   return (
     <div>
       <div className="flex items-end justify-between mb-5">
@@ -110,7 +145,12 @@ export default function TemplatesPage() {
           <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">Templates</h1>
           <p className="font-mono text-[11px] text-faint mt-1">Reusable agent profiles — instantiated as orchestrators, workers, and synthesizers in a campaign.</p>
         </div>
-        <Btn variant="amber" onClick={() => setOpen((o) => !o)}>{open ? 'Close' : '＋ New Template'}</Btn>
+        <div className="flex items-center gap-2">
+          <Btn variant="ghost" onClick={handleExport} title="Export all templates, packs, and config">⇪ Export setup</Btn>
+          <Btn variant="ghost" onClick={() => importFileRef.current?.click()} title="Import setup from JSON">⇩ Import</Btn>
+          <input ref={importFileRef} type="file" accept=".json" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleImport(f); }} />
+          <Btn variant="amber" onClick={() => setOpen((o) => !o)}>{open ? 'Close' : '＋ New Template'}</Btn>
+        </div>
       </div>
 
       {open && (
@@ -139,6 +179,12 @@ export default function TemplatesPage() {
       {listErr && (
         <div className="font-mono text-[11px] mb-3 px-3 py-2 border border-sig-failed/30" style={{ color: '#ff5d5d' }}>
           {listErr}
+        </div>
+      )}
+
+      {importMsg && (
+        <div className="font-mono text-[11px] mb-3 px-3 py-2 border border-amber/30" style={{ color: '#ffb000' }}>
+          {importMsg}
         </div>
       )}
 

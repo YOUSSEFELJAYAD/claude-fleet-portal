@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Kicker, Panel, Empty, Btn, Field, Input, Select, Textarea, Toggle, Dot } from '@/components/ui';
 import { clock, ago, dur } from '@/lib/format';
@@ -14,11 +14,16 @@ interface LaunchRequestLite {
   effort: string;
   permissionMode?: string;
 }
+
 interface Schedule {
   id: string;
   name: string;
   intervalMs: number | null;
   dailyAt: string | null;
+  /** F2: every:<min> | daily:<HH:MM> | weekly:<0-6>:<HH:MM> | null = one-shot (legacy) */
+  recurrence: string | null;
+  /** F2: template name or null */
+  template: string | null;
   launchRequest: LaunchRequestLite;
   enabled: boolean;
   lastRunId: string | null;
@@ -26,30 +31,58 @@ interface Schedule {
   nextFireAt: number | null;
   createdAt: number;
 }
+
 interface ModelInfo {
   id: string;
   label: string;
 }
+
+interface TemplateInfo {
+  id: string;
+  name: string;
+  model: string;
+  effort: string;
+}
+
 interface MetaResponse {
   models: ModelInfo[];
   efforts: string[];
 }
 
-type TriggerKind = 'interval' | 'daily';
+// F2 recurrence kind
+type RecurrenceKind = 'one-shot' | 'every' | 'daily' | 'weekly';
 
-function triggerLabel(s: Schedule): string {
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function recurrenceLabel(s: Schedule): string {
+  // F2 recurrence grammar
+  if (s.recurrence) {
+    if (s.recurrence.startsWith('every:')) {
+      const min = Number(s.recurrence.slice(6));
+      if (min % 60 === 0 && min >= 60) return `every ${min / 60}h`;
+      return `every ${min}m`;
+    }
+    if (s.recurrence.startsWith('daily:')) return `daily @ ${s.recurrence.slice(6)}`;
+    if (s.recurrence.startsWith('weekly:')) {
+      const parts = s.recurrence.slice(7).split(':');
+      const day = DAYS[Number(parts[0])] ?? `day ${parts[0]}`;
+      return `weekly ${day} @ ${parts[1]}:${parts[2]}`;
+    }
+    return s.recurrence;
+  }
+  // Legacy trigger fields
   if (s.intervalMs != null) {
     const min = s.intervalMs / 60000;
     if (min % 60 === 0 && min >= 60) return `every ${min / 60}h`;
     return `every ${min}m`;
   }
   if (s.dailyAt != null) return `daily @ ${s.dailyAt}`;
-  return '—';
+  return 'one-shot';
 }
 
 function nextFireLabel(s: Schedule): string {
   if (!s.enabled) return 'paused';
-  if (!s.nextFireAt) return '—';
+  if (!s.nextFireAt) return s.recurrence || s.intervalMs != null || s.dailyAt ? '—' : 'done';
   const d = s.nextFireAt - Date.now();
   if (d <= 0) return 'due now';
   return `in ${dur(d)} · ${clock(s.nextFireAt)}`;
@@ -58,53 +91,88 @@ function nextFireLabel(s: Schedule): string {
 export default function SchedulesPage() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [meta, setMeta] = useState<MetaResponse | null>(null);
+  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // create form
   const [name, setName] = useState('');
-  const [triggerKind, setTriggerKind] = useState<TriggerKind>('interval');
-  const [intervalMin, setIntervalMin] = useState('60');
+  // F2 recurrence
+  const [recurrenceKind, setRecurrenceKind] = useState<RecurrenceKind>('every');
+  const [everyMin, setEveryMin] = useState('60');
   const [dailyAt, setDailyAt] = useState('09:00');
+  const [weeklyDay, setWeeklyDay] = useState('1'); // Monday
+  const [weeklyTime, setWeeklyTime] = useState('09:00');
+  // template
+  const [templateName, setTemplateName] = useState('');
+  // launch request
   const [prompt, setPrompt] = useState('');
   const [cwd, setCwd] = useState('');
   const [model, setModel] = useState('claude-opus-4-8');
   const [effort, setEffort] = useState('high');
+
   const [submitting, setSubmitting] = useState(false);
   const [formErr, setFormErr] = useState<string | null>(null);
+
+  // Unmount-safe polling (alive-ref pattern per house rules)
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
 
   async function load() {
     setError(null);
     try {
       const r = await fetch(API + '/api/schedules');
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-      setSchedules(await r.json());
+      if (aliveRef.current) setSchedules(await r.json());
     } catch (e: any) {
-      setError(e?.message ?? 'failed to load schedules');
+      if (aliveRef.current) setError(e?.message ?? 'failed to load schedules');
     } finally {
-      setLoading(false);
+      if (aliveRef.current) setLoading(false);
     }
   }
 
   useEffect(() => {
     load();
+
     fetch(API + '/api/meta')
       .then((r) => (r.ok ? r.json() : null))
       .then((m: MetaResponse | null) => {
-        if (m) {
-          setMeta(m);
-          if (m.models?.[0]?.id) setModel((cur) => cur || m.models[0].id);
-          if (m.efforts?.length && !m.efforts.includes('high')) setEffort(m.efforts[0]);
-        }
+        if (!aliveRef.current || !m) return;
+        setMeta(m);
+        if (m.models?.[0]?.id) setModel((cur) => cur || m.models[0].id);
+        if (m.efforts?.length && !m.efforts.includes('high')) setEffort(m.efforts[0]);
       })
-      .catch(() => {
-        /* meta is optional — fall back to defaults */
-      });
-    // refresh next-fire countdowns periodically
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
+      .catch(() => { /* meta optional */ });
+
+    fetch(API + '/api/templates')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: TemplateInfo[]) => {
+        if (aliveRef.current) setTemplates(list);
+      })
+      .catch(() => { /* templates optional */ });
+
+    // Unmount-safe setTimeout chain for countdown refresh
+    let handle: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      if (!aliveRef.current) return;
+      load();
+      handle = setTimeout(tick, 30_000);
+    };
+    handle = setTimeout(tick, 30_000);
+    return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function buildRecurrenceString(): string | null {
+    if (recurrenceKind === 'one-shot') return null;
+    if (recurrenceKind === 'every') return `every:${everyMin}`;
+    if (recurrenceKind === 'daily') return `daily:${dailyAt}`;
+    if (recurrenceKind === 'weekly') return `weekly:${weeklyDay}:${weeklyTime}`;
+    return null;
+  }
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -113,18 +181,36 @@ export default function SchedulesPage() {
     if (!prompt.trim()) return setFormErr('prompt is required');
     if (!cwd.trim() || !cwd.startsWith('/')) return setFormErr('cwd must be an absolute path');
 
+    const recurrence = buildRecurrenceString();
+
+    // Client-side validation
+    if (recurrenceKind === 'every') {
+      const n = Number(everyMin);
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n < 15 || n > 10080) {
+        return setFormErr('interval must be 15–10080 minutes');
+      }
+    }
+    if (recurrenceKind === 'daily' && !/^([01]\d|2[0-3]):([0-5]\d)$/.test(dailyAt)) {
+      return setFormErr('daily time must be HH:MM');
+    }
+    if (recurrenceKind === 'weekly' && !/^([01]\d|2[0-3]):([0-5]\d)$/.test(weeklyTime)) {
+      return setFormErr('weekly time must be HH:MM');
+    }
+
     const body: any = {
       name: name.trim(),
       launch_request: { prompt: prompt.trim(), cwd: cwd.trim(), model, effort },
     };
-    if (triggerKind === 'interval') {
-      const min = Number(intervalMin);
-      if (!Number.isFinite(min) || min < 1) return setFormErr('interval must be >= 1 minute');
-      body.interval_ms = Math.round(min * 60000);
+
+    if (recurrence !== null) {
+      body.recurrence = recurrence;
     } else {
-      if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(dailyAt)) return setFormErr('daily time must be HH:MM');
-      body.daily_at = dailyAt;
+      // one-shot: omit recurrence; the server fires once then nulls out next_fire_at.
+      // A trigger field is still required — use interval_ms=60000 as the one-fire cadence.
+      body.interval_ms = 60000;
     }
+
+    if (templateName) body.template = templateName;
 
     setSubmitting(true);
     try {
@@ -136,7 +222,7 @@ export default function SchedulesPage() {
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
       setName('');
       setPrompt('');
-      // keep cwd/model/effort/trigger for quick repeat creation
+      setTemplateName('');
       await load();
     } catch (err: any) {
       setFormErr(err?.message ?? 'failed to create schedule');
@@ -189,7 +275,7 @@ export default function SchedulesPage() {
       <Kicker>automation</Kicker>
       <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-5">Scheduler</h1>
 
-      <div className="grid gap-5" style={{ gridTemplateColumns: 'minmax(0,1fr) 340px' }}>
+      <div className="grid gap-5" style={{ gridTemplateColumns: 'minmax(0,1fr) 360px' }}>
         {/* ── schedule list ─────────────────────────────────────── */}
         <div>
           {error && (
@@ -201,11 +287,11 @@ export default function SchedulesPage() {
           {loading ? (
             <div className="font-mono text-faint text-[12px]">loading schedules…</div>
           ) : schedules.length === 0 ? (
-            <Empty>No schedules yet — create one to launch agents on an interval or daily.</Empty>
+            <Empty>No schedules yet — create one to launch agents on a recurring or daily schedule.</Empty>
           ) : (
             <div className="panel overflow-hidden">
-              <div className="grid grid-cols-[1fr_110px_150px_90px_120px] gap-3 px-4 py-2.5 border-b hairline kicker">
-                <span>name / trigger</span>
+              <div className="grid grid-cols-[1fr_90px_160px_100px_110px] gap-3 px-4 py-2.5 border-b hairline kicker">
+                <span>name / recurrence</span>
                 <span>enabled</span>
                 <span>next fire</span>
                 <span>last run</span>
@@ -213,11 +299,16 @@ export default function SchedulesPage() {
               </div>
               <div className="divide-y divide-white/[0.04]">
                 {schedules.map((s) => (
-                  <div key={s.id} className="grid grid-cols-[1fr_110px_150px_90px_120px] gap-3 px-4 py-3 items-center">
+                  <div key={s.id} className="grid grid-cols-[1fr_90px_160px_100px_110px] gap-3 px-4 py-3 items-center">
                     <div className="min-w-0">
                       <div className="text-ink text-[13px] truncate">{s.name}</div>
                       <div className="text-faint font-mono text-[10px] mt-0.5 flex items-center gap-2">
-                        <span className="text-amber/80">{triggerLabel(s)}</span>
+                        <span className="text-amber/80">{recurrenceLabel(s)}</span>
+                        {s.template && (
+                          <span className="text-sig-completed/70 text-[9px] border border-sig-completed/30 px-1 rounded">
+                            {s.template}
+                          </span>
+                        )}
                         <span className="truncate">{s.launchRequest?.prompt}</span>
                       </div>
                     </div>
@@ -260,39 +351,82 @@ export default function SchedulesPage() {
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="nightly digest" />
             </Field>
 
-            <Field label="trigger">
-              <div className="flex gap-1 mb-2">
-                {(['interval', 'daily'] as TriggerKind[]).map((k) => (
+            {/* F2: recurrence picker */}
+            <Field label="recurrence">
+              <div className="grid grid-cols-4 gap-1 mb-2">
+                {(['one-shot', 'every', 'daily', 'weekly'] as RecurrenceKind[]).map((k) => (
                   <button
                     key={k}
                     type="button"
-                    onClick={() => setTriggerKind(k)}
-                    className="font-display text-[11px] uppercase tracking-wider px-3 py-1.5 border transition-colors flex-1"
+                    onClick={() => setRecurrenceKind(k)}
+                    className="font-display text-[10px] uppercase tracking-wider px-2 py-1.5 border transition-colors"
                     style={{
-                      borderColor: triggerKind === k ? '#ffb000' : 'rgba(255,255,255,0.075)',
-                      color: triggerKind === k ? '#ffb000' : '#9aa1ab',
-                      background: triggerKind === k ? 'rgba(255,176,0,0.08)' : 'transparent',
+                      borderColor: recurrenceKind === k ? '#ffb000' : 'rgba(255,255,255,0.075)',
+                      color: recurrenceKind === k ? '#ffb000' : '#9aa1ab',
+                      background: recurrenceKind === k ? 'rgba(255,176,0,0.08)' : 'transparent',
                     }}
                   >
                     {k}
                   </button>
                 ))}
               </div>
-              {triggerKind === 'interval' ? (
+
+              {recurrenceKind === 'every' && (
                 <div className="flex items-center gap-2">
                   <Input
                     type="number"
-                    min={1}
-                    value={intervalMin}
-                    onChange={(e) => setIntervalMin(e.target.value)}
+                    min={15}
+                    max={10080}
+                    value={everyMin}
+                    onChange={(e) => setEveryMin(e.target.value)}
                     className="w-24"
                   />
-                  <span className="font-mono text-[11px] text-faint">minutes (min 1)</span>
+                  <span className="font-mono text-[11px] text-faint">min (15–10080)</span>
                 </div>
-              ) : (
-                <Input type="time" value={dailyAt} onChange={(e) => setDailyAt(e.target.value)} className="w-32" />
+              )}
+
+              {recurrenceKind === 'daily' && (
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="time"
+                    value={dailyAt}
+                    onChange={(e) => setDailyAt(e.target.value)}
+                    className="w-32"
+                  />
+                  <span className="font-mono text-[11px] text-faint">local time</span>
+                </div>
+              )}
+
+              {recurrenceKind === 'weekly' && (
+                <div className="flex items-center gap-2">
+                  <Select value={weeklyDay} onChange={(e) => setWeeklyDay(e.target.value)} className="flex-1">
+                    {DAYS.map((d, i) => (
+                      <option key={i} value={String(i)}>{d}</option>
+                    ))}
+                  </Select>
+                  <Input
+                    type="time"
+                    value={weeklyTime}
+                    onChange={(e) => setWeeklyTime(e.target.value)}
+                    className="w-28"
+                  />
+                </div>
               )}
             </Field>
+
+            {/* F2: template select */}
+            {templates.length > 0 && (
+              <Field label="template" hint="optional — profile applied at fire time">
+                <Select value={templateName} onChange={(e) => setTemplateName(e.target.value)}>
+                  <option value="">— none —</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.name}>
+                      {t.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            )}
 
             <div className="border-t hairline pt-3">
               <Kicker>launch request</Kicker>

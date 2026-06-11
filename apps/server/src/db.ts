@@ -7,6 +7,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { DB_PATH, DATA_DIR, DEFAULT_CONFIG } from './config.js';
+import { initSearch, indexEvents } from './search.js';
 import type {
   Run,
   RunNode,
@@ -181,6 +182,9 @@ for (const ddl of [
   'ALTER TABLE campaigns ADD COLUMN permission_mode TEXT',
   // §24 — engine add-ons: which CLI was used for this run (null = 'claude')
   'ALTER TABLE runs ADD COLUMN engine TEXT',
+  // F3 — auto-retry chain: the run id this run was spawned to retry
+  'ALTER TABLE runs ADD COLUMN retry_of TEXT',
+  'CREATE INDEX IF NOT EXISTS idx_runs_retry_of ON runs(retry_of)',
 ]) {
   try {
     db.exec(ddl);
@@ -190,6 +194,9 @@ for (const ddl of [
     if (!/duplicate column name/i.test(e?.message ?? '')) throw e;
   }
 }
+
+// F7 — initialise FTS5 search index (cycle-free: search.ts does not import db.ts)
+initSearch(db);
 
 // ── row mappers ──────────────────────────────────────────────────────────────
 function runToRow(r: Run) {
@@ -224,6 +231,7 @@ function runToRow(r: Run) {
     subagent_profile: r.subagentProfile,
     result_text: r.resultText,
     structured_output: r.structuredOutput != null ? JSON.stringify(r.structuredOutput) : null,
+    retry_of: r.retryOf ?? null,
   };
 }
 
@@ -259,6 +267,7 @@ function rowToRun(row: any): Run {
     subagentProfile: row.subagent_profile,
     resultText: row.result_text,
     structuredOutput: row.structured_output ? safeJson(row.structured_output) : null,
+    retryOf: row.retry_of ?? null,
     subagentCount: 0,
     liveSubagents: 0,
     maxDepth: 0,
@@ -291,10 +300,10 @@ function rowToEvent(row: any): NormalizedEvent {
 const upsertRunStmt = db.prepare(`
 INSERT INTO runs (id, session_id, task, cwd, model, engine, fast_mode, effort, workflows_enabled, ultracode,
   team_id, campaign_id, project_id, pid, status, started_at, ended_at, tokens_in, tokens_out, cost_usd, exit_code, kill_reason, error, budget_usd,
-  permission_mode, allowed_tools, skills, subagent_profile, result_text, structured_output)
+  permission_mode, allowed_tools, skills, subagent_profile, result_text, structured_output, retry_of)
 VALUES (@id, @session_id, @task, @cwd, @model, @engine, @fast_mode, @effort, @workflows_enabled, @ultracode,
   @team_id, @campaign_id, @project_id, @pid, @status, @started_at, @ended_at, @tokens_in, @tokens_out, @cost_usd, @exit_code, @kill_reason, @error, @budget_usd,
-  @permission_mode, @allowed_tools, @skills, @subagent_profile, @result_text, @structured_output)
+  @permission_mode, @allowed_tools, @skills, @subagent_profile, @result_text, @structured_output, @retry_of)
 ON CONFLICT(id) DO UPDATE SET
   status=@status, ended_at=@ended_at, tokens_in=@tokens_in, tokens_out=@tokens_out, cost_usd=@cost_usd,
   exit_code=@exit_code, kill_reason=@kill_reason, error=@error, result_text=@result_text, structured_output=@structured_output, pid=@pid
@@ -418,11 +427,18 @@ export const repo = {
       }
     });
     tx(events);
+    try { indexEvents(events); } catch { /* best-effort — never throw into the write path */ }
   },
 
   getRun(id: string): Run | null {
     const row = db.prepare('SELECT * FROM runs WHERE id = ?').get(id);
     return row ? rowToRun(row) : null;
+  },
+
+  /** F3 — cheap indexed lookup: returns the id of the run that retried this one, if any. */
+  getRetriedBy(runId: string): string | null {
+    const row = db.prepare('SELECT id FROM runs WHERE retry_of = ? LIMIT 1').get(runId) as any;
+    return row?.id ?? null;
   },
 
   /** Permanently delete a run's record + its nodes/events/skills (cascade). */
@@ -431,6 +447,8 @@ export const repo = {
       db.prepare('DELETE FROM events WHERE run_id = ?').run(runId);
       db.prepare('DELETE FROM run_nodes WHERE run_id = ?').run(runId);
       db.prepare('DELETE FROM run_skills WHERE run_id = ?').run(runId);
+      // §27 review #13 — clear dangling retry-chain links pointing at the deleted run
+      db.prepare('UPDATE runs SET retry_of = NULL WHERE retry_of = ?').run(runId);
       db.prepare('DELETE FROM runs WHERE id = ?').run(runId);
     });
     tx(id);

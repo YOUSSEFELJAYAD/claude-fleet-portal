@@ -12,6 +12,7 @@ import { UpdateModal, updateDismissKey, type UpdatePhase } from './UpdateModal';
 
 const NAV = [
   { href: '/', label: 'Fleet', glyph: '◉' },
+  { href: '/inbox', label: 'Inbox', glyph: '◳' },
   { href: '/projects', label: 'Projects', glyph: '◫' },
   { href: '/fleet', label: 'Scheduler', glyph: '⚖' },
   { href: '/orchestrate', label: 'Orchestrate', glyph: '⛓' },
@@ -21,6 +22,7 @@ const NAV = [
   { href: '/history', label: 'History', glyph: '▤' },
   { href: '/metrics', label: 'Metrics', glyph: '▦' },
   { href: '/compare', label: 'Compare', glyph: '⊟' },
+  { href: '/benchmarks', label: 'Benchmarks', glyph: '⚗' },
   { href: '/mcp', label: 'MCP', glyph: '⊕' },
   { href: '/notifications', label: 'Notifications', glyph: '◬' },
   { href: '/guardrails', label: 'Guardrails', glyph: '⊘' },
@@ -101,6 +103,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
     }
   }
   const active = runs.filter((r) => ['starting', 'running', 'orchestrating', 'awaiting-input', 'awaiting-permission'].includes(r.status));
+  // F6 — inbox count: runs waiting on operator (zero new polling — derived from existing useFleet runs)
+  const inboxCount = runs.filter((r) => r.status === 'awaiting-permission' || r.status === 'awaiting-input').length;
   const dailyCap = 50; // soft visual reference for the daily-spend gauge
 
   // enabled add-ons slot their page directly under the Add-ons entry
@@ -154,6 +158,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   {n.glyph}
                 </span>
                 <span className="font-display text-[12px] tracking-wide uppercase group-hover:text-ink">{n.label}</span>
+                {n.href === '/inbox' && inboxCount > 0 && (
+                  <span
+                    title={`${inboxCount} waiting`}
+                    className="ml-auto font-mono text-[10px] font-bold animate-pulseGlow"
+                    style={{ color: '#ffb000', minWidth: 16, textAlign: 'center' }}
+                  >
+                    {inboxCount}
+                  </span>
+                )}
                 {n.href === '/releases' && updateAvailable && (
                   <span
                     title="update available"

@@ -1,16 +1,24 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { api, API } from '@/lib/api';
 import type { Run } from '@fleet/shared';
 import { statusMeta } from '@/lib/status';
 import { usd, tokens, dur, clock } from '@/lib/format';
-import { Kicker, Empty, Dot } from '@/components/ui';
+import { Kicker, Empty, Dot, Panel, Toggle, Field, Input, Btn } from '@/components/ui';
 
 interface SavedSearch {
   id: string;
   name: string;
   filter: { q?: string; status?: string };
+}
+
+interface SearchHit {
+  runId: string;
+  seq: number;
+  nodeId: string;
+  snippet: string;
+  run: { id: string; task: string; status: string; startedAt: number; model: string };
 }
 
 export default function HistoryPage() {
@@ -21,6 +29,73 @@ export default function HistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedSearch[]>([]); // A8 saved searches
   const [reload, setReload] = useState(0);
+
+  // F7 — deep search state
+  const [deepQ, setDeepQ] = useState('');
+  const [deepHits, setDeepHits] = useState<SearchHit[] | null>(null);
+  const [deepAvailable, setDeepAvailable] = useState<boolean | null>(null);
+  const [deepLoading, setDeepLoading] = useState(false);
+  const deepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aliveRef = useRef(true);
+
+  // F9 — fleet memory panel state
+  const [memEnabled, setMemEnabled] = useState(false);
+  const [memDir, setMemDir] = useState('');
+  const [memStats, setMemStats] = useState<{ entries: number; bytes: number; dir: string } | null>(null);
+  const [memSaving, setMemSaving] = useState(false);
+  const [memErr, setMemErr] = useState<string | null>(null);
+  // Dirty flag: while the user has unsaved changes (dir input typed or toggle changed),
+  // the poll must not overwrite form state — only stats get refreshed.
+  const memDirtyRef = useRef(false);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
+
+  // F9 — load memory config + stats on mount (unmount-safe)
+  useEffect(() => {
+    let alive = true;
+    const loadAll = () => {
+      // Initial load: fetch config + stats, populate form state.
+      Promise.all([api.memoryConfig(), api.memoryStats()])
+        .then(([cfg, stats]) => {
+          if (!alive) return;
+          setMemEnabled(cfg.enabled);
+          setMemDir(cfg.dir);
+          setMemStats(stats);
+        })
+        .catch(() => {});
+    };
+    const loadStatsOnly = () => {
+      // Polling: only refresh stats if the user has unsaved edits (dirty) so the
+      // poll never clobbers in-progress dir or toggle changes.
+      if (memDirtyRef.current) {
+        api.memoryStats().then((stats) => { if (alive) setMemStats(stats); }).catch(() => {});
+      } else {
+        Promise.all([api.memoryConfig(), api.memoryStats()])
+          .then(([cfg, stats]) => {
+            if (!alive) return;
+            setMemEnabled(cfg.enabled);
+            setMemDir(cfg.dir);
+            setMemStats(stats);
+          })
+          .catch(() => {});
+      }
+    };
+    loadAll();
+    // poll every 10s to keep stats fresh
+    const t = setTimeout(function tick() {
+      if (!alive) return;
+      loadStatsOnly();
+      setTimeout(tick, 10000);
+    }, 10000);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadSaved = () =>
     fetch(`${API}/api/saved-searches`)
@@ -44,6 +119,48 @@ export default function HistoryPage() {
     return () => clearTimeout(h);
   }, [q, status, reload]);
 
+  // F7 — debounced deep search (300ms) with stale-response guard + per-run dedupe
+  const deepGenRef = useRef(0);
+  useEffect(() => {
+    if (deepTimerRef.current) clearTimeout(deepTimerRef.current);
+    if (!deepQ.trim()) {
+      setDeepHits(null);
+      setDeepLoading(false);
+      return;
+    }
+    setDeepLoading(true);
+    // Increment generation token so in-flight responses for older queries are discarded.
+    const gen = ++deepGenRef.current;
+    deepTimerRef.current = setTimeout(() => {
+      api
+        .search(deepQ.trim())
+        .then((res) => {
+          if (!aliveRef.current) return;
+          if (gen !== deepGenRef.current) return; // stale response — a newer query is in flight
+          setDeepAvailable(res.available);
+          // Dedupe: keep only the best (first) hit per runId (PRD F7: one hit per run shown).
+          const seen = new Set<string>();
+          const deduped = res.hits.filter((h) => {
+            if (seen.has(h.runId)) return false;
+            seen.add(h.runId);
+            return true;
+          });
+          setDeepHits(deduped);
+        })
+        .catch(() => {
+          if (!aliveRef.current) return;
+          if (gen !== deepGenRef.current) return;
+          setDeepHits([]);
+        })
+        .finally(() => {
+          if (aliveRef.current && gen === deepGenRef.current) setDeepLoading(false);
+        });
+    }, 300);
+    return () => {
+      if (deepTimerRef.current) clearTimeout(deepTimerRef.current);
+    };
+  }, [deepQ]);
+
   // A9 — CSV export carrying the current filters
   const csvHref = (() => {
     const p = new URLSearchParams();
@@ -64,10 +181,82 @@ export default function HistoryPage() {
     loadSaved();
   }
 
+  const showDeepResults = deepQ.trim().length > 0;
+
   return (
     <div>
       <Kicker>archive</Kicker>
       <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-4">History &amp; Replay</h1>
+
+      {/* F7 — deep search input */}
+      <div className="panel mb-4">
+        <div className="px-4 py-3 border-b hairline flex items-center gap-2">
+          <span className="kicker">deep search</span>
+          <span className="text-faint font-mono text-[10px] ml-1">· full transcripts</span>
+        </div>
+        <div className="p-4">
+          <input
+            value={deepQ}
+            onChange={(e) => setDeepQ(e.target.value)}
+            placeholder="search full transcript text, tool calls, results…"
+            className="w-full bg-black/40 border border-line2 text-ink font-mono text-[12px] px-3 py-2 focus:border-amber/60 outline-none placeholder:text-faint"
+          />
+          {deepAvailable === false && (
+            <p className="font-mono text-[10px] text-faint mt-2">
+              Full-text search is unavailable (SQLite FTS5 not compiled in).
+            </p>
+          )}
+        </div>
+
+        {/* Deep search results */}
+        {showDeepResults && (
+          <div className="border-t hairline">
+            {deepLoading ? (
+              <div className="px-4 py-3 font-mono text-faint text-[12px]">searching…</div>
+            ) : deepHits && deepHits.length === 0 ? (
+              <div className="px-4 py-3 font-mono text-faint text-[12px]">No transcript matches.</div>
+            ) : deepHits && deepHits.length > 0 ? (
+              <div className="divide-y divide-white/[0.04]">
+                {deepHits.map((hit) => {
+                  const m = statusMeta(hit.run.status as any);
+                  return (
+                    <div key={`${hit.runId}-${hit.seq}`} className="px-4 py-3 group">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color: m.color }}>
+                          <Dot color={m.color} live={m.live} size={6} />
+                          {m.label}
+                        </span>
+                        <span className="text-ink text-[12px] truncate flex-1">{hit.run.task}</span>
+                        <span className="font-mono text-[10px] text-faint">{clock(hit.run.startedAt)}</span>
+                        <Link
+                          href={`/runs/${hit.runId}`}
+                          className="font-mono text-[10px] text-amber hover:underline whitespace-nowrap"
+                        >
+                          jump to run →
+                        </Link>
+                      </div>
+                      <p
+                        className="font-mono text-[11px] text-dim leading-relaxed pl-0"
+                        // Escape all HTML first, then restore only the known-safe <b>/<\/b>
+                        // markers inserted by SQLite's snippet() function — prevents XSS from
+                        // transcript content while still highlighting the matched terms.
+                        dangerouslySetInnerHTML={{
+                          __html: hit.snippet
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(/&lt;b&gt;/g, '<b>')
+                            .replace(/&lt;\/b&gt;/g, '</b>'),
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
 
       <div className="flex gap-2 mb-4">
         <input
@@ -118,7 +307,8 @@ export default function HistoryPage() {
         </button>
       </div>
 
-      {error ? (
+      {/* Hide the regular runs list while a deep search query is active (PRD F7: swap). */}
+      {!showDeepResults && (error ? (
         <div className="font-mono text-sig-failed text-[12px] border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">
           {error} · <button onClick={() => setReload((n) => n + 1)} className="underline">retry</button>
         </div>
@@ -178,7 +368,70 @@ export default function HistoryPage() {
             })}
           </div>
         </div>
-      )}
+      ))}
+
+      {/* F9 — fleet memory panel */}
+      <div className="mt-8">
+        <Panel>
+          <div className="px-4 py-3 border-b hairline flex items-center justify-between">
+            <div>
+              <Kicker>fleet memory</Kicker>
+              <div className="font-mono text-[10px] text-faint mt-0.5">compounding knowledge · past runs indexed for recall</div>
+            </div>
+            <Toggle
+              on={memEnabled}
+              onChange={(v) => {
+                memDirtyRef.current = true;
+                setMemEnabled(v);
+                setMemSaving(true);
+                setMemErr(null);
+                api.setMemoryConfig({ enabled: v, dir: memDir })
+                  .then((cfg) => { memDirtyRef.current = false; setMemEnabled(cfg.enabled); setMemDir(cfg.dir); })
+                  .catch((e: any) => setMemErr(e?.message || 'save failed'))
+                  .finally(() => setMemSaving(false));
+              }}
+              label={memSaving ? 'saving…' : (memEnabled ? 'enabled' : 'disabled')}
+            />
+          </div>
+          <div className="p-4 grid gap-3">
+            <Field
+              label="memory directory"
+              hint="point your RAG indexer (personal-rag MCP) at this path"
+            >
+              <div className="flex gap-2">
+                <Input
+                  value={memDir}
+                  onChange={(e) => { memDirtyRef.current = true; setMemDir(e.target.value); }}
+                  placeholder="absolute path — blank = default"
+                  className="flex-1"
+                />
+                <Btn
+                  onClick={() => {
+                    setMemSaving(true);
+                    setMemErr(null);
+                    api.setMemoryConfig({ enabled: memEnabled, dir: memDir })
+                      .then((cfg) => { memDirtyRef.current = false; setMemEnabled(cfg.enabled); setMemDir(cfg.dir); })
+                      .catch((e: any) => setMemErr(e?.message || 'save failed'))
+                      .finally(() => setMemSaving(false));
+                  }}
+                  disabled={memSaving}
+                >
+                  Save
+                </Btn>
+              </div>
+            </Field>
+            {memErr && (
+              <div className="font-mono text-[11px] text-sig-failed">{memErr}</div>
+            )}
+            {memStats && (
+              <div className="font-mono text-[11px] text-faint">
+                {memStats.entries} {memStats.entries === 1 ? 'entry' : 'entries'} ·{' '}
+                {(memStats.bytes / 1024).toFixed(1)} KB · {memStats.dir}
+              </div>
+            )}
+          </div>
+        </Panel>
+      </div>
     </div>
   );
 }
