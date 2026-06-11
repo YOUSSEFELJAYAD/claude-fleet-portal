@@ -86,6 +86,15 @@
   .plat { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
   .plat a { border: 1px solid var(--line); border-radius: 8px; padding: 9px 16px; font-size: 13.5px; color: var(--ink); }
   .plat a:hover { border-color: var(--amber); }
+  .macnote { margin-top: 18px; border: 1px solid rgba(255,176,0,.35); background: rgba(255,176,0,.05); border-radius: 10px; padding: 14px 16px; }
+  .macnote-head { font-family: var(--display); font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: var(--amber); }
+  .macnote-head span { color: var(--faint); letter-spacing: .1em; margin-left: 8px; text-transform: none; font-family: var(--monoF); font-size: 10.5px; }
+  .macnote p { color: var(--dim); font-size: 13px; margin: 8px 0 10px; }
+  .macnote p em { color: var(--ink); font-style: normal; }
+  .macnote-opt { font-size: 12.5px; color: var(--dim); margin-top: 6px; }
+  .macnote-opt .mono { color: var(--ink); font-size: 12px; }
+  .macnote-opt .mono b { color: var(--amber); }
+  .macnote-opt b { color: var(--ink); }
 
   /* open source */
   #oss .stats { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 30px; }
@@ -229,7 +238,13 @@
         <a href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest">🐧 AppImage / .deb</a>
       </div>
       <p style="margin-top:16px">With the <a href="https://claude.com/claude-code">Claude Code CLI</a> installed you get real agent runs — without it, a free deterministic mock.</p>
-      <p style="margin-top:12px; font-size:12.5px; color:var(--faint)">macOS first open (once): Gatekeeper warns because the app isn&apos;t Apple-notarized — run <span class="mono">xattr -cr "/Applications/Claude Fleet Portal.app"</span>, or open once → <b style="color:var(--dim)">System Settings → Privacy &amp; Security → "Open Anyway"</b>.</p>
+      <div class="macnote">
+        <div class="macnote-head"> macOS · first open <span>one time only</span></div>
+        <p>Gatekeeper warns — <em>“Apple could not verify … is free of malware”</em> — because the app is
+        open-source and not Apple-notarized. Either way works:</p>
+        <div class="macnote-opt"><span class="mono"><b>$</b> xattr -cr "/Applications/Claude Fleet Portal.app"</span> — then open normally</div>
+        <div class="macnote-opt">or open it once → <b>System Settings → Privacy &amp; Security → “Open Anyway”</b> → launch again</div>
+      </div>
     </div>
     <div class="card">
       <h3>⌁ Build from source</h3>
