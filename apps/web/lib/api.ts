@@ -154,6 +154,7 @@ export const api = {
   deletePack: (id: string) => j(`/api/packs/${id}`, { method: 'DELETE' }),
 
   stop: (id: string) => j(`/api/agents/${id}`, { method: 'DELETE' }),
+  stopAll: () => j<{ stopped: number }>('/api/agents/stop-all', { method: 'POST', body: JSON.stringify({}) }),
   deleteRun: (id: string) => j(`/api/agents/${id}/record`, { method: 'DELETE' }),
   input: (id: string, text: string) =>
     j(`/api/agents/${id}/input`, { method: 'POST', body: JSON.stringify({ text }) }),

@@ -32,9 +32,10 @@ import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { AddonInfo, AddonStatus, AddonInstallResult, CompressionConfig, CompressionStats, SelfUpdateStep } from '@fleet/shared';
+import type { AddonInfo, AddonStatus, AddonInstallResult, CompressionConfig, CompressionStats, SelfUpdateStep, RunEngine } from '@fleet/shared';
 import { HOME, PORT, WEB_PORT } from './config.js';
 import db from './db.js';
+import type { CodexEngineConfig, OpencodeEngineConfig } from './engines.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -51,9 +52,26 @@ CREATE TABLE IF NOT EXISTS addons (
 // ── catalog ──────────────────────────────────────────────────────────────────────
 
 const COMPRESSION_ID = 'compression';
+const CODEX_ID = 'codex';
+const OPENCODE_ID = 'opencode';
+
+/** Discriminator: 'proxy' add-ons manage a child process; 'engine-binary' add-ons
+ *  are CLI shims — no backing process, status is derived from installed + enabled. */
+type AddonRuntime = 'proxy' | 'engine-binary';
+
+interface AddonDef {
+  id: string;
+  name: string;
+  tagline: string;
+  description: string;
+  kind: 'builtin';
+  docsUrl: string;
+  page: string;
+  runtime: AddonRuntime;
+}
 
 /** Static descriptors — adding a marketplace add-on later = one more entry here. */
-const ADDON_DEFS = [
+const ADDON_DEFS: AddonDef[] = [
   {
     id: COMPRESSION_ID,
     name: 'Compression',
@@ -66,6 +84,33 @@ const ADDON_DEFS = [
     kind: 'builtin' as const,
     docsUrl: 'https://headroom-docs.vercel.app/docs',
     page: '/addons/compression',
+    runtime: 'proxy',
+  },
+  {
+    id: CODEX_ID,
+    name: 'Codex Engine',
+    tagline: 'Run fleet agents on the OpenAI Codex CLI (ChatGPT)',
+    description:
+      'Lets you launch one-shot runs on the codex CLI (OpenAI Codex CLI / ChatGPT) from the same fleet console. ' +
+      'Experimental: flat timeline, no subagent tree, no resume/input, no budget enforcement. ' +
+      'Stop works. Requires `codex` on PATH (npm install -g @openai/codex) and ChatGPT auth.',
+    kind: 'builtin' as const,
+    docsUrl: 'https://developers.openai.com/codex/cli',
+    page: '/addons/codex',
+    runtime: 'engine-binary',
+  },
+  {
+    id: OPENCODE_ID,
+    name: 'OpenCode Engine',
+    tagline: 'Run fleet agents on the open-source OpenCode multi-provider CLI',
+    description:
+      'Lets you launch one-shot runs on the opencode CLI (open-source, multi-provider) from the same fleet console. ' +
+      'Experimental: flat timeline, no subagent tree, no resume/input, no budget enforcement. ' +
+      'Stop works. Requires `opencode` on PATH (npm install -g opencode-ai@latest) and your provider credentials.',
+    kind: 'builtin' as const,
+    docsUrl: 'https://opencode.ai/docs/cli',
+    page: '/addons/opencode',
+    runtime: 'engine-binary',
   },
 ];
 
@@ -188,6 +233,144 @@ async function detectHeadroom(force = false): Promise<{ bin: string | null; vers
 
 export function __resetAddonsForTests() {
   detectCache = null;
+  codexDetectCache = null;
+  opencodeDetectCache = null;
+}
+
+// ── engine add-on defaults ───────────────────────────────────────────────────────
+
+export const DEFAULT_CODEX_CONFIG: CodexEngineConfig = {
+  defaultModel: null,
+  sandbox: 'workspace-write',
+};
+
+export const DEFAULT_OPENCODE_CONFIG: OpencodeEngineConfig = {
+  defaultModel: null,
+  skipPermissions: false,
+};
+
+function codexConfig(): CodexEngineConfig {
+  const raw = loadRow(CODEX_ID).config;
+  return {
+    ...DEFAULT_CODEX_CONFIG,
+    defaultModel: typeof raw.defaultModel === 'string' ? raw.defaultModel : DEFAULT_CODEX_CONFIG.defaultModel,
+    sandbox: (['read-only', 'workspace-write', 'danger-full-access'] as const).includes(raw.sandbox as any)
+      ? (raw.sandbox as CodexEngineConfig['sandbox'])
+      : DEFAULT_CODEX_CONFIG.sandbox,
+  };
+}
+
+function opencodeConfig(): OpencodeEngineConfig {
+  const raw = loadRow(OPENCODE_ID).config;
+  return {
+    ...DEFAULT_OPENCODE_CONFIG,
+    defaultModel: typeof raw.defaultModel === 'string' ? raw.defaultModel : DEFAULT_OPENCODE_CONFIG.defaultModel,
+    skipPermissions: typeof raw.skipPermissions === 'boolean' ? raw.skipPermissions : DEFAULT_OPENCODE_CONFIG.skipPermissions,
+  };
+}
+
+/** Validate + merge engine config from a PUT body. Partial updates fine; unknown keys ignored. */
+export function validateEngineConfig(id: string, input: unknown): CodexEngineConfig | OpencodeEngineConfig {
+  if (!input || typeof input !== 'object') {
+    throw Object.assign(new Error('config must be an object'), { statusCode: 400 });
+  }
+  const i = input as Record<string, unknown>;
+  const bad = (msg: string) => Object.assign(new Error(msg), { statusCode: 400 });
+
+  if (id === CODEX_ID) {
+    const base = codexConfig();
+    let defaultModel = base.defaultModel;
+    let sandbox = base.sandbox;
+    if (i.defaultModel !== undefined) {
+      if (i.defaultModel !== null && typeof i.defaultModel !== 'string') throw bad('defaultModel must be a string or null');
+      defaultModel = (i.defaultModel as string | null);
+    }
+    if (i.sandbox !== undefined) {
+      const valid = ['read-only', 'workspace-write', 'danger-full-access'];
+      if (!valid.includes(i.sandbox as string)) throw bad(`sandbox must be one of ${valid.join(', ')}`);
+      sandbox = i.sandbox as CodexEngineConfig['sandbox'];
+    }
+    return { defaultModel, sandbox };
+  }
+
+  if (id === OPENCODE_ID) {
+    const base = opencodeConfig();
+    let defaultModel = base.defaultModel;
+    let skipPermissions = base.skipPermissions;
+    if (i.defaultModel !== undefined) {
+      if (i.defaultModel !== null && typeof i.defaultModel !== 'string') throw bad('defaultModel must be a string or null');
+      defaultModel = (i.defaultModel as string | null);
+    }
+    if (i.skipPermissions !== undefined) {
+      if (typeof i.skipPermissions !== 'boolean') throw bad('skipPermissions must be a boolean');
+      skipPermissions = i.skipPermissions;
+    }
+    return { defaultModel, skipPermissions };
+  }
+
+  throw Object.assign(new Error(`no engine config schema for id: ${id}`), { statusCode: 400 });
+}
+
+// ── engine binary detection ──────────────────────────────────────────────────────
+
+let codexDetectCache: { at: number; bin: string | null; version: string | null } | null = null;
+let opencodeDetectCache: { at: number; bin: string | null; version: string | null } | null = null;
+
+function engineBinCandidates(engine: 'codex' | 'opencode'): string[] {
+  const envKey = engine === 'codex' ? 'CODEX_BIN' : 'OPENCODE_BIN';
+  if (process.env[envKey]) return [process.env[envKey]!];
+  const name = engine === 'codex' ? 'codex' : 'opencode';
+  return [
+    name,
+    path.join(HOME, '.local', 'bin', name),
+    '/opt/homebrew/bin/' + name,
+    '/usr/local/bin/' + name,
+  ];
+}
+
+async function detectEngineBin(engine: 'codex' | 'opencode', force = false): Promise<{ bin: string | null; version: string | null }> {
+  const cache = engine === 'codex' ? codexDetectCache : opencodeDetectCache;
+  if (!force && cache && Date.now() - cache.at < DETECT_TTL_MS) return cache;
+
+  let found: { bin: string | null; version: string | null } = { bin: null, version: null };
+  for (const bin of engineBinCandidates(engine)) {
+    if (bin.includes('/') && !existsSync(bin)) continue;
+    try {
+      const { stdout, stderr } = await execFileAsync(bin, ['--version'], { timeout: 15_000 });
+      found = { bin, version: (stdout + stderr).match(/(\d+\.\d+\.\d+)/)?.[1] ?? null };
+      break;
+    } catch (e: any) {
+      if (e?.code !== 'ENOENT' && (e?.stdout || e?.stderr)) {
+        found = { bin, version: String(e.stdout ?? '').match(/(\d+\.\d+\.\d+)/)?.[1] ?? null };
+        break;
+      }
+    }
+  }
+  const entry = { at: Date.now(), ...found };
+  if (engine === 'codex') codexDetectCache = entry;
+  else opencodeDetectCache = entry;
+  return found;
+}
+
+// ── engine add-on public API (used by registry.ts) ───────────────────────────────
+
+/** Returns the binary path for the engine, or null if not installed. */
+export async function getEngineBin(engine: RunEngine): Promise<string | null> {
+  if (engine !== 'codex' && engine !== 'opencode') return null;
+  return (await detectEngineBin(engine)).bin;
+}
+
+/** Returns the validated config for the engine. */
+export function engineLaunchConfig(engine: RunEngine): CodexEngineConfig | OpencodeEngineConfig {
+  if (engine === 'codex') return codexConfig();
+  if (engine === 'opencode') return opencodeConfig();
+  throw new Error(`not an engine add-on: ${engine}`);
+}
+
+/** Returns true if the engine add-on is enabled. */
+export function isEngineEnabled(engine: RunEngine): boolean {
+  if (engine !== 'codex' && engine !== 'opencode') return false;
+  return loadRow(engine).enabled;
 }
 
 // ── proxy lifecycle ──────────────────────────────────────────────────────────────
@@ -432,6 +615,35 @@ async function addonInfo(id: string): Promise<AddonInfo | null> {
   const def = ADDON_DEFS.find((d) => d.id === id);
   if (!def) return null;
   const { enabled } = loadRow(id);
+
+  // ── engine-binary add-ons: no backing process, status derived from installed+enabled ──
+  if (def.runtime === 'engine-binary') {
+    const engine = id as 'codex' | 'opencode';
+    const det = await detectEngineBin(engine);
+    const installed = !!det.bin;
+    let status: AddonStatus;
+    if (!installed) status = 'not-installed';
+    else if (!enabled) status = 'disabled';
+    else status = 'running'; // "running" = enabled and available (no backing process to probe)
+    const authHint = engine === 'codex'
+      ? 'auth via `codex login` or CODEX_API_KEY'
+      : 'uses your `opencode auth` providers';
+    const statusDetail = (enabled && installed) ? authHint : null;
+    const cfg = engine === 'codex'
+      ? codexConfig() as unknown as Record<string, unknown>
+      : opencodeConfig() as unknown as Record<string, unknown>;
+    return {
+      ...def,
+      enabled,
+      installed,
+      version: det.version,
+      status,
+      statusDetail,
+      config: cfg,
+    };
+  }
+
+  // ── proxy add-on (compression) ──
   const det = await detectHeadroom();
   const installed = !!det.bin;
   const cfg = compressionConfig();
@@ -505,6 +717,64 @@ async function installHeadroom(): Promise<AddonInstallResult> {
     ok: !!det.bin,
     steps,
     note: det.bin ? 'Headroom installed — enable the add-on to start compressing.' : 'Installed but not found on PATH.',
+  };
+}
+
+// ── engine dependency install (npm first; brew/curl advisory fallback) ──────────────
+
+const NPM_INSTALL_PACKAGES: Record<string, string[]> = {
+  [CODEX_ID]: ['install', '-g', '@openai/codex'],
+  [OPENCODE_ID]: ['install', '-g', 'opencode-ai@latest'],
+};
+
+async function installEngine(id: string): Promise<AddonInstallResult> {
+  const engine = id as 'codex' | 'opencode';
+  const steps: SelfUpdateStep[] = [];
+  const trunc = (s: string) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
+  const npmArgs = NPM_INSTALL_PACKAGES[id];
+  if (!npmArgs) return { ok: false, steps, note: 'Unknown engine.' };
+
+  // Detect npm
+  let hasNpm = false;
+  try {
+    await execFileAsync('npm', ['--version'], { timeout: 10_000 });
+    hasNpm = true;
+  } catch {
+    /* no npm */
+  }
+  steps.push({
+    step: 'detect npm',
+    ok: hasNpm,
+    output: hasNpm ? 'npm found' : 'npm not found — install Node.js 18+ first, or use brew/curl to install manually',
+  });
+  if (!hasNpm) {
+    const manualHint = engine === 'codex'
+      ? 'brew install --cask codex  OR  npm install -g @openai/codex'
+      : 'brew install opencode-ai/tap/opencode  OR  npm install -g opencode-ai@latest';
+    return { ok: false, steps, note: `npm not available. Manual install: ${manualHint}` };
+  }
+
+  try {
+    const { stdout, stderr } = await execFileAsync('npm', npmArgs, { timeout: INSTALL_TIMEOUT_MS });
+    steps.push({ step: `npm ${npmArgs.join(' ')}`, ok: true, output: trunc(stdout + stderr) });
+  } catch (e: any) {
+    steps.push({ step: `npm ${npmArgs.join(' ')}`, ok: false, output: trunc(String(e?.stderr ?? e?.message ?? e)) });
+    return { ok: false, steps, note: 'Install failed — output above. You can also run it manually in a terminal.' };
+  }
+
+  const det = await detectEngineBin(engine, true);
+  const binName = engine === 'codex' ? 'codex' : 'opencode';
+  steps.push({
+    step: `verify the ${binName} binary`,
+    ok: !!det.bin,
+    output: det.bin ? `${det.bin}${det.version ? ` (v${det.version})` : ''}` : `installed, but \`${binName}\` is not on PATH — add npm global bin to PATH`,
+  });
+  return {
+    ok: !!det.bin,
+    steps,
+    note: det.bin
+      ? `${engine === 'codex' ? 'Codex' : 'OpenCode'} installed — enable the add-on to use it.`
+      : 'Installed but not found on PATH.',
   };
 }
 
@@ -612,6 +882,21 @@ export function registerAddonRoutes(app: FastifyInstance) {
     const id = (req.params as any).id as string;
     const def = ADDON_DEFS.find((d) => d.id === id);
     if (!def) return reply.code(404).send({ error: 'unknown add-on' });
+
+    // ── engine-binary enable ──
+    if (def.runtime === 'engine-binary') {
+      const engine = id as 'codex' | 'opencode';
+      const row = loadRow(id);
+      if (row.enabled) return addonInfo(id); // idempotent
+      const det = await detectEngineBin(engine, true);
+      if (!det.bin) {
+        return reply.code(409).send({ error: `${engine} binary is not installed — install it first`, code: 'not-installed' });
+      }
+      saveRow(id, true, row.config);
+      return addonInfo(id);
+    }
+
+    // ── proxy enable (compression) ──
     const row = loadRow(id);
     // idempotent: re-enabling a live add-on must NOT bounce (or orphan) the proxy —
     // a double-click / stale tab / retried request is a no-op, like the running state itself.
@@ -632,16 +917,23 @@ export function registerAddonRoutes(app: FastifyInstance) {
 
   app.post('/api/addons/:id/disable', async (req, reply) => {
     const id = (req.params as any).id as string;
-    if (!ADDON_DEFS.some((d) => d.id === id)) return reply.code(404).send({ error: 'unknown add-on' });
+    const def = ADDON_DEFS.find((d) => d.id === id);
+    if (!def) return reply.code(404).send({ error: 'unknown add-on' });
     const row = loadRow(id);
     saveRow(id, false, row.config);
-    stopProxy();
+    // engine-binary: no process to stop
+    if (def.runtime === 'proxy') stopProxy();
     return addonInfo(id);
   });
 
   app.post('/api/addons/:id/restart', async (req, reply) => {
     const id = (req.params as any).id as string;
-    if (!ADDON_DEFS.some((d) => d.id === id)) return reply.code(404).send({ error: 'unknown add-on' });
+    const def = ADDON_DEFS.find((d) => d.id === id);
+    if (!def) return reply.code(404).send({ error: 'unknown add-on' });
+    // engine-binary: no backing process to restart
+    if (def.runtime === 'engine-binary') {
+      return reply.code(409).send({ error: 'restart is not applicable to engine add-ons', code: 'not-applicable' });
+    }
     if (!loadRow(id).enabled) return reply.code(409).send({ error: 'add-on is disabled' });
     stopProxy();
     void startProxy();
@@ -650,7 +942,23 @@ export function registerAddonRoutes(app: FastifyInstance) {
 
   app.put('/api/addons/:id/config', async (req, reply) => {
     const id = (req.params as any).id as string;
-    if (!ADDON_DEFS.some((d) => d.id === id)) return reply.code(404).send({ error: 'unknown add-on' });
+    const def = ADDON_DEFS.find((d) => d.id === id);
+    if (!def) return reply.code(404).send({ error: 'unknown add-on' });
+
+    // ── engine-binary config ──
+    if (def.runtime === 'engine-binary') {
+      let cfg: CodexEngineConfig | OpencodeEngineConfig;
+      try {
+        cfg = validateEngineConfig(id, req.body ?? {});
+      } catch (e: any) {
+        return reply.code(e?.statusCode ?? 400).send({ error: e?.message ?? 'invalid config' });
+      }
+      const row = loadRow(id);
+      saveRow(id, row.enabled, cfg as unknown as Record<string, unknown>);
+      return addonInfo(id);
+    }
+
+    // ── proxy config (compression) ──
     let cfg: CompressionConfig;
     try {
       cfg = validateCompressionConfig(req.body ?? {});
@@ -671,7 +979,27 @@ export function registerAddonRoutes(app: FastifyInstance) {
 
   app.post('/api/addons/:id/install', async (req, reply) => {
     const id = (req.params as any).id as string;
-    if (!ADDON_DEFS.some((d) => d.id === id)) return reply.code(404).send({ error: 'unknown add-on' });
+    const def = ADDON_DEFS.find((d) => d.id === id);
+    if (!def) return reply.code(404).send({ error: 'unknown add-on' });
+
+    // ── engine-binary install ──
+    if (def.runtime === 'engine-binary') {
+      const engine = id as 'codex' | 'opencode';
+      const det = await detectEngineBin(engine, true);
+      if (det.bin) {
+        const name = engine === 'codex' ? 'codex' : 'opencode';
+        return reply.code(409).send({ error: `${name} is already installed`, code: 'already-installed' });
+      }
+      if (installInFlight) return reply.code(409).send({ error: 'an install is already running', code: 'install-in-flight' });
+      installInFlight = true;
+      try {
+        return await installEngine(id);
+      } finally {
+        installInFlight = false;
+      }
+    }
+
+    // ── headroom (compression) install ──
     const det = await detectHeadroom(true);
     if (det.bin) return reply.code(409).send({ error: 'headroom is already installed', code: 'already-installed' });
     if (installInFlight) return reply.code(409).send({ error: 'an install is already running', code: 'install-in-flight' });

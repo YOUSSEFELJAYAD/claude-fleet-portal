@@ -276,16 +276,27 @@ export function buildServer() {
       reply.code(400);
       return { error: 'prompt and cwd are required' };
     }
+    const normalizedBody: LaunchRequest = {
+      ...body,
+      model: body.model || 'claude-opus-4-8',
+      effort: body.effort || 'high',
+      permissionMode: body.permissionMode || 'default',
+    };
+    // Engine add-on runs require async binary detection — branch before calling launch().
+    const requestedEngine = normalizedBody.engine && normalizedBody.engine !== 'claude' ? normalizedBody.engine : null;
+    if (requestedEngine) {
+      try {
+        return await registry.launchEngine(normalizedBody);
+      } catch (e: any) {
+        reply.code(e.statusCode ?? 500);
+        return { error: e.message, ...(e.code ? { code: e.code } : {}) };
+      }
+    }
     try {
-      return registry.launch({
-        ...body,
-        model: body.model || 'claude-opus-4-8',
-        effort: body.effort || 'high',
-        permissionMode: body.permissionMode || 'default',
-      });
+      return registry.launch(normalizedBody);
     } catch (e: any) {
       reply.code(e.statusCode ?? 500);
-      return { error: e.message };
+      return { error: e.message, ...(e.code ? { code: e.code } : {}) };
     }
   });
 
@@ -357,6 +368,13 @@ export function buildServer() {
       reply.code(e.statusCode ?? 500);
       return { error: e.message };
     }
+  });
+
+  // §24 — stop-all (panic button): kills every live non-terminal run; returns the count.
+  // Registered BEFORE :id DELETE so Fastify's router never confuses the literal path with the param.
+  app.post('/api/agents/stop-all', async () => {
+    const stopped = registry.stopAll();
+    return { stopped };
   });
 
   app.delete('/api/agents/:id', async (req) => {

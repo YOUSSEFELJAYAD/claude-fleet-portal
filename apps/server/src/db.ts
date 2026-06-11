@@ -179,6 +179,8 @@ for (const ddl of [
   // so (per §3.1) these campaigns-only ALTERs go in the EXISTING db.ts loop (NOT a new one).
   'ALTER TABLE campaigns ADD COLUMN disallowed_tools TEXT',
   'ALTER TABLE campaigns ADD COLUMN permission_mode TEXT',
+  // §24 — engine add-ons: which CLI was used for this run (null = 'claude')
+  'ALTER TABLE runs ADD COLUMN engine TEXT',
 ]) {
   try {
     db.exec(ddl);
@@ -197,6 +199,7 @@ function runToRow(r: Run) {
     task: r.task,
     cwd: r.cwd,
     model: r.model,
+    engine: r.engine ?? null,
     fast_mode: r.fastMode ? 1 : 0,
     effort: r.effort,
     workflows_enabled: r.workflowsEnabled ? 1 : 0,
@@ -231,6 +234,7 @@ function rowToRun(row: any): Run {
     task: row.task,
     cwd: row.cwd,
     model: row.model,
+    engine: (row.engine ?? undefined) as Run['engine'],
     fastMode: !!row.fast_mode,
     effort: row.effort,
     workflowsEnabled: !!row.workflows_enabled,
@@ -285,10 +289,10 @@ function rowToEvent(row: any): NormalizedEvent {
 }
 
 const upsertRunStmt = db.prepare(`
-INSERT INTO runs (id, session_id, task, cwd, model, fast_mode, effort, workflows_enabled, ultracode,
+INSERT INTO runs (id, session_id, task, cwd, model, engine, fast_mode, effort, workflows_enabled, ultracode,
   team_id, campaign_id, project_id, pid, status, started_at, ended_at, tokens_in, tokens_out, cost_usd, exit_code, kill_reason, error, budget_usd,
   permission_mode, allowed_tools, skills, subagent_profile, result_text, structured_output)
-VALUES (@id, @session_id, @task, @cwd, @model, @fast_mode, @effort, @workflows_enabled, @ultracode,
+VALUES (@id, @session_id, @task, @cwd, @model, @engine, @fast_mode, @effort, @workflows_enabled, @ultracode,
   @team_id, @campaign_id, @project_id, @pid, @status, @started_at, @ended_at, @tokens_in, @tokens_out, @cost_usd, @exit_code, @kill_reason, @error, @budget_usd,
   @permission_mode, @allowed_tools, @skills, @subagent_profile, @result_text, @structured_output)
 ON CONFLICT(id) DO UPDATE SET

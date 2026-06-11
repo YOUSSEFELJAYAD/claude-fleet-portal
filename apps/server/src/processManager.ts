@@ -37,7 +37,16 @@ export function looksLikeClaudePid(pid: number | null | undefined): boolean {
     const out = spawnSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000 });
     if (out.status !== 0 || !out.stdout) return false; // not alive / can't confirm → don't kill
     const cmd = out.stdout.toLowerCase();
-    return cmd.includes('claude') || cmd.includes('mock-claude') || cmd.includes('--output-format') || cmd.includes('--session-id');
+    return (
+      cmd.includes('claude') ||
+      cmd.includes('mock-claude') ||
+      cmd.includes('--output-format') ||
+      cmd.includes('--session-id') ||
+      // §24 — engine add-on runs persist their pid too; the boot orphan sweep and
+      // not-in-memory stop must recognize them or restarted servers leak engine children
+      cmd.includes('codex') ||
+      cmd.includes('opencode')
+    );
   } catch {
     return false;
   }

@@ -75,12 +75,23 @@ afterAll(async () => {
 });
 
 describe('marketplace listing', () => {
-  it('lists the built-in compression add-on with detected version and defaults', async () => {
+  it('lists all 3 built-in add-ons (compression, codex, opencode)', async () => {
     const res = await get('/api/addons');
     expect(res.statusCode).toBe(200);
     const list = res.json();
-    expect(list).toHaveLength(1);
-    const c = list[0];
+    expect(list).toHaveLength(3);
+    const ids = list.map((a: any) => a.id);
+    expect(ids).toContain('compression');
+    expect(ids).toContain('codex');
+    expect(ids).toContain('opencode');
+    // compression is always first
+    expect(list[0].id).toBe('compression');
+  });
+
+  it('has correct shape for the compression add-on', async () => {
+    const res = await get('/api/addons/compression');
+    expect(res.statusCode).toBe(200);
+    const c = res.json();
     expect(c.id).toBe('compression');
     expect(c.kind).toBe('builtin');
     expect(c.page).toBe('/addons/compression');
@@ -90,6 +101,32 @@ describe('marketplace listing', () => {
     expect(c.status).toBe('disabled');
     expect(c.config.port).toBe(8787); // headroom's own default
     expect(c.config.applyToNewRuns).toBe(true);
+  });
+
+  it('has correct shape for the codex engine add-on', async () => {
+    const res = await get('/api/addons/codex');
+    expect(res.statusCode).toBe(200);
+    const c = res.json();
+    expect(c.id).toBe('codex');
+    expect(c.kind).toBe('builtin');
+    expect(c.page).toBe('/addons/codex');
+    expect(c.enabled).toBe(false);
+    // no CODEX_BIN env in this test context → either not-installed or installed depending on PATH
+    expect(['not-installed', 'disabled', 'running']).toContain(c.status);
+    expect(c.config).toHaveProperty('defaultModel');
+    expect(c.config).toHaveProperty('sandbox');
+  });
+
+  it('has correct shape for the opencode engine add-on', async () => {
+    const res = await get('/api/addons/opencode');
+    expect(res.statusCode).toBe(200);
+    const o = res.json();
+    expect(o.id).toBe('opencode');
+    expect(o.kind).toBe('builtin');
+    expect(o.page).toBe('/addons/opencode');
+    expect(o.enabled).toBe(false);
+    expect(o.config).toHaveProperty('defaultModel');
+    expect(o.config).toHaveProperty('skipPermissions');
   });
 
   it('404s for an unknown add-on (GET / enable / config)', async () => {
@@ -234,5 +271,124 @@ describe('enable → proxy lifecycle → run env → disable', () => {
 
   it('restart refuses while disabled', async () => {
     expect((await post('/api/addons/compression/restart')).statusCode).toBe(409);
+  });
+});
+
+// ── fake codex binary setup ───────────────────────────────────────────────────────
+const codexBinDir = mkdtempSync(join(tmpdir(), 'fleet-fake-codex-'));
+const FAKE_CODEX_BIN = join(codexBinDir, 'codex');
+writeFileSync(
+  FAKE_CODEX_BIN,
+  `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === '--version') { console.log('codex 0.114.0'); process.exit(0); }
+process.exit(1);
+`,
+);
+chmodSync(FAKE_CODEX_BIN, 0o755);
+
+describe('engine add-on (codex) — enable / disable / restart / install', () => {
+  it('reports not-installed when CODEX_BIN is absent', async () => {
+    process.env.CODEX_BIN = '/nonexistent/codex';
+    addons.__resetAddonsForTests();
+    const res = await get('/api/addons/codex');
+    expect(res.statusCode).toBe(200);
+    const a = res.json();
+    expect(a.installed).toBe(false);
+    expect(a.status).toBe('not-installed');
+    delete process.env.CODEX_BIN;
+    addons.__resetAddonsForTests();
+  });
+
+  it('enable with CODEX_BIN pointing at fake binary → status running', async () => {
+    process.env.CODEX_BIN = FAKE_CODEX_BIN;
+    addons.__resetAddonsForTests();
+    const res = await post('/api/addons/codex/enable');
+    expect(res.statusCode).toBe(200);
+    const a = res.json();
+    expect(a.enabled).toBe(true);
+    expect(a.status).toBe('running');
+    expect(a.installed).toBe(true);
+    expect(a.version).toBe('0.114.0');
+  });
+
+  it('re-enable while already enabled is idempotent', async () => {
+    const res = await post('/api/addons/codex/enable');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().enabled).toBe(true);
+  });
+
+  it('disable → status disabled', async () => {
+    const res = await post('/api/addons/codex/disable');
+    expect(res.statusCode).toBe(200);
+    const a = res.json();
+    expect(a.enabled).toBe(false);
+    expect(a.status).toBe('disabled');
+  });
+
+  it('restart on engine add-on → 409 not-applicable', async () => {
+    const res = await post('/api/addons/codex/restart');
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('not-applicable');
+  });
+
+  it('install when CODEX_BIN is already present → 409 already-installed', async () => {
+    const res = await post('/api/addons/codex/install');
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('already-installed');
+    // cleanup
+    delete process.env.CODEX_BIN;
+    addons.__resetAddonsForTests();
+  });
+});
+
+describe('engine add-on — config validation (codex)', () => {
+  it('rejects invalid sandbox value', async () => {
+    const res = await put('/api/addons/codex/config', { sandbox: 'turbo-unsafe' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/sandbox/);
+  });
+
+  it('rejects non-string defaultModel', async () => {
+    const res = await put('/api/addons/codex/config', { defaultModel: 42 });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('accepts valid partial update — sandbox + defaultModel', async () => {
+    const res = await put('/api/addons/codex/config', { sandbox: 'read-only', defaultModel: 'gpt-5' });
+    expect(res.statusCode).toBe(200);
+    const a = res.json();
+    expect(a.config.sandbox).toBe('read-only');
+    expect(a.config.defaultModel).toBe('gpt-5');
+  });
+
+  it('accepts null defaultModel (reset to engine default)', async () => {
+    const res = await put('/api/addons/codex/config', { defaultModel: null });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().config.defaultModel).toBeNull();
+  });
+});
+
+describe('launch gating — engine disabled check', () => {
+  it('POST /api/agents with engine codex while codex is disabled → 409 engine-disabled', async () => {
+    // Ensure codex is disabled (it was disabled above; confirm)
+    const addonRes = await get('/api/addons/codex');
+    expect(addonRes.json().enabled).toBe(false);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents',
+      headers: { ...H(), 'content-type': 'application/json' },
+      payload: JSON.stringify({
+        prompt: 'hello',
+        cwd: '/tmp',
+        engine: 'codex',
+        model: 'claude-opus-4-8',
+        effort: 'low',
+        permissionMode: 'default',
+      }),
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('engine-disabled');
   });
 });

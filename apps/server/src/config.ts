@@ -68,6 +68,8 @@ export const DEFAULT_CONFIG: PortalConfig = {
   permissionDefault: 'default',
   subagentConcurrentCeiling: 16,
   subagentTotalCeiling: 1000,
+  dailySpendCeilingUsd: null, // §24 — fleet-wide hard daily cap (null = off)
+  maxRunMinutes: null, // §24 — per-run wall-clock auto-kill (null = off)
 };
 
 /**
@@ -100,6 +102,16 @@ export function validateConfig(input: unknown): PortalConfig {
     if (!PERMISSION_MODES.includes(i.permissionDefault as PermissionMode)) throw bad('permissionDefault invalid');
     permissionDefault = i.permissionDefault as PermissionMode;
   }
+  // §24 — nullable ceilings: null/absent = off; present must be a sane positive value.
+  const nullableNum = (key: 'dailySpendCeilingUsd' | 'maxRunMinutes', opts: { min: number; int?: boolean }): number | null => {
+    if (i[key] === undefined) return DEFAULT_CONFIG[key];
+    if (i[key] === null) return null;
+    const v = i[key];
+    if (typeof v !== 'number' || !Number.isFinite(v)) throw bad(`${key} must be a number or null`);
+    if (opts.int && !Number.isInteger(v)) throw bad(`${key} must be an integer`);
+    if (v < opts.min) throw bad(`${key} must be >= ${opts.min}`);
+    return v;
+  };
   return {
     maxConcurrentRuns: num('maxConcurrentRuns', { min: 1, max: 100, int: true }),
     defaultBudgetUsd: num('defaultBudgetUsd', { min: 0.0001 }),
@@ -107,5 +119,7 @@ export function validateConfig(input: unknown): PortalConfig {
     permissionDefault,
     subagentConcurrentCeiling: num('subagentConcurrentCeiling', { min: 1, max: 16, int: true }),
     subagentTotalCeiling: num('subagentTotalCeiling', { min: 1, max: 1000, int: true }),
+    dailySpendCeilingUsd: nullableNum('dailySpendCeilingUsd', { min: 0.01 }),
+    maxRunMinutes: nullableNum('maxRunMinutes', { min: 1, int: true }),
   };
 }

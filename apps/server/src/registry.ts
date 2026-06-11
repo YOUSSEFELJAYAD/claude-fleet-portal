@@ -24,6 +24,8 @@ import { repo } from './db.js';
 import { RunTree } from './tree.js';
 import { normalize } from './parser.js';
 import { spawnClaude, buildArgs, buildResumeArgs, killProcessGroup, type ManagedProcess } from './processManager.js';
+import { getEngineBin, engineLaunchConfig, isEngineEnabled } from './addons.js';
+import { buildEngineArgs, parseEngineLine, spawnEngine, type ManagedEngineProcess } from './engines.js';
 
 const TERMINAL: RunStatus[] = ['completed', 'failed', 'killed'];
 const isTerminal = (s: RunStatus) => TERMINAL.includes(s);
@@ -51,6 +53,8 @@ interface LiveRun {
   req: LaunchRequest;
   tree: RunTree;
   proc: ManagedProcess | null;
+  /** Engine add-on runs use a ManagedEngineProcess instead of a ManagedProcess. */
+  engineProc: ManagedEngineProcess | null;
   interactive: boolean;
   killed: boolean;
   resultSeen: boolean;
@@ -145,6 +149,67 @@ class Registry {
     // A fresh process owns no live runs → kill orphaned process groups, then clear stale rows (PRD §10).
     for (const pid of repo.nonTerminalPids()) killProcessGroup(pid, true);
     repo.reconcileOrphans();
+
+    // §24 — per-run wall-clock timeout sweep: unref'd so it doesn't keep the process alive.
+    const sweepInterval = setInterval(() => this.sweepTimeouts(), 30_000);
+    sweepInterval.unref();
+  }
+
+  // ── §24 guardrail helpers ────────────────────────────────────────────────────
+
+  /** Check today's spend against the daily ceiling. Throws 409 'daily-cap' if breached. */
+  private checkDailyCap() {
+    if (this.config.dailySpendCeilingUsd == null) return;
+    const today = startOfToday();
+    const spent = repo.spendSince(today);
+    const cap = this.config.dailySpendCeilingUsd;
+    if (spent >= cap) {
+      throw Object.assign(
+        new Error(`Daily spend ceiling reached ($${spent.toFixed(2)} of $${cap.toFixed(2)}) — raise it in Guardrails or wait for tomorrow`),
+        { statusCode: 409, code: 'daily-cap' },
+      );
+    }
+  }
+
+  /**
+   * §24 — sweep live runs for wall-clock timeout. Exported so tests can call it directly
+   * without relying on the 30s interval timer. Optionally accepts a timestamp to treat as
+   * 'now' (for deterministic tests that backdate a run's startedAt).
+   */
+  sweepTimeouts(now: number = Date.now()) {
+    const maxMs = this.config.maxRunMinutes == null ? null : this.config.maxRunMinutes * 60_000;
+    if (maxMs == null) return;
+    for (const lr of this.live.values()) {
+      if (isTerminal(lr.run.status)) continue;
+      if (lr.killed) continue;
+      const elapsed = now - lr.run.startedAt;
+      if (elapsed > maxMs) {
+        lr.run.error = `[guardrail] exceeded maxRunMinutes (${this.config.maxRunMinutes} min) — auto-killed.`;
+        lr.lastStderr += `\n${lr.run.error}`;
+        this.stop(lr.run.id, 'timeout');
+      }
+    }
+  }
+
+  /** §24 — stop every live non-terminal run. Returns the count of runs stopped. */
+  stopAll(): number {
+    let count = 0;
+    for (const lr of this.live.values()) {
+      if (isTerminal(lr.run.status)) continue;
+      if (lr.killed) continue;
+      this.stop(lr.run.id, 'user');
+      count++;
+    }
+    return count;
+  }
+
+  /** §24 — expose the live map count for tests (backdate helper). */
+  __backdateRunForTests(runId: string, startedAt: number) {
+    const lr = this.live.get(runId);
+    if (lr) {
+      lr.run.startedAt = startedAt;
+      repo.upsertRun(lr.run);
+    }
   }
 
   // ── config ────────────────────────────────────────────────────────────────
@@ -219,6 +284,8 @@ class Registry {
         statusCode: 429,
       });
     }
+    // §24 — daily spend hard cap: checked after concurrency so the 429 fires first when both hit.
+    this.checkDailyCap();
     // Validate the working directory up front → a clear 400 instead of a silent failed spawn.
     if (!reqIn.cwd || !existsSync(reqIn.cwd) || !statSync(reqIn.cwd).isDirectory()) {
       throw Object.assign(new Error(`Working directory does not exist: ${reqIn.cwd}`), { statusCode: 400 });
@@ -278,6 +345,7 @@ class Registry {
       req,
       tree,
       proc: null,
+      engineProc: null,
       interactive,
       killed: false,
       resultSeen: false,
@@ -296,6 +364,217 @@ class Registry {
     this.startProcess(lr, args);
     this.emitRun(lr);
     return run;
+  }
+
+  /**
+   * Async engine launch — validates the engine add-on state (requires awaiting getEngineBin),
+   * creates the run record, spawns the engine CLI.  Called from server.ts for engine runs.
+   */
+  async launchEngine(reqIn: LaunchRequest): Promise<Run> {
+    const engine = reqIn.engine!;
+    if (!isEngineEnabled(engine)) {
+      throw Object.assign(new Error(`Engine add-on '${engine}' is not enabled — enable it in the Add-on Marketplace first`), {
+        statusCode: 409,
+        code: 'engine-disabled',
+      });
+    }
+    const bin = await getEngineBin(engine);
+    if (!bin) {
+      throw Object.assign(new Error(`Engine '${engine}' binary is not installed — install it from the Add-on Marketplace`), {
+        statusCode: 409,
+        code: 'engine-not-installed',
+      });
+    }
+
+    const activeCount = [...this.live.values()].filter((lr) => !isTerminal(lr.run.status)).length;
+    if (activeCount >= this.config.maxConcurrentRuns) {
+      throw Object.assign(new Error(`Max concurrent runs reached (${this.config.maxConcurrentRuns})`), {
+        statusCode: 429,
+      });
+    }
+    // §24 — daily spend hard cap (same check as launch).
+    this.checkDailyCap();
+    if (!reqIn.cwd || !existsSync(reqIn.cwd) || !statSync(reqIn.cwd).isDirectory()) {
+      throw Object.assign(new Error(`Working directory does not exist: ${reqIn.cwd}`), { statusCode: 400 });
+    }
+
+    const cfg = engineLaunchConfig(engine);
+    const resolvedModel = reqIn.engineModel ?? (cfg as any).defaultModel ?? engine;
+
+    const sessionId = randomUUID();
+    const now = Date.now();
+    const run: Run = {
+      id: sessionId,
+      sessionId,
+      task: reqIn.prompt,
+      cwd: reqIn.cwd,
+      model: resolvedModel,
+      engine,
+      fastMode: false,
+      effort: reqIn.effort || 'high',
+      workflowsEnabled: false,
+      ultracode: false,
+      teamId: null,
+      campaignId: reqIn.campaignId ?? null,
+      projectId: reqIn.projectId ?? null,
+      pid: null,
+      status: 'starting',
+      startedAt: now,
+      endedAt: null,
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+      exitCode: null,
+      killReason: null,
+      error: null,
+      budgetUsd: reqIn.budgetUsd ?? null,
+      permissionMode: reqIn.permissionMode || 'default',
+      allowedTools: null,
+      skills: [],
+      subagentProfile: null,
+      resultText: null,
+      structuredOutput: null,
+      subagentCount: 0,
+      liveSubagents: 0,
+      maxDepth: 0,
+      lastActivity: now,
+    };
+    repo.upsertRun(run);
+
+    // Engine runs don't use a cost-aware tree (no model rates known); use a dummy rate.
+    const tree = new RunTree(sessionId, sessionId, { inputPerM: 0, outputPerM: 0 }, now);
+    const lr: LiveRun = {
+      run,
+      req: reqIn,
+      tree,
+      proc: null,
+      engineProc: null,
+      interactive: false,
+      killed: false,
+      resultSeen: false,
+      resultError: false,
+      awaitingPermission: false,
+      permissionSent: false,
+      pendingNodes: new Map(),
+      pendingEvents: [],
+      runDirty: false,
+      flushTimer: null,
+      lastStderr: '',
+    };
+    this.live.set(sessionId, lr);
+
+    const args = buildEngineArgs(engine, reqIn, cfg);
+    this.startEngineProcess(lr, engine, bin, args);
+    this.emitRun(lr);
+    return run;
+  }
+
+  private startEngineProcess(lr: LiveRun, engine: import('@fleet/shared').RunEngine, bin: string, args: string[]) {
+    // The root node is already seeded by RunTree constructor — mark it running.
+    const rootNode = lr.tree.nodes.get(lr.run.id);
+    if (rootNode) {
+      rootNode.status = 'running';
+      lr.pendingNodes.set(rootNode.id, rootNode);
+    }
+    lr.run.status = 'running';
+
+    let lastResultText: string | undefined;
+    let totalTokIn = 0;
+    let totalTokOut = 0;
+
+    lr.engineProc = spawnEngine(engine, bin, args, lr.run.cwd, {
+      onLine: (obj) => {
+        if (lr.killed) return;
+        const line = parseEngineLine(engine, obj);
+
+        // Accumulate usage
+        if (line.usage) {
+          totalTokIn += line.usage.tokensIn;
+          totalTokOut += line.usage.tokensOut;
+          lr.run.tokensIn = totalTokIn;
+          lr.run.tokensOut = totalTokOut;
+        }
+        if (line.resultText) {
+          lastResultText = line.resultText;
+          lr.resultSeen = true;
+        }
+        if (line.isError) {
+          lr.resultError = true;
+        }
+
+        if (line.type && line.type !== null) {
+          const seq = lr.tree.seq++;
+          const ts = Date.now();
+          const event: NormalizedEvent = {
+            sessionId: lr.run.sessionId,
+            runId: lr.run.id,
+            nodeId: lr.run.id,
+            parentNodeId: null,
+            nodeType: 'root',
+            seq,
+            ts,
+            type: line.type,
+            payload: line.payload ?? {},
+          };
+          lr.pendingEvents.push(event);
+          this.broadcastRun(lr.run.id, { kind: 'event', event });
+        }
+
+        lr.run.lastActivity = Date.now();
+        lr.runDirty = true;
+        this.scheduleFlush(lr);
+        this.emitRun(lr);
+      },
+      onStderr: (c) => {
+        lr.lastStderr = (lr.lastStderr + c).slice(-2000);
+      },
+      onExit: (code) => {
+        if (lr.deleted || this.live.get(lr.run.id) !== lr) {
+          lr.engineProc = null;
+          return;
+        }
+        this.flush(lr);
+
+        // Final token write
+        lr.run.tokensIn = totalTokIn;
+        lr.run.tokensOut = totalTokOut;
+        lr.run.costUsd = 0; // engine CLIs provide no cost stream
+        lr.run.resultText = lastResultText ?? null;
+
+        let status: RunStatus;
+        if (lr.killed) status = 'killed';
+        else if (code === 0 || (lr.resultSeen && !lr.resultError)) status = 'completed';
+        else status = 'failed';
+
+        lr.run.status = status;
+        lr.run.endedAt = Date.now();
+        lr.run.exitCode = code;
+
+        if (status !== 'completed') {
+          const err = lr.lastStderr.trim();
+          if (err) lr.run.error = err.slice(-2000);
+        }
+
+        // Mark root node done
+        const rootNode = lr.tree.nodes.get(lr.run.id);
+        if (rootNode) {
+          rootNode.status = status === 'completed' ? 'completed' : 'failed';
+          rootNode.endedAt = lr.run.endedAt;
+          rootNode.tokensIn = totalTokIn;
+          rootNode.tokensOut = totalTokOut;
+        }
+        lr.engineProc = null;
+
+        repo.upsertNodes(lr.tree.flatNodes());
+        repo.upsertRun(lr.run);
+        this.emitRun(lr);
+        this.notifyTerminal(lr);
+        this.scheduleEvict(lr.run.id);
+      },
+    });
+
+    lr.run.pid = lr.engineProc.pid ?? null;
+    repo.upsertRun(lr.run);
   }
 
   private startProcess(lr: LiveRun, args: string[]) {
@@ -479,8 +758,10 @@ class Registry {
   // ── control actions (PRD §7.6) ──────────────────────────────────────────────
   sendInput(runId: string, text: string) {
     const lr = this.live.get(runId);
-    if (!lr || !lr.proc) throw Object.assign(new Error('Run is not live; use Resume instead.'), { statusCode: 409 });
+    if (!lr || (!lr.proc && !lr.engineProc)) throw Object.assign(new Error('Run is not live; use Resume instead.'), { statusCode: 409 });
+    if (lr.engineProc) throw Object.assign(new Error('Input is not supported on engine add-on runs.'), { statusCode: 409, code: 'engine-unsupported' });
     if (!lr.interactive) throw Object.assign(new Error('Run was launched one-shot (not interactive).'), { statusCode: 409 });
+    if (!lr.proc) throw Object.assign(new Error('Run process is not live.'), { statusCode: 409 });
     lr.proc.writeUserMessage(text);
     lr.resultSeen = false;
     if (lr.tree.authoritativeCost != null) lr.tree.liveCostEstimate = lr.tree.authoritativeCost;
@@ -502,6 +783,7 @@ class Registry {
     for (const lr of this.live.values()) {
       try {
         lr.proc?.kill();
+        lr.engineProc?.kill();
         killProcessGroup(lr.run.pid, true);
       } catch {
         /* best-effort during shutdown */
@@ -509,9 +791,11 @@ class Registry {
     }
   }
 
-  stop(runId: string, reason: 'user' | 'budget' = 'user') {
+  stop(runId: string, reason: 'user' | 'budget' | 'timeout' = 'user') {
     const lr = this.live.get(runId);
     if (!lr) {
+      // Also handles engine runs via persisted pid — though engine CLIs don't track
+      // the pid as a process group, the generic killProcessGroup is still safe here.
       // Run isn't in this process's live map (e.g. after a server restart). Kill its process
       // group by persisted pid, mark it killed, and broadcast so the UI reflects it (PRD §10).
       const run = repo.getRun(runId);
@@ -544,7 +828,9 @@ class Registry {
     repo.upsertRun(lr.run);
     this.emitRun(lr);
     this.notifyTerminal(lr);
-    lr.proc?.kill(); // cascades to the process group (§7.6)
+    // kill either the claude process or the engine process
+    lr.proc?.kill();
+    lr.engineProc?.kill();
     this.scheduleEvict(runId);
   }
 
@@ -570,6 +856,10 @@ class Registry {
     if (!existing) throw Object.assign(new Error('Run not found'), { statusCode: 404 });
     if (!isTerminal(existing.status)) {
       throw Object.assign(new Error('Run is still live; cannot resume.'), { statusCode: 409 });
+    }
+    // Engine add-on runs are one-shot; resume is not supported.
+    if (existing.engine && existing.engine !== 'claude') {
+      throw Object.assign(new Error('Resume is not supported on engine add-on runs.'), { statusCode: 409, code: 'engine-unsupported' });
     }
     // concurrency guardrail also applies to resume (review #3)
     const activeCount = [...this.live.values()].filter((lr) => !isTerminal(lr.run.status)).length;
@@ -618,6 +908,7 @@ class Registry {
       req,
       tree,
       proc: null,
+      engineProc: null,
       interactive: !!req.interactive,
       killed: false,
       resultSeen: false,
@@ -646,7 +937,8 @@ class Registry {
    */
   decidePermission(runId: string, requestId: string, decision: 'approve' | 'deny') {
     const lr = this.live.get(runId);
-    if (!lr || !lr.proc) throw Object.assign(new Error('Run is not live'), { statusCode: 409 });
+    if (!lr || (!lr.proc && !lr.engineProc)) throw Object.assign(new Error('Run is not live'), { statusCode: 409 });
+    if (lr.engineProc) throw Object.assign(new Error('Permission decisions are not supported on engine add-on runs.'), { statusCode: 409, code: 'engine-unsupported' });
     if (!lr.interactive) {
       // One-shot runs had stdin closed at spawn — a write would be silently dropped
       // (ERR_STREAM_WRITE_AFTER_END is swallowed) and the child would wait forever.
@@ -661,7 +953,7 @@ class Registry {
     // report can_use_tool may not fire under -p at all, so this path is largely dormant.)
     const msg = JSON.stringify(buildPermissionControlResponse(requestId, decision));
     try {
-      (lr.proc.child.stdin as any)?.write(msg + '\n');
+      (lr.proc?.child.stdin as any)?.write(msg + '\n');
     } catch {
       /* ignore */
     }

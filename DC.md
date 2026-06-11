@@ -871,3 +871,43 @@ save a "model" of skills/tools — preconfigured packs.
 - Verified end-to-end in the live UI (Playwright): search→select, pack save (correct contents
   via API), fresh-modal one-click apply repopulating both pickers.
 - Tests: +15 (`packs.test.ts`) → suite 400 pass + 2 by-design skips; 3/3 typecheck.
+
+## 24. Engine add-ons (Codex / OpenCode) + Guardrails v2 (2026-06-11)
+
+User: improve Guardrails UI + propose features; add Codex-by-ChatGPT and OpenCode as engine-
+switch add-ons; build with low-cost subagents (sonnet implementation, Fable review).
+Process: 2 sonnet research agents (verified headless CLI contracts) → Fable wrote the shared
+contract + specs → 2 sonnet implementers (sequential — both touch registry.ts) → Fable review
+fixed: Timeline payload key (result events read payload.result, not .text), engine-orphan
+recognition in looksLikeClaudePid (post-restart sweep/stop would have leaked codex/opencode
+children), lint nits. All sonnet-claimed results re-verified.
+
+**Engine add-ons (§24a)** — `RunEngine = claude | codex | opencode`:
+- addons.ts: `runtime: 'proxy' | 'engine-binary'` discriminator; engine add-ons have no backing
+  process (status = installed+enabled), npm one-click install (@openai/codex / opencode-ai),
+  per-engine config (codex: defaultModel + sandbox; opencode: defaultModel + skipPermissions).
+- engines.ts: pure buildEngineArgs (codex: `--ask-for-approval never --sandbox … --cd … exec
+  --json --skip-git-repo-check`; opencode: `run --format json [--model] [--dangerously-skip-
+  permissions]`) + parseEngineLine (codex item.completed/turn.completed/turn.failed; opencode
+  text/tool_use/step_finish/error → the EXISTING NormalizedEvent types, so the run timeline
+  renders engine runs unchanged) + spawnEngine (spawnClaude contract, no stdin protocol).
+- registry.launchEngine: flat-root run records (engine column on runs), tokens from the JSONL
+  usage, costUsd 0 (no cost stream), stop works (group kill), input/resume/permission → 409
+  engine-unsupported. Launch route branches on body.engine.
+- LaunchModal: ENGINE segmented control (shown when an engine add-on is enabled); non-claude
+  collapses the form to engine-relevant fields; budget marked 'not enforced on this engine'.
+- Live-verified: OpenCode v1.17.3 installed VIA THE PORTAL's install route, enabled, engine
+  switch rendered (real runs need the user's `opencode auth` providers — not exercised).
+  Codex card shows install CTA (binary absent; runs additionally need ChatGPT auth).
+
+**Guardrails v2 (§24b)** — three new server-enforced rails + page revamp:
+- `dailySpendCeilingUsd` (null=off): launch+launchEngine refuse with 409 'daily-cap' once
+  today's spend reaches it. `maxRunMinutes` (null=off): 30s registry sweep auto-kills over-
+  duration runs with killReason 'timeout' (covers claude AND engine runs; sweepTimeouts(now)
+  exported for deterministic tests). `POST /api/agents/stop-all` panic route (kill every live
+  run, killReason 'user').
+- /guardrails: three blocks — LIVE STATUS (5s poll, spend-vs-cap + active-vs-max gauges,
+  cap-reached banner), LIMITS (6 editable fields + read-only platform ceilings), DANGER ZONE
+  (STOP ALL RUNS, confirm with live count, disabled at 0).
+- Tests: +24 across engines.test.ts / guardrails.test.ts / addons.test.ts updates (incl. a
+  fake-bin engine E2E through spawnEngine) → suite 464 pass + 2 by-design skips; 3/3 typecheck.

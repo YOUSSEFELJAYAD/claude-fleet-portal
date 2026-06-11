@@ -115,12 +115,20 @@ export interface RunNode {
 // Run (PRD §9.3 runs + derived rollups)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Which coding-agent CLI executes a run. 'claude' is the native engine (full
+ *  feature surface); 'codex' / 'opencode' are EXPERIMENTAL engine add-ons (§24):
+ *  one-shot headless runs with a flat timeline — no subagent tree, no resume/input,
+ *  no budget enforcement (their CLIs expose no cost stream). */
+export type RunEngine = 'claude' | 'codex' | 'opencode';
+
 export interface Run {
   id: string;
   sessionId: string;
   task: string;
   cwd: string;
   model: string;
+  /** absent/'claude' = native; engine add-on runs carry their engine id. */
+  engine?: RunEngine;
   fastMode: boolean;
   effort: EffortLevel;
   workflowsEnabled: boolean;
@@ -137,8 +145,8 @@ export interface Run {
   tokensOut: number;
   costUsd: number;
   exitCode: number | null;
-  /** why a run was killed — distinguishes a user stop from a budget auto-kill (H5). */
-  killReason: 'user' | 'budget' | null;
+  /** why a run was killed — user stop vs budget auto-kill (H5) vs maxRunMinutes timeout (§24). */
+  killReason: 'user' | 'budget' | 'timeout' | null;
   /** captured failure cause (child stderr / guardrail note) surfaced on failed/killed runs (H5). */
   error: string | null;
   budgetUsd: number | null;
@@ -197,6 +205,11 @@ export interface LaunchRequest {
   agentsJson?: unknown;
   /** H22 — `--brief`: enable the agent→user SendUserMessage tool. */
   brief?: boolean;
+  /** §24 — engine add-ons: run on codex/opencode instead of claude (default 'claude'). */
+  engine?: RunEngine;
+  /** §24 — engine-native model id (free text, e.g. 'gpt-5-codex' or 'anthropic/claude-sonnet-4-5');
+   *  null/absent = the engine's own default. Ignored for engine 'claude'. */
+  engineModel?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -291,6 +304,12 @@ export interface PortalConfig {
   /** the ≤16 concurrent / 1000 total subagent ceilings are platform facts, surfaced read-only. */
   subagentConcurrentCeiling: number;
   subagentTotalCeiling: number;
+  /** §24 — fleet-wide HARD daily spend cap: new launches are refused (409) once today's
+   *  spend reaches it. null = no cap. (The per-run budget still auto-kills individual runs.) */
+  dailySpendCeilingUsd: number | null;
+  /** §24 — wall-clock ceiling per run in minutes: longer-running runs are auto-killed
+   *  (killReason 'timeout'). null = no limit. */
+  maxRunMinutes: number | null;
 }
 
 export interface SpendSummary {
