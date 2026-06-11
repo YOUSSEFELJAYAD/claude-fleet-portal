@@ -24,6 +24,8 @@ import type {
   AddonInfo,
   AddonInstallResult,
   CompressionStats,
+  ToolPack,
+  CreateToolPackRequest,
 } from '@fleet/shared';
 
 // Re-export for page components that take these via the api layer.
@@ -136,6 +138,13 @@ export const api = {
     j<AddonInfo>(`/api/addons/${id}/config`, { method: 'PUT', body: JSON.stringify(cfg) }),
   installAddon: (id: string) => j<AddonInstallResult>(`/api/addons/${id}/install`, { method: 'POST', body: JSON.stringify({}) }),
   compressionStats: () => j<CompressionStats>('/api/addons/compression/stats'),
+
+  // ── tool/skill packs (§23) — launch presets ──
+  packs: () => j<ToolPack[]>('/api/packs'),
+  createPack: (p: CreateToolPackRequest) => j<ToolPack>('/api/packs', { method: 'POST', body: JSON.stringify(p) }),
+  updatePack: (id: string, patch: Partial<CreateToolPackRequest>) =>
+    j<ToolPack>(`/api/packs/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  deletePack: (id: string) => j(`/api/packs/${id}`, { method: 'DELETE' }),
 
   stop: (id: string) => j(`/api/agents/${id}`, { method: 'DELETE' }),
   deleteRun: (id: string) => j(`/api/agents/${id}/record`, { method: 'DELETE' }),

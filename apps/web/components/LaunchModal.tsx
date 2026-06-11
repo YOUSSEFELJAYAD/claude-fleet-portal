@@ -2,8 +2,14 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import type { ModelInfo, SkillInfo, SubagentInfo, EffortLevel, PermissionMode } from '@fleet/shared';
+import type { ModelInfo, SkillInfo, SubagentInfo, EffortLevel, PermissionMode, ToolPack } from '@fleet/shared';
+import { CLAUDE_TOOLS } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn } from './ui';
+import { MultiPicker } from './MultiPicker';
+import { PackBar } from './PackBar';
+
+const TOOL_OPTIONS = CLAUDE_TOOLS.map((t) => ({ value: t.name, hint: t.hint }));
+const union = (base: string[], add: string[]) => [...base, ...add.filter((x) => !base.includes(x))];
 
 export function LaunchModal({ onClose }: { onClose: () => void }) {
   const router = useRouter();
@@ -23,10 +29,10 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [interactive, setInteractive] = useState(false);
   const [brief, setBrief] = useState(false); // H22 — enable agent→user messages
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
-  const [allowedTools, setAllowedTools] = useState('');
-  const [disallowedTools, setDisallowedTools] = useState(''); // H10
+  const [allowedTools, setAllowedTools] = useState<string[]>([]);
+  const [disallowedTools, setDisallowedTools] = useState<string[]>([]); // H10
   const [worktree, setWorktree] = useState(''); // H10
-  const [chosenSkills, setChosenSkills] = useState<Set<string>>(new Set());
+  const [chosenSkills, setChosenSkills] = useState<string[]>([]);
   const [command, setCommand] = useState(''); // optional /command the run starts on
   const [subagentProfile, setSubagentProfile] = useState('');
   const [budget, setBudget] = useState('');
@@ -78,11 +84,11 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
         interactive,
         brief,
         permissionMode,
-        allowedTools: allowedTools.trim() ? allowedTools.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean) : undefined,
-        disallowedTools: disallowedTools.trim() ? disallowedTools.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean) : undefined,
+        allowedTools: allowedTools.length ? allowedTools : undefined,
+        disallowedTools: disallowedTools.length ? disallowedTools : undefined,
         worktree: worktree.trim() || undefined,
         // the picked /command's instructions auto-load with the command — never double-inject
-        skills: [...chosenSkills].filter((s) => s !== command),
+        skills: chosenSkills.filter((s) => s !== command),
         subagentProfile: subagentProfile || null,
         budgetUsd: budget.trim() ? Number(budget) : null,
       });
@@ -237,9 +243,27 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
               <Input type="number" step="0.5" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder={ultracode ? '15.00' : '5.00'} />
             </Field>
 
+            {/* §23 — packs: one-click presets unioned into the pickers below */}
+            <div className="col-span-2 border-t hairline pt-4">
+              <PackBar
+                tools={allowedTools}
+                skills={chosenSkills}
+                onApply={(p: ToolPack) => {
+                  setAllowedTools((prev) => union(prev, p.tools));
+                  setChosenSkills((prev) => union(prev, p.skills));
+                }}
+              />
+            </div>
+
             <div className="col-span-2">
-              <Field label="allowed tools" hint="comma-separated · blank = default">
-                <Input value={allowedTools} onChange={(e) => setAllowedTools(e.target.value)} placeholder="Bash(git *), Edit, Read" />
+              <Field label="allowed tools" hint="searchable · blank = default toolset · custom patterns allowed">
+                <MultiPicker
+                  value={allowedTools}
+                  onChange={setAllowedTools}
+                  options={TOOL_OPTIONS}
+                  placeholder="search tools — or type a pattern like Bash(git *)…"
+                  customHint="patterns like Bash(git *) / mcp__server__tool work"
+                />
               </Field>
             </div>
 
@@ -247,41 +271,33 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             <Field label="git worktree" hint="optional · isolated branch">
               <Input value={worktree} onChange={(e) => setWorktree(e.target.value)} placeholder="feature-x (blank = none)" />
             </Field>
-            <Field label="disallowed tools" hint="deny-list · comma-separated">
-              <Input value={disallowedTools} onChange={(e) => setDisallowedTools(e.target.value)} placeholder="Bash(git push *), Write" />
+            <Field label="disallowed tools" hint="deny-list · searchable">
+              <MultiPicker
+                value={disallowedTools}
+                onChange={setDisallowedTools}
+                options={TOOL_OPTIONS}
+                placeholder="search… e.g. Bash(git push *)"
+                customHint="deny patterns work too"
+              />
             </Field>
 
             <div className="col-span-2">
-              <Kicker>attach skills{skills.length ? ` · ${skills.length} available` : ' · none found'}</Kicker>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {skills.length === 0 && <span className="text-faint font-mono text-[11px]">No SKILL.md folders in ~/.claude/skills or project</span>}
-                {skills.map((s) => {
-                  const on = chosenSkills.has(s.name);
-                  return (
-                    <button
-                      key={s.path}
-                      onClick={() =>
-                        setChosenSkills((prev) => {
-                          const next = new Set(prev);
-                          on ? next.delete(s.name) : next.add(s.name);
-                          return next;
-                        })
-                      }
-                      title={s.description}
-                      className="font-mono text-[11px] px-2 py-1 border transition-colors"
-                      style={{
-                        borderColor: on ? '#ffb000' : 'rgba(255,255,255,0.14)',
-                        color: on ? '#ffb000' : '#9aa1ab',
-                        background: on ? 'rgba(255,176,0,0.1)' : 'transparent',
-                      }}
-                    >
-                      {on ? '◉ ' : '○ '}
-                      {s.name}
-                      <span className="text-faint ml-1">·{s.scope}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              <Field
+                label={`attach skills${skills.length ? ` · ${skills.length} available` : ''}`}
+                hint="injected with an instruction to invoke them before work starts"
+              >
+                <MultiPicker
+                  value={chosenSkills}
+                  onChange={setChosenSkills}
+                  options={skills.map((s) => ({
+                    value: s.name,
+                    hint: s.description,
+                    group: `${s.kind === 'command' ? 'commands' : 'skills'} · ${s.scope}`,
+                  }))}
+                  placeholder={skills.length ? 'search skills & commands…' : 'no skills found — type a name to add one'}
+                  customHint="attach by name even if not in the catalog"
+                />
+              </Field>
             </div>
 
             {subagents.length > 0 && (

@@ -3,8 +3,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import type { AgentTemplate, EffortLevel, PermissionMode, SkillInfo } from '@fleet/shared';
+import type { AgentTemplate, EffortLevel, PermissionMode, SkillInfo, ToolPack } from '@fleet/shared';
+import { CLAUDE_TOOLS } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Textarea, Select, Btn } from '@/components/ui';
+import { MultiPicker } from '@/components/MultiPicker';
+import { PackBar } from '@/components/PackBar';
+
+const TOOL_OPTIONS = CLAUDE_TOOLS.map((t) => ({ value: t.name, hint: t.hint }));
+const union = (base: string[], add: string[]) => [...base, ...add.filter((x) => !base.includes(x))];
 
 const ROLE_COLOR: Record<string, string> = {
   orchestrator: '#b08cff',
@@ -29,9 +35,8 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState<EffortLevel>('high');
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
-  const [allowedTools, setAllowedTools] = useState('');
+  const [allowedTools, setAllowedTools] = useState<string[]>([]);
   const [skills, setSkills] = useState<string[]>([]);
-  const [customSkill, setCustomSkill] = useState('');
   const [budget, setBudget] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -45,7 +50,7 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
     setModel(tpl.model);
     setEffort(tpl.effort as EffortLevel);
     setPermissionMode(tpl.permissionMode as PermissionMode);
-    setAllowedTools(tpl.allowedTools.join(', '));
+    setAllowedTools(tpl.allowedTools);
     setSkills(tpl.skills);
     setBudget(tpl.budgetUsd != null ? String(tpl.budgetUsd) : '');
   }
@@ -56,15 +61,15 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
     api.skills().then(setCatalog).catch(() => setCatalog([]));
   }, [id]);
 
-  // catalog skills + any already-attached names the catalog doesn't know (still toggleable)
-  const skillOptions = useMemo(() => {
-    const known = new Set(catalog.map((s) => s.name));
-    const extras = skills.filter((s) => !known.has(s));
-    return [...catalog.map((s) => ({ name: s.name, description: s.description, scope: s.scope })), ...extras.map((name) => ({ name, description: undefined, scope: 'custom' as const }))];
-  }, [catalog, skills]);
-
-  const toggleSkill = (name: string) =>
-    setSkills((prev) => (prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name]));
+  const skillOptions = useMemo(
+    () =>
+      catalog.map((s) => ({
+        value: s.name,
+        hint: s.description,
+        group: `${s.kind === 'command' ? 'commands' : 'skills'} · ${s.scope}`,
+      })),
+    [catalog],
+  );
 
   async function save() {
     if (!t) return;
@@ -79,7 +84,7 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
         model,
         effort,
         permissionMode,
-        allowedTools: allowedTools.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean),
+        allowedTools,
         skills,
         budgetUsd: budget.trim() ? Number(budget) : null,
       });
@@ -147,57 +152,29 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
             />
           </Panel>
 
-          <Panel className="p-4">
-            <Kicker>skills</Kicker>
-            <div className="font-mono text-[10px] text-faint mt-1 mb-3">
-              selected skills are injected into the agent&apos;s system prompt with an instruction to invoke them
-              via its Skill tool before starting work
-            </div>
-            {skillOptions.length === 0 ? (
-              <div className="font-mono text-[11px] text-faint">
-                no skills found in ~/.claude/skills — add one below by name
+          <Panel className="p-4 space-y-4">
+            {/* §23 — packs union into BOTH pickers (skills here, allowed tools on the right) */}
+            <PackBar
+              tools={allowedTools}
+              skills={skills}
+              onApply={(p: ToolPack) => {
+                setAllowedTools((prev) => union(prev, p.tools));
+                setSkills((prev) => union(prev, p.skills));
+              }}
+            />
+            <div>
+              <Kicker>skills</Kicker>
+              <div className="font-mono text-[10px] text-faint mt-1 mb-2">
+                selected skills are injected into the agent&apos;s system prompt with an instruction to invoke them
+                via its Skill tool before starting work
               </div>
-            ) : (
-              <div className="space-y-1.5">
-                {skillOptions.map((s) => (
-                  <label key={s.name} className="flex items-start gap-2 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={skills.includes(s.name)}
-                      onChange={() => toggleSkill(s.name)}
-                      className="mt-0.5 accent-[#ffb000]"
-                    />
-                    <span className="min-w-0">
-                      <span className="font-mono text-[11.5px] text-ink group-hover:text-amber">{s.name}</span>
-                      <span className="font-mono text-[9px] uppercase tracking-wider text-faint ml-2 border border-line px-1 py-px">{s.scope}</span>
-                      {s.description && <span className="block font-mono text-[10px] text-dim leading-snug">{s.description}</span>}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2 mt-3">
-              <Input
-                value={customSkill}
-                onChange={(e) => setCustomSkill(e.target.value)}
-                placeholder="add a skill by name (e.g. graphify)"
-                className="flex-1"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && customSkill.trim()) {
-                    toggleSkill(customSkill.trim());
-                    setCustomSkill('');
-                  }
-                }}
+              <MultiPicker
+                value={skills}
+                onChange={setSkills}
+                options={skillOptions}
+                placeholder={skillOptions.length ? 'search skills & commands…' : 'no skills found — type a name to add one'}
+                customHint="attach by name even if not in the catalog"
               />
-              <Btn
-                disabled={!customSkill.trim()}
-                onClick={() => {
-                  toggleSkill(customSkill.trim());
-                  setCustomSkill('');
-                }}
-              >
-                + add
-              </Btn>
             </div>
           </Panel>
         </div>
@@ -237,8 +214,14 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
                 ))}
               </Select>
             </Field>
-            <Field label="allowed tools" hint="comma-sep · empty = all tools">
-              <Input value={allowedTools} onChange={(e) => setAllowedTools(e.target.value)} placeholder="Read, Grep, Glob" />
+            <Field label="allowed tools" hint="searchable · empty = all tools">
+              <MultiPicker
+                value={allowedTools}
+                onChange={setAllowedTools}
+                options={TOOL_OPTIONS}
+                placeholder="search tools — or type a pattern…"
+                customHint="patterns like Bash(git *) work"
+              />
             </Field>
             <Field label="budget USD / run" hint="empty = config default">
               <Input value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" placeholder="unbounded" />

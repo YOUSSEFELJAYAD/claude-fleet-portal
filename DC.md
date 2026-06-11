@@ -847,3 +847,27 @@ a dedicated info/config page.
   keeps the rail in sync with toggles; unmount-safe setTimeout polling chains).
 - Tests: +19 (`addons.test.ts`, fake headroom binary speaking the real 0.24.0 protocol) →
   suite 385 pass + 2 by-design skips; 3/3 typecheck.
+
+## 23. Searchable tool/skill pickers + packs (launch presets) (2026-06-11)
+
+User request: allowed-tools and skills should be dropdowns WITH SEARCH, and the operator can
+save a "model" of skills/tools — preconfigured packs.
+
+- **`MultiPicker`** (shared component): searchable multi-select — selected entries as removable
+  chips, inline query filters by name AND hint, grouped option lists (skills grouped
+  `kind · scope`), free-text entries via a "+ add" row (tool PATTERNS like `Bash(git *)` /
+  `mcp__server__tool` can't be enumerated). Enter picks the first MATCH; custom only when
+  nothing matches (live-testing caught Enter adding the literal query "graph" instead of
+  selecting `graphify` — fixed). Replaces the comma-text inputs (allowed/disallowed tools) and
+  the skills chip-wall/checkbox-list in BOTH the launch modal and the template editor.
+- **`CLAUDE_TOOLS`** in @fleet/shared: the discoverable baseline of Claude Code's tool surface
+  (15 entries with hints) — a baseline, not a constraint (custom patterns pass through verbatim
+  to `--allowedTools`/`--disallowedTools`, D-006).
+- **Packs** (`packs.ts`, table `tool_packs`, routes `/api/packs` CRUD): named presets pairing
+  tools + skills. Validation at the door (name 1–60, entries trimmed/deduped/≤120 chars/≤100,
+  UNIQUE name → 409 duplicate-name incl. rename). `PackBar` renders packs as one-click chips
+  (apply = UNION into current selection, never clears), "save current as pack" snapshots the
+  live selection, ✕ deletes (confirm). Mounted in the launch modal and the template editor.
+- Verified end-to-end in the live UI (Playwright): search→select, pack save (correct contents
+  via API), fresh-modal one-click apply repopulating both pickers.
+- Tests: +15 (`packs.test.ts`) → suite 400 pass + 2 by-design skips; 3/3 typecheck.

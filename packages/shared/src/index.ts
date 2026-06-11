@@ -776,6 +776,28 @@ export interface AddonInstallResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tool/skill packs (§23) — operator-defined presets of allowed-tools entries +
+// skills, applied with one click in the launch modal / template editor.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ToolPack {
+  id: string;
+  name: string;
+  description: string;
+  /** allowed-tools entries — plain names (Read) or patterns (Bash(git *)). */
+  tools: string[];
+  skills: string[];
+  createdAt: number;
+}
+
+export interface CreateToolPackRequest {
+  name: string;
+  description?: string;
+  tools?: string[];
+  skills?: string[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Static reference data
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -874,6 +896,28 @@ export const MODELS: ModelInfo[] = [
 ];
 
 export const EFFORT_LEVELS: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/** Claude Code's tool surface (for the allowed/disallowed-tools pickers — D-006:
+ *  these become `--allowedTools` / `--disallowedTools` entries verbatim). Free-form
+ *  patterns (Bash(git *), mcp__server__tool) are equally valid; this list is the
+ *  discoverable baseline, not a constraint. */
+export const CLAUDE_TOOLS: Array<{ name: string; hint: string }> = [
+  { name: 'Bash', hint: 'shell commands · patterns work: Bash(git *)' },
+  { name: 'Read', hint: 'read files' },
+  { name: 'Write', hint: 'create/overwrite files' },
+  { name: 'Edit', hint: 'in-place file edits' },
+  { name: 'Glob', hint: 'find files by pattern' },
+  { name: 'Grep', hint: 'search file contents' },
+  { name: 'Task', hint: 'spawn subagents' },
+  { name: 'WebFetch', hint: 'fetch a URL' },
+  { name: 'WebSearch', hint: 'search the web' },
+  { name: 'TodoWrite', hint: 'task list' },
+  { name: 'NotebookEdit', hint: 'edit Jupyter notebooks' },
+  { name: 'Skill', hint: 'invoke skills' },
+  { name: 'SlashCommand', hint: 'run /commands' },
+  { name: 'KillShell', hint: 'kill a background shell' },
+  { name: 'BashOutput', hint: 'read background shell output' },
+];
 
 export const PERMISSION_MODES: PermissionMode[] = [
   'default',
