@@ -21,6 +21,11 @@ writeFileSync(
 );
 chmodSync(sleepBin, 0o755);
 
+// processManager.ts reads CLAUDE_BIN once via config.ts at module import time.
+// Pin the test binary before any src module is imported.
+const originalClaudeBin = process.env.CLAUDE_BIN;
+process.env.CLAUDE_BIN = sleepBin;
+
 let app: any;
 let PORT: number;
 let registry: any;
@@ -38,6 +43,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app?.close();
+  if (originalClaudeBin == null) delete process.env.CLAUDE_BIN;
+  else process.env.CLAUDE_BIN = originalClaudeBin;
 });
 
 const H = () => ({ host: `127.0.0.1:${PORT}` });
@@ -157,9 +164,6 @@ describe('daily-cap launch rejection', () => {
     // Ceiling 1000 — well above the seeded 10.
     await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: { dailySpendCeilingUsd: 1000 } });
 
-    // Use the sleeping stub so the process doesn't exit unexpectedly.
-    const savedBin = process.env.CLAUDE_BIN;
-    process.env.CLAUDE_BIN = sleepBin;
     // registry.config is live; also set it via PUT so registry re-reads from DB.
     registry.setConfig({ ...registry.getConfig(), dailySpendCeilingUsd: 1000 });
 
@@ -179,7 +183,6 @@ describe('daily-cap launch rejection', () => {
     if (body.id) {
       registry.stop(body.id);
     }
-    process.env.CLAUDE_BIN = savedBin;
     // Reset ceiling.
     await app.inject({ method: 'PUT', url: '/api/config', headers: H(), payload: { dailySpendCeilingUsd: null } });
     registry.setConfig({ ...registry.getConfig(), dailySpendCeilingUsd: null });
@@ -229,8 +232,6 @@ describe('registry.sweepTimeouts — per-run wall-clock timeout', () => {
   });
 
   it('kills an overdue run with killReason "timeout" when sweepTimeouts is called', async () => {
-    const savedBin = process.env.CLAUDE_BIN;
-    process.env.CLAUDE_BIN = sleepBin;
     registry.setConfig({ ...registry.getConfig(), maxRunMinutes: 1 });
 
     const run = registry.launch({
@@ -265,16 +266,12 @@ describe('registry.sweepTimeouts — per-run wall-clock timeout', () => {
     const final = registry.getRun(run.id);
     expect(final?.status).toBe('killed');
     expect(final?.killReason).toBe('timeout');
-
-    process.env.CLAUDE_BIN = savedBin;
   });
 });
 
 // ── POST /api/agents/stop-all ─────────────────────────────────────────────────
 describe('POST /api/agents/stop-all — panic button', () => {
   it('stops all live runs and returns { stopped: N }', async () => {
-    const savedBin = process.env.CLAUDE_BIN;
-    process.env.CLAUDE_BIN = sleepBin;
     // Ensure no config guardrails interfere (null ceiling + unlimited duration).
     registry.setConfig({ ...registry.getConfig(), dailySpendCeilingUsd: null, maxRunMinutes: null });
 
@@ -319,7 +316,5 @@ describe('POST /api/agents/stop-all — panic button', () => {
     // killReason is 'user' (stopAll uses default reason)
     expect(registry.getRun(r1.id)?.killReason).toBe('user');
     expect(registry.getRun(r2.id)?.killReason).toBe('user');
-
-    process.env.CLAUDE_BIN = savedBin;
   });
 });

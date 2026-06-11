@@ -1019,3 +1019,16 @@ themes worth remembering:
 
 Suite: 483 → **658 pass + 2 by-design skips** (38 files); 3/3 typecheck; every new surface
 verified live. Junk templates an import test leaked into the live dev DB were removed.
+
+## 28. v0.4.1 patch release — unblock release CI (2026-06-11)
+
+The `v0.4.0` tag pushed successfully, but its release workflow failed before publishing because
+`guardrails.test.ts` changed `process.env.CLAUDE_BIN` after `config.ts` had already frozen the
+binary path at import time. CI spawned the default `claude` command instead of the sleeping test
+stub, so stop/timeout assertions saw early failed runs rather than killed live runs.
+
+Fix: pin the sleeping guardrails test binary at module top before any src imports, matching the
+runtime-dispatcher pattern used by other process-spawn tests, and remove misleading per-test env
+swaps. Bumped app/package metadata to `0.4.1` for a fresh patch tag because `v0.4.0` already
+exists. Verified: `pnpm -r typecheck`, targeted guardrails test, and full `pnpm test` suite
+(`658 pass + 2 by-design skips`).
