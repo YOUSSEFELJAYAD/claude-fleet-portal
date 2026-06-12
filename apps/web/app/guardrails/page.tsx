@@ -29,6 +29,9 @@ export default function GuardrailsPage() {
   const [cfgErr, setCfgErr] = useState<string | null>(null);
   const [stopMsg, setStopMsg] = useState<string | null>(null);
   const [stopBusy, setStopBusy] = useState(false);
+  const [resetConfirm, setResetConfirm] = useState('');
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
+  const [resetBusy, setResetBusy] = useState(false);
 
   // Live gauge: poll spend on a safe setTimeout chain (alive-ref pattern from compression page).
   const alive = useRef(true);
@@ -127,6 +130,28 @@ export default function GuardrailsPage() {
       setStopMsg(`error: ${e?.message ?? 'stop-all failed'}`);
     } finally {
       setStopBusy(false);
+    }
+  }
+
+  async function resetData() {
+    if (resetConfirm !== 'RESET') {
+      setResetMsg('type RESET to enable the database wipe');
+      return;
+    }
+    if (!window.confirm('Wipe ALL portal data and reset the local database? This stops live runs and cannot be undone.')) return;
+    setResetBusy(true);
+    setResetMsg(null);
+    try {
+      const res = await api.resetData('RESET');
+      setCfg(res.config);
+      setNums(toNumForm(res.config));
+      setSpend({ todayUsd: 0, activeRuns: 0, totalRunsToday: 0 });
+      setResetConfirm('');
+      setResetMsg(`database reset · cleared ${res.clearedRuns} run${res.clearedRuns !== 1 ? 's' : ''}`);
+    } catch (e: any) {
+      setResetMsg(`error: ${e?.message ?? 'reset failed'}`);
+    } finally {
+      setResetBusy(false);
     }
   }
 
@@ -327,6 +352,33 @@ export default function GuardrailsPage() {
                 {stopMsg}
               </span>
             )}
+          </div>
+
+          <div className="mt-5 pt-5 border-t hairline">
+            <p className="font-mono text-[11px] text-dim leading-relaxed mb-3">
+              Reset the local database: runs, events, projects, Kanban cards, schedules, campaigns,
+              notifications, packs, add-on config and saved filters are deleted. Built-in templates and
+              default guardrails are restored.
+            </p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <Input
+                value={resetConfirm}
+                onChange={(e) => setResetConfirm(e.target.value)}
+                placeholder="type RESET"
+                className="max-w-[180px]"
+              />
+              <Btn variant="danger" onClick={resetData} disabled={resetBusy || resetConfirm !== 'RESET'}>
+                {resetBusy ? 'resetting…' : 'Reset Database'}
+              </Btn>
+              {resetMsg && (
+                <span
+                  className="font-mono text-[11px]"
+                  style={{ color: resetMsg.startsWith('error') || resetMsg.startsWith('type') ? '#ff5d5d' : '#54e08a' }}
+                >
+                  {resetMsg}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </Panel>

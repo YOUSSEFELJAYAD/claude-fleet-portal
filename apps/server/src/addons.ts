@@ -618,6 +618,14 @@ function stopProxy(finalStatus: ProxyState['status'] = 'stopped'): Promise<void>
   return lastStop;
 }
 
+/** Used by destructive database reset: clear add-on runtime state so wiped config is true immediately. */
+export async function resetAddonRuntimeForDataWipe(): Promise<void> {
+  detectCache = null;
+  codexDetectCache = null;
+  opencodeDetectCache = null;
+  await stopProxy('stopped');
+}
+
 // ── run env injection ────────────────────────────────────────────────────────────
 
 /**

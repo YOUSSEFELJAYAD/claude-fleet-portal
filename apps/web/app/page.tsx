@@ -1,11 +1,12 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useFleet } from '@/lib/live';
+import { api } from '@/lib/api';
 import { RunCard } from '@/components/RunCard';
 import { Kicker, Empty } from '@/components/ui';
 import { RUN_STATUSES, LIVE_STATUSES } from '@fleet/shared';
 
-type FilterKey = 'all' | 'live' | 'completed' | 'failed' | 'killed';
+type FilterKey = 'all' | 'live' | 'completed' | 'failed' | 'killed' | 'archived';
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -13,21 +14,41 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'completed', label: 'Done' },
   { key: 'failed', label: 'Failed' },
   { key: 'killed', label: 'Killed' },
+  { key: 'archived', label: 'Archived' },
 ];
 
 export default function FleetDashboard() {
   const { runs } = useFleet();
   const [filter, setFilter] = useState<FilterKey>('all');
   const [q, setQ] = useState('');
+  const [archivedRuns, setArchivedRuns] = useState<typeof runs>([]);
+  const [archivedErr, setArchivedErr] = useState<string | null>(null);
 
-  const filtered = runs.filter((r) => {
+  const visibleRuns = runs.filter((r) => !r.archivedAt);
+
+  function reloadArchived() {
+    api.listRuns({ archived: 'only' })
+      .then((items) => {
+        setArchivedRuns(items);
+        setArchivedErr(null);
+      })
+      .catch((e) => setArchivedErr(e?.message ?? 'failed to load archived runs'));
+  }
+
+  useEffect(() => {
+    if (filter === 'archived') reloadArchived();
+  }, [filter]);
+
+  const sourceRuns = filter === 'archived' ? archivedRuns : visibleRuns;
+  const filtered = sourceRuns.filter((r) => {
     if (q && !(`${r.task} ${r.cwd}`.toLowerCase().includes(q.toLowerCase()))) return false;
     if (filter === 'all') return true;
     if (filter === 'live') return LIVE_STATUSES.includes(r.status);
+    if (filter === 'archived') return !!r.archivedAt;
     return r.status === filter;
   });
 
-  const liveCount = runs.filter((r) => LIVE_STATUSES.includes(r.status)).length;
+  const liveCount = visibleRuns.filter((r) => LIVE_STATUSES.includes(r.status)).length;
 
   return (
     <div>
@@ -41,7 +62,10 @@ export default function FleetDashboard() {
         <div className="text-right font-mono text-[11px] text-faint">
           <div>
             <span className="text-amber tnum">{liveCount}</span> live ·{' '}
-            <span className="text-ink tnum">{runs.length}</span> total
+            <span className="text-ink tnum">{visibleRuns.length}</span> active history
+            {archivedRuns.length > 0 && filter === 'archived' && (
+              <> · <span className="text-faint tnum">{archivedRuns.length}</span> archived</>
+            )}
           </div>
         </div>
       </div>
@@ -71,16 +95,22 @@ export default function FleetDashboard() {
         />
       </div>
 
+      {archivedErr && (
+        <div className="font-mono text-[11px] mb-4" style={{ color: '#ff5d5d' }}>{archivedErr}</div>
+      )}
+
       {filtered.length === 0 ? (
         <Empty>
-          {runs.length === 0
+          {filter === 'archived'
+            ? 'No archived runs.'
+            : visibleRuns.length === 0
             ? 'No runs yet — hit ＋ Launch Agent to spawn your first claude -p process.'
             : 'No runs match this filter.'}
         </Empty>
       ) : (
         <div className="grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))' }}>
           {filtered.map((r, i) => (
-            <RunCard key={r.id} run={r} index={i} />
+            <RunCard key={r.id} run={r} index={i} onChanged={filter === 'archived' ? reloadArchived : undefined} />
           ))}
         </div>
       )}

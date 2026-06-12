@@ -185,6 +185,9 @@ for (const ddl of [
   // F3 — auto-retry chain: the run id this run was spawned to retry
   'ALTER TABLE runs ADD COLUMN retry_of TEXT',
   'CREATE INDEX IF NOT EXISTS idx_runs_retry_of ON runs(retry_of)',
+  // UI archive: hidden from default fleet/history queries, but preserved until explicit delete/reset.
+  'ALTER TABLE runs ADD COLUMN archived_at INTEGER',
+  'CREATE INDEX IF NOT EXISTS idx_runs_archived_at ON runs(archived_at)',
 ]) {
   try {
     db.exec(ddl);
@@ -232,6 +235,7 @@ function runToRow(r: Run) {
     result_text: r.resultText,
     structured_output: r.structuredOutput != null ? JSON.stringify(r.structuredOutput) : null,
     retry_of: r.retryOf ?? null,
+    archived_at: r.archivedAt ?? null,
   };
 }
 
@@ -268,6 +272,7 @@ function rowToRun(row: any): Run {
     resultText: row.result_text,
     structuredOutput: row.structured_output ? safeJson(row.structured_output) : null,
     retryOf: row.retry_of ?? null,
+    archivedAt: row.archived_at ?? null,
     subagentCount: 0,
     liveSubagents: 0,
     maxDepth: 0,
@@ -298,12 +303,12 @@ function rowToEvent(row: any): NormalizedEvent {
 }
 
 const upsertRunStmt = db.prepare(`
-INSERT INTO runs (id, session_id, task, cwd, model, engine, fast_mode, effort, workflows_enabled, ultracode,
-  team_id, campaign_id, project_id, pid, status, started_at, ended_at, tokens_in, tokens_out, cost_usd, exit_code, kill_reason, error, budget_usd,
-  permission_mode, allowed_tools, skills, subagent_profile, result_text, structured_output, retry_of)
-VALUES (@id, @session_id, @task, @cwd, @model, @engine, @fast_mode, @effort, @workflows_enabled, @ultracode,
-  @team_id, @campaign_id, @project_id, @pid, @status, @started_at, @ended_at, @tokens_in, @tokens_out, @cost_usd, @exit_code, @kill_reason, @error, @budget_usd,
-  @permission_mode, @allowed_tools, @skills, @subagent_profile, @result_text, @structured_output, @retry_of)
+  INSERT INTO runs (id, session_id, task, cwd, model, engine, fast_mode, effort, workflows_enabled, ultracode,
+    team_id, campaign_id, project_id, pid, status, started_at, ended_at, tokens_in, tokens_out, cost_usd, exit_code, kill_reason, error, budget_usd,
+    permission_mode, allowed_tools, skills, subagent_profile, result_text, structured_output, retry_of, archived_at)
+  VALUES (@id, @session_id, @task, @cwd, @model, @engine, @fast_mode, @effort, @workflows_enabled, @ultracode,
+    @team_id, @campaign_id, @project_id, @pid, @status, @started_at, @ended_at, @tokens_in, @tokens_out, @cost_usd, @exit_code, @kill_reason, @error, @budget_usd,
+    @permission_mode, @allowed_tools, @skills, @subagent_profile, @result_text, @structured_output, @retry_of, @archived_at)
 ON CONFLICT(id) DO UPDATE SET
   status=@status, ended_at=@ended_at, tokens_in=@tokens_in, tokens_out=@tokens_out, cost_usd=@cost_usd,
   exit_code=@exit_code, kill_reason=@kill_reason, error=@error, result_text=@result_text, structured_output=@structured_output, pid=@pid
@@ -325,10 +330,17 @@ const insertSkillStmt = db.prepare(
   `INSERT OR IGNORE INTO run_skills (run_id, skill_name, scope) VALUES (?, ?, ?)`,
 );
 
-function queryRuns(filter: { status?: string; effort?: string; q?: string } | undefined, limit: number | null): Run[] {
+export type RunQuery = { status?: string; effort?: string; q?: string; archived?: 'include' | 'only' };
+
+function queryRuns(filter: RunQuery | undefined, limit: number | null): Run[] {
   let sql = 'SELECT * FROM runs';
   const where: string[] = [];
   const params: any[] = [];
+  if (filter?.archived === 'only') {
+    where.push('archived_at IS NOT NULL');
+  } else if (filter?.archived !== 'include') {
+    where.push('archived_at IS NULL');
+  }
   if (filter?.status) {
     where.push('status = ?');
     params.push(filter.status);
@@ -454,14 +466,64 @@ export const repo = {
     tx(id);
   },
 
-  listRuns(filter?: { status?: string; effort?: string; q?: string }): Run[] {
+  archiveRun(id: string, archivedAt: number | null): Run | null {
+    db.prepare('UPDATE runs SET archived_at = ? WHERE id = ?').run(archivedAt, id);
+    return this.getRun(id);
+  },
+
+  listRuns(filter?: RunQuery): Run[] {
     return queryRuns(filter, 500);
   },
 
   /** UNCAPPED variant for the CSV exporter — a spend/usage reconciliation must span EVERY
    *  run, not the UI's 500 most-recent (same caveat as fleet.ts's accounting queries). */
-  listRunsForExport(filter?: { status?: string; effort?: string; q?: string }): Run[] {
+  listRunsForExport(filter?: RunQuery): Run[] {
     return queryRuns(filter, null);
+  },
+
+  /** Destructive local reset: preserve schema/prepared statements, clear data rows, restore config. */
+  resetAllData() {
+    const tableNames = [
+      'events_fts',
+      'run_tags',
+      'saved_searches',
+      'scores',
+      'notifications',
+      'notif_channels',
+      'notif_config',
+      'triggers',
+      'schedules',
+      'plan_drafts',
+      'tool_packs',
+      'benchmarks',
+      'kanban_tasks',
+      'projects',
+      'campaign_tasks',
+      'campaigns',
+      'run_skills',
+      'events',
+      'run_nodes',
+      'runs',
+      'teams',
+      'agent_templates',
+      'memory_config',
+      'addons',
+      'fleet_config',
+      'config',
+    ];
+    const tx = db.transaction(() => {
+      for (const table of tableNames) {
+        try {
+          db.prepare(`DELETE FROM ${table}`).run();
+        } catch (e: any) {
+          if (!/no such table/i.test(e?.message ?? '')) throw e;
+        }
+      }
+      const json = JSON.stringify(DEFAULT_CONFIG);
+      db.prepare('INSERT INTO config (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = ?')
+        .run(json, json);
+    });
+    tx();
   },
 
   getNodes(runId: string): RunNode[] {

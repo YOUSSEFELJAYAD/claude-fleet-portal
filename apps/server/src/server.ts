@@ -26,7 +26,7 @@ import { registerOtelRoutes } from './otel.js'; // H6
 import { registerMemoryRoutes, initMemory } from './memory.js'; // F9 — fleet memory
 import { registerReleaseRoutes } from './release.js';
 import { registerBenchmarkRoutes } from './benchmarks.js'; // F4+F5 — benchmark mode + best-of-N
-import { registerAddonRoutes } from './addons.js'; // §22 — add-on marketplace (compression/headroom)
+import { registerAddonRoutes, resetAddonRuntimeForDataWipe } from './addons.js'; // §22 — add-on marketplace (compression/headroom)
 import { registerPackRoutes } from './packs.js'; // §23 — tool/skill packs (launch presets)
 import { registerPortabilityRoutes } from './portability.js'; // F10 — config as code (export/import)
 // Agent-PM / Kanban feature (spec docs/superpowers/specs/2026-06-09-agent-pm-kanban-design.md).
@@ -281,6 +281,28 @@ export function buildServer() {
       return { error: e.message };
     }
   });
+  app.post('/api/config/reset-data', async (req, reply) => {
+    const confirm = (req.body as any)?.confirm;
+    if (confirm !== 'RESET') {
+      reply.code(400);
+      return { error: 'confirm must be exactly RESET' };
+    }
+    try {
+      const campaignsKilled = campaigns.killAll();
+      const result = registry.resetAllData();
+      await resetAddonRuntimeForDataWipe();
+      seedTemplates();
+      return {
+        ok: true,
+        campaignsKilled,
+        clearedRuns: result.clearedRuns,
+        config: registry.getConfig(),
+      };
+    } catch (e: any) {
+      reply.code(e.statusCode ?? 500);
+      return { error: e.message ?? 'failed to reset data' };
+    }
+  });
   app.get('/api/spend', async () => registry.spend());
 
   // ── agents (runs) ─────────────────────────────────────────────────────────────
@@ -316,7 +338,8 @@ export function buildServer() {
 
   app.get('/api/agents', async (req) => {
     const q = req.query as any;
-    return registry.listRuns({ status: q?.status, effort: q?.effort, q: q?.q });
+    const archived = q?.archived === 'include' || q?.archived === 'only' ? q.archived : undefined;
+    return registry.listRuns({ status: q?.status, effort: q?.effort, q: q?.q, archived });
   });
 
   app.get('/api/agents/:id', async (req, reply) => {
@@ -409,6 +432,21 @@ export function buildServer() {
     try {
       registry.deleteRun(id);
       return { ok: true };
+    } catch (e: any) {
+      reply.code(e.statusCode ?? 500);
+      return { error: e.message };
+    }
+  });
+
+  app.post('/api/agents/:id/archive', async (req, reply) => {
+    const id = (req.params as any).id;
+    const archived = (req.body as any)?.archived;
+    if (typeof archived !== 'boolean') {
+      reply.code(400);
+      return { error: 'archived must be boolean' };
+    }
+    try {
+      return registry.archiveRun(id, archived);
     } catch (e: any) {
       reply.code(e.statusCode ?? 500);
       return { error: e.message };

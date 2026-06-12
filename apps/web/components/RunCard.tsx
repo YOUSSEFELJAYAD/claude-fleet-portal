@@ -7,9 +7,11 @@ import { usd, tokens, ago, dur } from '@/lib/format';
 import { api } from '@/lib/api';
 import { StatusBadge, Gauge } from './ui';
 
-export function RunCard({ run, index = 0 }: { run: Run; index?: number }) {
+export function RunCard({ run, index = 0, onChanged }: { run: Run; index?: number; onChanged?: () => void }) {
   const m = statusMeta(run.status);
   const elapsed = (run.endedAt ?? Date.now()) - run.startedAt;
+  const terminal = !m.live;
+  const archived = !!run.archivedAt;
   return (
     <Link href={`/runs/${run.id}`} className="block group animate-riseIn" style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}>
       <div
@@ -27,22 +29,39 @@ export function RunCard({ run, index = 0 }: { run: Run; index?: number }) {
             <StatusBadge status={run.status} />
             <div className="flex items-center gap-2">
               <span className="font-mono text-[10px] text-faint">{ago(run.lastActivity)}</span>
-              {!m.live && (
-                <button
-                  title="delete run"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (!confirm('Delete this run from history? This cannot be undone.')) return;
-                    // 404 = already gone (a missed run-removed SSE) — not worth reporting.
-                    api.deleteRun(run.id).catch((err: any) => {
-                      if (err?.status !== 404) alert(err?.message || 'failed to delete run');
-                    });
-                  }}
-                  className="opacity-0 group-hover:opacity-100 text-faint hover:text-sig-failed font-mono text-[12px] transition-opacity leading-none"
-                >
-                  ✕
-                </button>
+              {terminal && (
+                <>
+                  <button
+                    title={archived ? 'restore run' : 'archive run'}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      api.archiveRun(run.id, !archived)
+                        .then(() => onChanged?.())
+                        .catch((err: any) => alert(err?.message || 'failed to update archive state'));
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-faint hover:text-amber font-mono text-[11px] transition-opacity leading-none border border-line2 px-1 py-0.5"
+                  >
+                    {archived ? 'restore' : 'archive'}
+                  </button>
+                  <button
+                    title="delete run"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!confirm('Delete this run from history? This cannot be undone.')) return;
+                      // 404 = already gone (a missed run-removed SSE) — not worth reporting.
+                      api.deleteRun(run.id)
+                        .then(() => onChanged?.())
+                        .catch((err: any) => {
+                          if (err?.status !== 404) alert(err?.message || 'failed to delete run');
+                        });
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-faint hover:text-sig-failed font-mono text-[12px] transition-opacity leading-none"
+                  >
+                    ✕
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -64,6 +83,11 @@ export function RunCard({ run, index = 0 }: { run: Run; index?: number }) {
             {run.liveSubagents > 0 && (
               <span className="font-mono text-[10px] text-sig-orchestrating animate-pulseGlow" style={{ color: '#ffb000' }}>
                 {run.liveSubagents} live
+              </span>
+            )}
+            {archived && (
+              <span className="font-mono text-[10px] text-faint border border-line px-1.5 py-0.5">
+                archived
               </span>
             )}
           </div>

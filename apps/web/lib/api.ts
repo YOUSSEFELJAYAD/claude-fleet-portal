@@ -277,7 +277,7 @@ export type CommitFileResult =
 
 export const api = {
   launch: (b: LaunchRequest) => j<Run>('/api/agents', { method: 'POST', body: JSON.stringify(b) }),
-  listRuns: (q?: { status?: string; effort?: string; q?: string }) => j<Run[]>('/api/agents' + qs(q)),
+  listRuns: (q?: { status?: string; effort?: string; q?: string; archived?: 'include' | 'only' }) => j<Run[]>('/api/agents' + qs(q)),
   getRun: (id: string) => j<{ run: Run; nodes: RunNode[]; retriedBy: string | null }>(`/api/agents/${id}`),
   getTree: (id: string) => j<RunNode>(`/api/agents/${id}/tree`),
   // ── F4+F5 benchmarks ──
@@ -313,6 +313,8 @@ export const api = {
   stop: (id: string) => j(`/api/agents/${id}`, { method: 'DELETE' }),
   stopAll: () => j<{ stopped: number }>('/api/agents/stop-all', { method: 'POST', body: JSON.stringify({}) }),
   deleteRun: (id: string) => j(`/api/agents/${id}/record`, { method: 'DELETE' }),
+  archiveRun: (id: string, archived: boolean) =>
+    j<Run>(`/api/agents/${id}/archive`, { method: 'POST', body: JSON.stringify({ archived }) }),
   input: (id: string, text: string) =>
     j(`/api/agents/${id}/input`, { method: 'POST', body: JSON.stringify({ text }) }),
   resume: (id: string, prompt?: string, interactive?: boolean) =>
@@ -331,6 +333,11 @@ export const api = {
     ),
   config: () => j<PortalConfig>('/api/config'),
   setConfig: (c: PortalConfig) => j<PortalConfig>('/api/config', { method: 'PUT', body: JSON.stringify(c) }),
+  resetData: (confirm: 'RESET') =>
+    j<{ ok: true; campaignsKilled: number; clearedRuns: number; config: PortalConfig }>('/api/config/reset-data', {
+      method: 'POST',
+      body: JSON.stringify({ confirm }),
+    }),
   // F9 — fleet memory config + stats
   memoryConfig: () => j<{ enabled: boolean; dir: string }>('/api/memory'),
   setMemoryConfig: (cfg: { enabled: boolean; dir: string }) =>

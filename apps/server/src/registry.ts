@@ -20,7 +20,7 @@ import type {
 } from '@fleet/shared';
 import { MODELS, CLAUDE_MODELS, engineForModel } from '@fleet/shared';
 import { validateConfig } from './config.js';
-import { repo } from './db.js';
+import { repo, type RunQuery } from './db.js';
 import { RunTree } from './tree.js';
 import { normalize } from './parser.js';
 import { spawnClaude, buildArgs, buildResumeArgs, killProcessGroup, thinkingEnv, type ManagedProcess } from './processManager.js';
@@ -1030,6 +1030,51 @@ class Registry {
     this.broadcastFleet({ kind: 'spend', spend: this.spend() });
   }
 
+  /** Hide/restore a finished run from the default fleet/history views without deleting evidence. */
+  archiveRun(runId: string, archived: boolean): Run {
+    const lr = this.live.get(runId);
+    const run = lr?.run ?? repo.getRun(runId);
+    if (!run) throw Object.assign(new Error('Run not found'), { statusCode: 404 });
+    if (!isTerminal(run.status)) {
+      throw Object.assign(new Error('Stop the run before archiving it.'), { statusCode: 409 });
+    }
+    const archivedAt = archived ? Date.now() : null;
+    if (lr) lr.run.archivedAt = archivedAt;
+    const next = repo.archiveRun(runId, archivedAt) ?? { ...run, archivedAt };
+    this.broadcastRun(runId, { kind: 'run', run: next });
+    this.broadcastFleet({ kind: 'run', run: next });
+    return next;
+  }
+
+  /** Stop live children, clear all persisted portal data, and reset in-memory run/config state. */
+  resetAllData(): { clearedRuns: number } {
+    const runs = repo.listRuns({ archived: 'include' });
+    for (const lr of this.live.values()) {
+      lr.deleted = true;
+      try {
+        lr.proc?.kill();
+        lr.engineProc?.kill();
+        killProcessGroup(lr.run.pid, true);
+      } catch {
+        /* best-effort destructive reset */
+      }
+    }
+    for (const t of this.evictTimers.values()) clearTimeout(t);
+    this.evictTimers.clear();
+    this.live.clear();
+    this.notified.clear();
+
+    repo.resetAllData();
+    this.config = repo.getConfig();
+
+    for (const r of runs) {
+      this.broadcastRun(r.id, { error: 'portal data was reset' } as any);
+      this.broadcastFleet({ kind: 'run-removed', runId: r.id });
+    }
+    this.broadcastFleet({ kind: 'fleet-hello', runs: this.listRuns(), spend: this.spend() });
+    return { clearedRuns: runs.length };
+  }
+
   resume(runId: string, prompt?: string, interactive?: boolean): Run {
     const existing = repo.getRun(runId);
     if (!existing) throw Object.assign(new Error('Run not found'), { statusCode: 404 });
@@ -1159,7 +1204,7 @@ class Registry {
     return run;
   }
 
-  listRuns(filter?: { status?: string; effort?: string; q?: string }): Run[] {
+  listRuns(filter?: RunQuery): Run[] {
     // DB is the source of truth; overlay live rollups for in-memory runs.
     const rows = repo.listRuns(filter);
     return rows.map((r) => {

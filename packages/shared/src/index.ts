@@ -162,6 +162,8 @@ export interface Run {
   pid: number | null;
   /** F3 — auto-retry chain: id of the run this is a retry of (null if not a retry). */
   retryOf?: string | null;
+  /** Hidden from the default fleet/history views when set; still retrievable directly. */
+  archivedAt?: number | null;
   // ── derived rollups (PRD §7.1) ─────────────────────────────
   subagentCount: number;
   liveSubagents: number;

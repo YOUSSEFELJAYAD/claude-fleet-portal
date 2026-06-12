@@ -535,9 +535,26 @@
   <div class="release-timeline">
     <div class="release-entry current">
       <div class="release-head">
+        <span class="release-title">Approval Inbox, Run Archive & Data Reset</span>
+        <span class="release-tag">v0.4.5</span>
+        <span class="release-date">current</span>
+      </div>
+      <div class="release-body">
+        <ul>
+          <li>Full Approval Inbox redesign with queue stats, filters, search, richer permission cards and multiline input replies</li>
+          <li>Archive and restore finished fleet runs without losing evidence; archived runs move into a dedicated dashboard filter</li>
+          <li>Permanent terminal-run delete remains available for cleanup</li>
+          <li>Guarded Reset Database action in Guardrails with typed confirmation, live-run stop, default config restore and built-in template reseed</li>
+          <li>Reset now clears portal data across runs, events, projects, Kanban, schedules, campaigns, notifications, packs, add-on config and saved filters</li>
+          <li>Server tests cover archive visibility, restore behavior, live-run archive rejection and destructive reset safety</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="release-entry">
+      <div class="release-head">
         <span class="release-title">Unified Models, Engine Delegation & Add-on Routing</span>
         <span class="release-tag">v0.4.4</span>
-        <span class="release-date">current</span>
       </div>
       <div class="release-body">
         <ul>
