@@ -189,6 +189,8 @@ interface GhIssue {
   title: string;
   body: string | null;
   labels: Array<{ name?: string } | string>;
+  /** GitHub /issues endpoint returns PRs too; presence of this field identifies a PR. */
+  pull_request?: unknown;
 }
 
 /** PURE: map a GitHub REST issue to a control-plane WorkItem; flatten labels[].name, null body → ''. */
@@ -210,7 +212,10 @@ async function ghRepoSlug(project: Project): Promise<string | null> {
   return parseRepoSlug(remote.url);
 }
 
-/** Fetch open issues for a repo (mirrors triggers.ts fetchIssuesWithLabel; null on any gh failure). */
+/** Fetch open issues for a repo (mirrors triggers.ts fetchIssuesWithLabel; null on any gh failure).
+ * Defensive: filters out items with a `pull_request` field because GitHub's /issues endpoint
+ * returns both issues AND pull requests — we must exclude PRs from the control-plane backlog.
+ */
 async function fetchOpenIssues(root: string, ghRepo: string): Promise<GhIssue[] | null> {
   const r = await ghExec(root, [
     'api', `repos/${ghRepo}/issues`,
@@ -222,7 +227,8 @@ async function fetchOpenIssues(root: string, ghRepo: string): Promise<GhIssue[] 
   try {
     const items = JSON.parse(r.stdout);
     if (!Array.isArray(items)) return null;
-    return items as GhIssue[];
+    // GitHub's /issues endpoint includes PRs; filter them out defensively.
+    return (items as GhIssue[]).filter((i) => !i.pull_request);
   } catch {
     return null;
   }
@@ -275,6 +281,7 @@ export function githubControlPlane(loop: Loop, project: Project): ControlPlane {
       await ghIssueComment(root, Number(itemId), markdown);
     },
     async attachQuestions(itemId: string, questions: string[]) {
+      if (questions.length === 0) return;
       const n = Number(itemId);
       const body = ['**Questions for a human before this is agent-ready:**', '', ...questions.map((q) => `- ${q}`)].join('\n');
       await ghIssueComment(root, n, body);

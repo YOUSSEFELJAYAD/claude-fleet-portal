@@ -288,7 +288,7 @@ export interface PrView {
 }
 
 /**
- * View the PR for `branch` via `gh pr view <branch> --json state,url`. Discriminates the
+ * View the PR for `branch` via `gh pr view <branch> --json state,url,labels`. Discriminates the
  * GENUINE no-PR case (`{ pr: null }` — gh exits 1 printing "no pull requests found") from real
  * failures (`{ error }` — auth expiry, network, missing gh binary), so a stale badge isn't
  * silently mistaken for "no PR yet".
