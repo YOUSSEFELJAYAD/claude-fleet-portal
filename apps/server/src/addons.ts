@@ -739,6 +739,26 @@ export function addonRunEnvForEngine(engine: 'claude' | 'codex' | 'opencode', mo
   return {};
 }
 
+// ── service add-on (web-research → SearXNG) reachability probe ─────────────────────
+
+/** Probe a SearXNG instance for /search?format=json reachability. Kept inline here
+ *  (not imported from research.ts) to avoid an addons.ts ↔ research.ts module cycle. */
+async function probeSearxng(url: string): Promise<{ state: 'ok' | 'unreachable' | 'json-disabled'; detail: string | null }> {
+  const base = url.replace(/\/+$/, '');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5_000);
+  try {
+    const r = await fetch(`${base}/search?q=ping&format=json`, { headers: { accept: 'application/json' }, signal: ctrl.signal });
+    if (r.status === 403) return { state: 'json-disabled', detail: 'enable `json` in SearXNG settings.yml `search.formats`' };
+    if (!r.ok) return { state: 'unreachable', detail: `SearXNG returned ${r.status}` };
+    return { state: 'ok', detail: null };
+  } catch {
+    return { state: 'unreachable', detail: `not reachable at ${base}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── AddonInfo assembly ───────────────────────────────────────────────────────────
 
 async function addonInfo(id: string): Promise<AddonInfo | null> {
@@ -770,6 +790,27 @@ async function addonInfo(id: string): Promise<AddonInfo | null> {
       status,
       statusDetail,
       config: cfg,
+    };
+  }
+
+  // ── service add-on (web-research → SearXNG) — status from a reachability probe ──
+  if (def.runtime === 'service') {
+    const cfg = researchConfig();
+    const probe = await probeSearxng(cfg.searxngUrl);
+    const installed = probe.state !== 'unreachable';
+    let status: AddonStatus;
+    if (!installed) status = 'not-installed';
+    else if (!enabled) status = 'disabled';
+    else if (probe.state === 'json-disabled') status = 'error';
+    else status = 'running';
+    return {
+      ...def,
+      enabled,
+      installed,
+      version: null,
+      status,
+      statusDetail: probe.detail,
+      config: cfg as unknown as Record<string, unknown>,
     };
   }
 
@@ -1103,6 +1144,13 @@ export function registerAddonRoutes(app: FastifyInstance) {
       return addonInfo(id);
     }
 
+    // ── service enable (web-research) ──
+    if (def.runtime === 'service') {
+      const row = loadRow(id);
+      saveRow(id, true, row.config); // status reflects reachability; enabling never blocks
+      return addonInfo(id);
+    }
+
     // ── proxy enable (compression) ──
     const row = loadRow(id);
     // idempotent: re-enabling a live add-on must NOT bounce (or orphan) the proxy —
@@ -1137,9 +1185,9 @@ export function registerAddonRoutes(app: FastifyInstance) {
     const id = (req.params as any).id as string;
     const def = ADDON_DEFS.find((d) => d.id === id);
     if (!def) return reply.code(404).send({ error: 'unknown add-on' });
-    // engine-binary: no backing process to restart
-    if (def.runtime === 'engine-binary') {
-      return reply.code(409).send({ error: 'restart is not applicable to engine add-ons', code: 'not-applicable' });
+    // engine-binary / service: no backing process to restart
+    if (def.runtime === 'engine-binary' || def.runtime === 'service') {
+      return reply.code(409).send({ error: 'restart is not applicable to this add-on', code: 'not-applicable' });
     }
     if (!loadRow(id).enabled) return reply.code(409).send({ error: 'add-on is disabled' });
     stopProxy();
@@ -1157,6 +1205,19 @@ export function registerAddonRoutes(app: FastifyInstance) {
       let cfg: CodexEngineConfig | OpencodeEngineConfig;
       try {
         cfg = validateEngineConfig(id, req.body ?? {});
+      } catch (e: any) {
+        return reply.code(e?.statusCode ?? 400).send({ error: e?.message ?? 'invalid config' });
+      }
+      const row = loadRow(id);
+      saveRow(id, row.enabled, cfg as unknown as Record<string, unknown>);
+      return addonInfo(id);
+    }
+
+    // ── service config (web-research) ──
+    if (def.runtime === 'service') {
+      let cfg: WebResearchConfig;
+      try {
+        cfg = validateResearchConfig(req.body ?? {});
       } catch (e: any) {
         return reply.code(e?.statusCode ?? 400).send({ error: e?.message ?? 'invalid config' });
       }

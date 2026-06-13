@@ -77,15 +77,16 @@ afterAll(async () => {
 });
 
 describe('marketplace listing', () => {
-  it('lists all 3 built-in add-ons (compression, codex, opencode)', async () => {
+  it('lists all 4 built-in add-ons (compression, codex, opencode, web-research)', async () => {
     const res = await get('/api/addons');
     expect(res.statusCode).toBe(200);
     const list = res.json();
-    expect(list).toHaveLength(3);
+    expect(list).toHaveLength(4);
     const ids = list.map((a: any) => a.id);
     expect(ids).toContain('compression');
     expect(ids).toContain('codex');
     expect(ids).toContain('opencode');
+    expect(ids).toContain('web-research');
     // compression is always first
     expect(list[0].id).toBe('compression');
   });
@@ -421,7 +422,7 @@ describe('launch gating — engine disabled check', () => {
 
 describe('web-research add-on config', () => {
   it('lists web-research in /api/addons (id present)', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/addons' });
+    const res = await get('/api/addons'); // get() sets the Host header the server's H3 guard requires
     const ids = (res.json() as any[]).map((a) => a.id);
     expect(ids).toContain('web-research');
   });
