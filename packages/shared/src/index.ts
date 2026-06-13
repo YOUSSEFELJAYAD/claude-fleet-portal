@@ -885,6 +885,68 @@ export interface ResearchStatusResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Chat Dashboard (§29) — multi-session agent control-plane
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ChatRole = 'user' | 'assistant' | 'system';
+export type ChatMessageKind = 'text' | 'command' | 'command-result' | 'error';
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  engine: RunEngine;          // 'claude' | 'codex' | 'opencode'
+  model: string;
+  effort: EffortLevel;
+  permissionMode: PermissionMode;
+  cwd: string;
+  allowedTools: string[] | null;
+  skills: string[] | null;
+  runId: string | null;       // current backing run (null until first turn)
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  role: ChatRole;
+  kind: ChatMessageKind;
+  content: string;
+  runId: string | null;       // links an assistant turn to the run that produced it
+  createdAt: number;
+}
+
+export interface CreateChatSessionRequest {
+  title?: string;
+  engine?: RunEngine;
+  model?: string;
+  effort?: EffortLevel;
+  permissionMode?: PermissionMode;
+  cwd: string;
+  allowedTools?: string[] | null;
+  skills?: string[] | null;
+}
+
+export interface ChatTurnRequest { message: string }
+export interface ChatTurnResponse { runId: string; userMessage: ChatMessage }
+
+export interface AddChatMessageRequest {
+  role: ChatRole;
+  kind: ChatMessageKind;
+  content: string;
+  runId?: string | null;
+}
+
+export interface ChatCommandResult {
+  ok: boolean;
+  kind: 'text' | 'table' | 'error';
+  text?: string;
+  columns?: string[];
+  rows?: string[][];
+  runId?: string | null;      // when a command started a run
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool/skill packs (§23) — operator-defined presets of allowed-tools entries +
 // skills, applied with one click in the launch modal / template editor.
 // ─────────────────────────────────────────────────────────────────────────────
