@@ -5,7 +5,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import db from './db.js';
+import db, { onRunDeleted } from './db.js';
 
 // ── schema (idempotent) ────────────────────────────────────────────────────
 db.exec(`
@@ -35,8 +35,13 @@ const insertTagStmt = db.prepare(
 const deleteTagStmt = db.prepare(
   'DELETE FROM run_tags WHERE run_id = ? AND tag = ?',
 );
-// JOIN to runs so deleted runs (db.deleteRun does not cascade run_tags) don't
-// inflate the global tag counts with orphaned rows.
+// Cascade: when a run is deleted, drop its tags too. run_tags has no FK to runs, so
+// db.ts fires onRunDeleted and we clean our own rows here (the projects.onProjectDeleted
+// pattern). This keeps run_tags free of orphans instead of leaking a row per deleted run.
+const deleteAllTagsForRunStmt = db.prepare('DELETE FROM run_tags WHERE run_id = ?');
+onRunDeleted((runId) => deleteAllTagsForRunStmt.run(runId));
+// JOIN to runs is now defensive only (the cascade above prevents orphans): a stray tag whose
+// run row is somehow absent still won't inflate the global counts.
 const allTagsStmt = db.prepare(`
   SELECT t.tag AS tag, COUNT(*) AS count
   FROM run_tags t

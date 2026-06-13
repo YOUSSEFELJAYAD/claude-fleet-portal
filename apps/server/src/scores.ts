@@ -6,7 +6,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import db from './db.js';
+import db, { onRunDeleted } from './db.js';
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS scores (
@@ -28,6 +28,10 @@ VALUES (@id, @run_id, @name, @value, @comment, @source, @ts)
 
 const listByRunStmt = db.prepare('SELECT * FROM scores WHERE run_id = ? ORDER BY ts DESC');
 const deleteScoreStmt = db.prepare('DELETE FROM scores WHERE id = ?');
+// Cascade: drop a deleted run's scores. scores has no FK to runs, so db.ts fires onRunDeleted
+// and we clean our own rows here (mirrors tags.ts / projects.onProjectDeleted) — no orphans.
+const deleteScoresForRunStmt = db.prepare('DELETE FROM scores WHERE run_id = ?');
+onRunDeleted((runId) => deleteScoresForRunStmt.run(runId));
 const summaryStmt = db.prepare(
   'SELECT run_id AS runId, AVG(value) AS avg, COUNT(*) AS count FROM scores GROUP BY run_id',
 );

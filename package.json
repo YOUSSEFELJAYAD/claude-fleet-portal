@@ -8,7 +8,7 @@
     "dev": "concurrently -n server,web -c blue,magenta \"pnpm --filter @fleet/server dev\" \"pnpm --filter @fleet/web dev\"",
     "dev:mock": "concurrently -n server,web -c blue,magenta \"CLAUDE_BIN=$PWD/tools/mock-claude.mjs pnpm --filter @fleet/server dev\" \"pnpm --filter @fleet/web dev\"",
     "build": "pnpm --filter @fleet/web build",
-    "test": "pnpm --filter @fleet/server test",
+    "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "start": "concurrently -n server,web -c blue,magenta \"pnpm --filter @fleet/server start\" \"pnpm --filter @fleet/web start\""
   },

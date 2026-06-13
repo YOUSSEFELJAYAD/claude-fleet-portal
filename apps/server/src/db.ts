@@ -360,6 +360,15 @@ function queryRuns(filter: RunQuery | undefined, limit: number | null): Run[] {
   return (db.prepare(sql).all(...params) as any[]).map(rowToRun);
 }
 
+// ── run-deleted subscription ──────────────────────────────────────────────────
+// Modules that own per-run side tables (tags.ts, scores.ts) subscribe here so deleteRun
+// cascades into their rows WITHOUT db.ts importing them or referencing tables it doesn't own
+// (mirrors projects.onProjectDeleted). db.ts imports nothing from those modules → no cycle.
+const runDeletedListeners: Array<(id: string) => void> = [];
+export function onRunDeleted(cb: (id: string) => void): void {
+  runDeletedListeners.push(cb);
+}
+
 export const repo = {
   /** H4 — fold the WAL back into the main db file (call on graceful shutdown). */
   checkpoint() {
@@ -453,7 +462,10 @@ export const repo = {
     return row?.id ?? null;
   },
 
-  /** Permanently delete a run's record + its nodes/events/skills (cascade). */
+  /** Permanently delete a run's record + its nodes/events/skills (cascade). Other modules that own
+   *  per-run side tables (tags.ts → run_tags, scores.ts → scores) clean their own rows by
+   *  subscribing via onRunDeleted — same pattern as projects.onProjectDeleted — so db.ts never has
+   *  to reference tables it doesn't own (and a partial import can't break the cascade). */
   deleteRun(id: string) {
     const tx = db.transaction((runId: string) => {
       db.prepare('DELETE FROM events WHERE run_id = ?').run(runId);
@@ -464,6 +476,13 @@ export const repo = {
       db.prepare('DELETE FROM runs WHERE id = ?').run(runId);
     });
     tx(id);
+    for (const cb of runDeletedListeners) {
+      try {
+        cb(id);
+      } catch {
+        /* one subscriber failing must not block the others or the delete */
+      }
+    }
   },
 
   archiveRun(id: string, archivedAt: number | null): Run | null {
