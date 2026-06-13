@@ -61,3 +61,25 @@ export async function searchWeb(opts: {
     engine: String(x?.engine ?? (Array.isArray(x?.engines) ? x.engines.join(',') : '')),
   }));
 }
+
+const MAX_SOURCES = 20;
+const MAX_SNIPPET = 500;
+
+/** Build the synthesis prompt: the topic plus the (capped) selected sources. */
+export function buildResearchPrompt(topic: string, results: WebResult[]): string {
+  const sources = results.slice(0, MAX_SOURCES).map((r, i) => {
+    const snippet = r.snippet.length > MAX_SNIPPET ? r.snippet.slice(0, MAX_SNIPPET) + '…' : r.snippet;
+    return `[${i + 1}] ${r.title}\n    ${r.url}\n    ${snippet}`;
+  }).join('\n\n');
+  return [
+    `RESEARCH TOPIC: ${topic}`,
+    '',
+    'You are given web search results below. Synthesize a tight, factual answer to the topic.',
+    'Cite sources inline by their [n] number and URL. Cross-check load-bearing claims against a',
+    'second source where possible. Distinguish FACT (with citation) from INFERENCE. If the sources',
+    'are insufficient, you may use WebFetch/WebSearch to read further, then say what remains open.',
+    '',
+    'SOURCES:',
+    sources || '(none provided)',
+  ].join('\n');
+}

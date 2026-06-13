@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { searchWeb } from '../src/research.js';
+import { searchWeb, buildResearchPrompt } from '../src/research.js';
 
 // ── a fake SearXNG that returns canned JSON (or 403 when json is disabled) ──
 let server: Server;
@@ -47,5 +47,28 @@ describe('searchWeb', () => {
 
   it('throws a 502 when SearXNG is unreachable', async () => {
     await expect(searchWeb({ searxngUrl: 'http://127.0.0.1:1', query: 'q' })).rejects.toMatchObject({ statusCode: 502 });
+  });
+});
+
+describe('buildResearchPrompt', () => {
+  const results = [
+    { title: 'A', url: 'https://a.example', snippet: 'alpha', score: 1, engine: 'google' },
+    { title: 'B', url: 'https://b.example', snippet: 'beta', score: 0.5, engine: 'ddg' },
+  ];
+
+  it('embeds the topic and every source URL', () => {
+    const p = buildResearchPrompt('quantum widgets', results);
+    expect(p).toContain('quantum widgets');
+    expect(p).toContain('https://a.example');
+    expect(p).toContain('https://b.example');
+  });
+
+  it('caps the number of embedded sources at 20', () => {
+    const many = Array.from({ length: 50 }, (_, i) => ({
+      title: `T${i}`, url: `https://e${i}.example`, snippet: 's', score: 0, engine: 'g',
+    }));
+    const p = buildResearchPrompt('t', many);
+    expect(p).toContain('https://e19.example');
+    expect(p).not.toContain('https://e20.example');
   });
 });
