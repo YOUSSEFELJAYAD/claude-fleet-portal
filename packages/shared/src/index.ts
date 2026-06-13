@@ -1229,3 +1229,29 @@ export interface ApplyPlanRequest {
   /** Optional column override; defaults to the draft's targetColumn. */
   targetColumn?: KanbanColumn;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Environment & Settings panel (§31)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SettingCategory = 'derived' | 'integration' | 'live';
+export type SettingSource = 'env' | 'portal-config' | 'addon' | 'derived';
+export type SettingApplyTiming = 'live' | 'next-launch' | 'read-only';
+
+export interface SettingValue {
+  key: string;
+  label: string;
+  category: SettingCategory;
+  source: SettingSource;
+  editable: boolean;
+  secret: boolean;
+  applyTiming: SettingApplyTiming;
+  gatedBy: string | null;   // feature/addon id required, or null
+  gatedOn: boolean;         // is the gate satisfied (feature enabled)?
+  value: string | null;     // current value; null for secrets and for unset
+  set: boolean;             // secrets: is a value present?
+  pending: boolean;         // env field: managed-file value differs from the running value
+}
+
+export interface SettingsResponse { settings: SettingValue[] }
+export interface UpdateSettingRequest { value: string | null } // null = clear
