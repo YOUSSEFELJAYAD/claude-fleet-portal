@@ -6,6 +6,17 @@ import { api } from '@/lib/api';
 import type { WebResult, ResearchStatusResponse } from '@fleet/shared';
 import { Btn, Input } from '@/components/ui';
 
+/** Only http(s) links are safe in an href — a `javascript:`/`data:` result URL is an XSS
+ *  vector. Results are already scheme-filtered server-side; this is defense-in-depth. */
+function safeHref(u: string): string {
+  try {
+    const p = new URL(u);
+    return p.protocol === 'http:' || p.protocol === 'https:' ? u : '#';
+  } catch {
+    return '#';
+  }
+}
+
 export default function ResearchPage() {
   const router = useRouter();
   const [status, setStatus] = useState<ResearchStatusResponse | null>(null);
@@ -75,7 +86,7 @@ export default function ResearchPage() {
               <label key={r.url} className="flex gap-2 items-start text-[13px] rounded border hairline p-2 cursor-pointer">
                 <input type="checkbox" checked={selected.has(r.url)} onChange={() => toggle(r.url)} className="mt-1" />
                 <span>
-                  <a href={r.url} target="_blank" rel="noreferrer" className="font-medium underline">{r.title || r.url}</a>
+                  <a href={safeHref(r.url)} target="_blank" rel="noreferrer" className="font-medium underline">{r.title || r.url}</a>
                   <span className="opacity-50"> · {r.engine}</span>
                   <div className="opacity-70">{r.snippet}</div>
                 </span>
