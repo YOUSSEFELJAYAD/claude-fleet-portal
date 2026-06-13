@@ -138,6 +138,22 @@ describe('validateContract — EVALUATION required (spec §3)', () => {
     expect(validateContract({ ...baseContract(), inputs: '' })).toMatch(/inputs/i);
     expect(validateContract({ ...baseContract(), output: '' })).toMatch(/output/i);
   });
+
+  // Fix 2 (spec §11): auto-low-risk with review off is an unsafe combination — no maker/checker
+  // can ever run, so an auto-merge would have no review. Reject it at validateContract.
+  it('rejects mergePosture=auto-low-risk + reviewPolicy=off (no review → no safe auto-merge)', () => {
+    const msg = validateContract(baseContract(), { mergePosture: 'auto-low-risk', reviewPolicy: 'off' });
+    expect(typeof msg).toBe('string');
+    expect(msg).toMatch(/review/i);
+  });
+
+  it('allows auto-low-risk when review is on (always)', () => {
+    expect(validateContract(baseContract(), { mergePosture: 'auto-low-risk', reviewPolicy: 'always' })).toBeNull();
+  });
+
+  it('allows human-gate + review off (no auto-merge → safe)', () => {
+    expect(validateContract(baseContract(), { mergePosture: 'human-gate', reviewPolicy: 'off' })).toBeNull();
+  });
 });
 
 describe('compileContract — permissions compilation (spec §10)', () => {
@@ -321,6 +337,15 @@ describe('loop routes (spec §16)', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body).error).toMatch(/evaluation/i);
+  });
+
+  it('POST /api/loops rejects auto-low-risk + reviewPolicy off with 400 (Fix 2 §11)', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/loops', headers: H(),
+      payload: { name: 'r-unsafe', projectId: PID, kind: 'worker', contract: baseContract(), mergePosture: 'auto-low-risk', reviewPolicy: 'off' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/review/i);
   });
 
   it('POST then GET list + detail', async () => {

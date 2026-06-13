@@ -159,6 +159,8 @@ class FakeCP {
 
 // Per-item structured verdicts keyed by the prompt fragment the manager builds (the item title).
 let verdictByTitle: Record<string, Verdict> = {};
+// Every launch request the manager makes (so we can assert the compiled deny-list — Fix 1a).
+let launchRequests: any[] = [];
 
 beforeAll(async () => {
   ({ registry } = await import('../src/registry.js'));
@@ -174,6 +176,7 @@ beforeAll(async () => {
   realLaunch = registry.launch.bind(registry);
   realGetRun = registry.getRun.bind(registry);
   registry.launch = async (req: any) => {
+    launchRequests.push(req);
     const match = Object.keys(verdictByTitle).find((title) => String(req.prompt).includes(title));
     const so = match
       ? verdictByTitle[match]
@@ -302,6 +305,29 @@ describe('runManagerLoop', () => {
     } finally {
       registry.launch = savedLaunch;
     }
+  });
+
+  it('compiles the contract deny-list into the triage launch (Fix 1a — spec §10)', async () => {
+    launchRequests = [];
+    verdictByTitle = { 'Fix typo': { risk: 'low', type: 'docs', agentReady: true, reason: 'doc fix' } };
+    const cp = new FakeCP([{ id: 'i1', title: 'Fix typo', body: 'README', labels: [] }]);
+    // The contract forbids a tool that is NOT in the project baseline — it must land on the launch.
+    await runManagerLoop(
+      loop({ contract: { job: 'triage', inputs: 'backlog', allowed: ['Read', 'Grep', 'Glob'], forbidden: ['Bash(rm *)'], output: 'labels', evaluation: 'graded' } }),
+      project,
+      cp as any,
+    );
+
+    expect(launchRequests).toHaveLength(1);
+    const req = launchRequests[0];
+    // The contract's forbidden tool is UNIONed into the launch deny-list.
+    expect(req.disallowedTools).toContain('Bash(rm *)');
+    // The project baseline (git push/remote) deny is preserved — compilation only ADDS denies.
+    expect(req.disallowedTools.some((t: string) => /git\s+push/.test(t))).toBe(true);
+    // The read-only Manager template allowedTools are kept (NOT broadened to the contract's allowed).
+    expect(req.allowedTools).toEqual(['Read', 'Grep', 'Glob']);
+    // The manager stays read-only / non-interactive.
+    expect(req.permissionMode).toBe('default');
   });
 
   it('honors a higher routableCeiling (medium): medium stays ready, high never does', async () => {

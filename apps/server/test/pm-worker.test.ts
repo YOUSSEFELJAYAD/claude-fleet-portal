@@ -8,6 +8,7 @@ import { join } from 'node:path';
 process.env.FLEET_DATA_DIR = mkdtempSync(join(tmpdir(), 'fleet-test-pm-worker-'));
 
 let pm: any;
+let disallowedToolsForProject: any;
 let registry: any;
 let projectsRepo: any;
 let kanbanRepo: any;
@@ -18,7 +19,7 @@ let realLaunch: any;
 let launchSeq = 0;
 
 beforeAll(async () => {
-  ({ pm } = await import('../src/pm.js'));
+  ({ pm, disallowedToolsForProject } = await import('../src/pm.js'));
   ({ registry } = await import('../src/registry.js'));
   ({ projectsRepo } = await import('../src/projects.js'));
   ({ kanbanRepo } = await import('../src/kanban.js'));
@@ -113,7 +114,7 @@ function stubLaunchAsyncReview(impl: (req: any) => any): { calls: any[]; restore
 function makeWorkerLoop(projectId: string, patch: Record<string, any> = {}): any {
   return loopsRepo.create({
     name: 'w', projectId, kind: 'worker',
-    contract: { job: 'build', inputs: 'cards', allowed: [], forbidden: [], output: 'pr', evaluation: 'tests pass' },
+    contract: { job: 'build', inputs: 'cards', allowed: [], forbidden: patch.forbidden ?? [], output: 'pr', evaluation: 'tests pass' },
     routableCeiling: patch.routableCeiling ?? 'low',
     mergePosture: patch.mergePosture ?? 'human-gate',
     reviewPolicy: patch.reviewPolicy ?? 'always',
@@ -160,6 +161,39 @@ describe('pm.tick() — worker-loop selection filter (SPEC §9)', () => {
       expect(stub.calls.map((c) => c.worktree)).toContain(`task-${ok.id}`);
       expect(stub.calls.map((c) => c.worktree)).not.toContain(`task-${tooRisky.id}`);
     } finally { stub.restore(); }
+  });
+});
+
+describe('pm worker build/fix launch — compiled contract deny-list (Fix 1b, SPEC §10)', () => {
+  it('worker loop forbidding Bash(rm *) → build launch deny-list contains it (UNIONed with baseline)', async () => {
+    const root = makeRepo('deny-build');
+    const project = makeProject(root, { wipLimit: 5 });
+    makeWorkerLoop(project.id, { routableCeiling: 'low', forbidden: ['Bash(rm *)'] });
+    const card = makeCard(project.id, { title: 'routable', column: 'Ready', labels: ['agent:ready', 'risk:low'] });
+    const stub = stubLaunch((req) => baseRun(`run-${req.worktree}`, req.projectId));
+    try {
+      await pm.tick(project.id);
+    } finally { stub.restore(); }
+    const buildReq = stub.calls.find((c) => c.worktree === `task-${card.id}`);
+    expect(buildReq).toBeTruthy();
+    expect(buildReq.disallowedTools).toContain('Bash(rm *)'); // the contract forbid is compiled in
+    // baseline git push/remote denies are preserved (compilation only ADDS denies)
+    expect(buildReq.disallowedTools.some((t: string) => /git\s+push/.test(t))).toBe(true);
+    expect(kanbanRepo.getTask(card.id)!.column).toBe('InProgress');
+  });
+
+  it('NO worker loop → build launch deny-list is byte-for-byte disallowedToolsForProject (backward compat)', async () => {
+    const root = makeRepo('deny-noloop');
+    const project = makeProject(root, { wipLimit: 5 });
+    const card = makeCard(project.id, { title: 'bare', column: 'Ready' }); // no loop, no labels
+    const stub = stubLaunch((req) => baseRun(`run-${req.worktree}`, req.projectId));
+    try {
+      await pm.tick(project.id);
+    } finally { stub.restore(); }
+    const buildReq = stub.calls.find((c) => c.worktree === `task-${card.id}`);
+    expect(buildReq).toBeTruthy();
+    // EXACT equality with the helper output — no worker loop must change nothing.
+    expect(buildReq.disallowedTools).toEqual(disallowedToolsForProject(project));
   });
 });
 
@@ -331,6 +365,28 @@ describe('pm gate — mergePosture (SPEC §11)', () => {
     const parked = kanbanRepo.getTask(card.id);
     expect(parked!.column).toBe('Review'); // ceiling off → not auto-merged
     expect(parked!.mergeSha).toBeFalsy();
+  });
+
+  it('reviewPolicy "off" + auto-low-risk + risk:low → NEVER auto-merges (no maker/checker ran) — parks in Review (Fix 2, SPEC §11)', async () => {
+    const root = makeRepo('posture-reviewoff');
+    const project = makeProject(root, { defaultBranch: 'master', autoMerge: false }); // local mode
+    makeWorkerLoop(project.id, { reviewPolicy: 'off', mergePosture: 'auto-low-risk' });
+    const card = makeCard(project.id, { title: 'feat', column: 'InProgress', labels: ['risk:low'] });
+    const { wtName } = makeFinishedWorktree(root, card.id, (wt) => writeFileSync(join(wt, 'feature.txt'), 'x\n'));
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+    const preHead = git(root, 'rev-parse', 'HEAD');
+    const cfg = registry.getConfig();
+    registry.setConfig({ ...cfg, loopAutoMergeCeiling: 'low' }); // ceiling WOULD allow low
+    const stub = stubLaunch((req) => baseRun('x', project.id, { structuredOutput: { pass: true, findings: 'n/a' } }));
+    try {
+      await pm.validateAndGate(card.id, project);
+    } finally { stub.restore(); registry.setConfig(cfg); }
+    // No Reviewer (json-schema) launch happened — review was off.
+    expect(stub.calls.filter((c) => c.jsonSchema).length).toBe(0);
+    const parked = kanbanRepo.getTask(card.id);
+    expect(parked!.column).toBe('Review'); // off → no auto-merge even though risk:low + ceiling allows
+    expect(parked!.mergeSha).toBeFalsy();
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(preHead); // main untouched
   });
 
   it('auto-low-risk + risk:medium (above ceiling) → parks in Review (only risk:low auto-merges)', async () => {

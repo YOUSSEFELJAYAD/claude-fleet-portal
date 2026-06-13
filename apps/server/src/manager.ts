@@ -12,6 +12,7 @@ import type { Project, TriageVerdict, RiskRule, RiskLevel, WorkType, Run, Loop }
 import { RISK_LABELS, TYPE_LABELS, ROUTING } from '@fleet/shared';
 import { registry } from './registry.js';
 import { repo } from './db.js';
+import { compileContract } from './loops.js';
 import type { WorkItem, IntendedAction, ControlPlane } from './controlplane.js';
 
 /** `--json-schema` shape the Manager run emits; lands on run.structuredOutput (F-8). Mirrors
@@ -149,6 +150,17 @@ export async function runManagerLoop(loop: Loop, project: Project, cp: ControlPl
   const ceiling = RISK_RANK[loop.routableCeiling];
   const backlog = await cp.listBacklog();
 
+  // SPEC §10: the loop contract compiles into the launch envelope for EVERY run the loop spawns.
+  // For the read-only Manager triage run we KEEP the template's read-only allowedTools/permissionMode
+  // (never broadened) and UNION the compiled deny-list (project baseline ∪ contract.forbidden — only
+  // ADDS denies) with whatever denies the template already carries.
+  const compiled = compileContract(loop, project);
+  const templateDenies = (t as any).disallowedTools as string[] | undefined;
+  const triageDisallowed = [...(templateDenies ?? [])];
+  for (const d of compiled.disallowedTools) {
+    if (!triageDisallowed.includes(d)) triageDisallowed.push(d);
+  }
+
   for (const item of backlog) {
     const prompt =
       `Triage this backlog item for autonomous routing. Return ONLY the structured TriageVerdict.\n\n` +
@@ -162,8 +174,9 @@ export async function runManagerLoop(loop: Loop, project: Project, cp: ControlPl
         cwd: project.rootDir,
         model: t.model,
         effort: t.effort,
-        permissionMode: t.permissionMode, // read-only Manager template
-        allowedTools: t.allowedTools,
+        permissionMode: t.permissionMode, // read-only Manager template (kept; never broadened)
+        allowedTools: t.allowedTools, // read-only template allowedTools — NOT widened to contract.allowed
+        disallowedTools: triageDisallowed, // SPEC §10 — compiled contract denies UNIONed in
         skills: t.skills,
         budgetUsd: t.budgetUsd ?? undefined,
         appendSystemPrompt: t.systemPrompt,

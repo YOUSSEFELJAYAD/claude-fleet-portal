@@ -251,8 +251,16 @@ export const loopsRepo = {
  * Validate a six-part contract (spec §3). Returns an error MESSAGE (string) or null if valid.
  * The hard rule: an empty `evaluation` is rejected — "if you can't grade it, you're not ready to
  * run it autonomously." job/inputs/output are required free-text fields too.
+ *
+ * `opts` carries the loop-level merge/review posture so the cross-field SPEC §11 invariant can be
+ * enforced at create/edit time: `mergePosture='auto-low-risk'` with `reviewPolicy='off'` is rejected —
+ * auto-merge requires a maker/checker pass, but review 'off' skips the reviewing phase entirely, so
+ * such a loop could auto-merge with no review (Fix 2).
  */
-export function validateContract(c: LoopContract): string | null {
+export function validateContract(
+  c: LoopContract,
+  opts?: { mergePosture?: MergePosture; reviewPolicy?: string },
+): string | null {
   if (!c || typeof c !== 'object') return 'contract is required';
   if (!c.job || !c.job.trim()) return 'contract.job is required';
   if (!c.inputs || !c.inputs.trim()) return 'contract.inputs is required';
@@ -262,6 +270,9 @@ export function validateContract(c: LoopContract): string | null {
   }
   if (!Array.isArray(c.allowed)) return 'contract.allowed must be a string[]';
   if (!Array.isArray(c.forbidden)) return 'contract.forbidden must be a string[]';
+  if (opts?.mergePosture === 'auto-low-risk' && opts?.reviewPolicy === 'off') {
+    return "mergePosture 'auto-low-risk' requires a review — set reviewPolicy to 'always' or 'threshold:<N>' (an auto-merge with no maker/checker pass is forbidden)";
+  }
   return null;
 }
 
@@ -473,7 +484,12 @@ export function registerLoopRoutes(app: FastifyInstance): void {
       reply.code(400);
       return { error: "kind must be 'manager' or 'worker'" };
     }
-    const cErr = validateContract(body.contract);
+    // Validate the contract AND the SPEC §11 cross-field invariant against the EFFECTIVE posture/policy
+    // (apply the repo's create-time defaults so an omitted field is graded as what will be stored).
+    const cErr = validateContract(body.contract, {
+      mergePosture: body.mergePosture ?? 'human-gate',
+      reviewPolicy: body.reviewPolicy ?? 'always',
+    });
     if (cErr) {
       reply.code(400);
       return { error: cErr };
@@ -498,17 +514,31 @@ export function registerLoopRoutes(app: FastifyInstance): void {
   // Edit (re-validates the contract when one is provided; enable/disable/posture/schedule).
   app.put('/api/loops/:id', async (req, reply) => {
     const id = (req.params as any).id;
-    if (!loopsRepo.get(id)) {
+    const current = loopsRepo.get(id);
+    if (!current) {
       reply.code(404);
       return { error: 'loop not found' };
     }
     const body = (req.body as any) ?? {};
+    // Re-validate the contract (when provided) AND the SPEC §11 cross-field invariant against the
+    // EFFECTIVE post-edit posture/policy (an edit that flips only mergePosture or reviewPolicy must
+    // still be rejected if the resulting pair is auto-low-risk + review off).
+    const effective = {
+      mergePosture: (body.mergePosture ?? current.mergePosture) as MergePosture,
+      reviewPolicy: (body.reviewPolicy ?? current.reviewPolicy) as string,
+    };
     if (body.contract !== undefined) {
-      const cErr = validateContract(body.contract);
+      const cErr = validateContract(body.contract, effective);
       if (cErr) {
         reply.code(400);
         return { error: cErr };
       }
+    } else if (effective.mergePosture === 'auto-low-risk' && effective.reviewPolicy === 'off') {
+      reply.code(400);
+      return {
+        error:
+          "mergePosture 'auto-low-risk' requires a review — set reviewPolicy to 'always' or 'threshold:<N>' (an auto-merge with no maker/checker pass is forbidden)",
+      };
     }
     return loopsRepo.update(id, {
       name: body.name,

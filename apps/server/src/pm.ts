@@ -42,7 +42,7 @@ import { RISK_LABELS, ROUTING } from '@fleet/shared';
 import { registry } from './registry.js';
 import { projectsRepo, onProjectDeleted } from './projects.js';
 import { kanbanRepo } from './kanban.js';
-import { loopsRepo } from './loops.js';
+import { loopsRepo, compileContract } from './loops.js';
 import { launchReview } from './review.js';
 import {
   ensureCommitted,
@@ -98,6 +98,22 @@ export function disallowedToolsForProject(project: Project): string[] {
   // non-push deny entry survives the relaxation.
   if (project.pushEnabled) return PM_DISALLOWED_TOOLS.filter((t) => !/git\s+(push|remote)/.test(t));
   return [...PM_DISALLOWED_TOOLS];
+}
+
+/**
+ * SPEC §10 — the deny-list for a worker BUILD / FIX launch. When an enabled kind='worker' Loop
+ * governs the project, the loop's compiled contract deny-list (project baseline ∪ contract.forbidden;
+ * compilation only ADDS denies) is used so the contract's `forbidden` is enforced on every run the
+ * loop spawns. BACKWARD-COMPATIBLE: with NO worker Loop this is byte-for-byte `disallowedToolsForProject`,
+ * preserving today's exact PM behavior for projects that don't use Loops. `compileContract` rides the
+ * SAME static `./loops.js` import pm.ts already uses for `loopsRepo` (the pm.ts ↔ loops.ts edge already
+ * exists and resolves via ESM live bindings at call time), so no microtask deferral is introduced —
+ * the worker build/fix launch stays synchronous.
+ */
+function disallowedToolsForWorkerBuild(project: Project): string[] {
+  const workerLoop = loopsRepo.enabledByKind(project.id, 'worker')[0];
+  if (!workerLoop) return disallowedToolsForProject(project);
+  return compileContract(workerLoop, project).disallowedTools;
 }
 
 /** Columns from which the PM never re-launches / re-evaluates a card (terminal-ish). */
@@ -177,6 +193,10 @@ async function changedFilesVsBase(worktreeDir: string, baseBranch: string): Prom
  */
 function autoLowRiskEligible(card: KanbanTask, project: Project, loop: Loop, ceiling: RiskLevel | null): boolean {
   if (loop.mergePosture !== 'auto-low-risk') return false;
+  // SPEC §11 (Fix 2): "maker/checker passed" is a hard conjunct. When reviewPolicy is 'off' the
+  // reviewing phase is SKIPPED entirely, so no review ever ran — there is no maker/checker to pass.
+  // Never auto-merge without a review, defensively (the create/edit gate also rejects this combo).
+  if (loop.reviewPolicy === 'off') return false;
   if (project.mergeMode === 'pr') return false; // PR path never auto-merges
   if (cardRisk(card) !== 'low') return false;
   if (ceiling == null) return false; // global ceiling off
@@ -498,6 +518,9 @@ class PmEngine {
       // created (else the main worktree goes dirty → mergeBranch refuses), and (b) sequentially so
       // the .gitignore commit doesn't race claude's `git worktree add` on the same index (index.lock).
       await ensureWorktreeIgnored(project.rootDir);
+      // SPEC §10 — when a worker Loop governs this project, its compiled contract deny-list is enforced
+      // on the build run; with no worker Loop this is byte-for-byte disallowedToolsForProject (compat).
+      const disallowedTools = disallowedToolsForWorkerBuild(project);
       const run = await registry.launch({
         prompt: buildPrompt(fresh),
         cwd: project.rootDir,
@@ -507,7 +530,7 @@ class PmEngine {
         model: fresh.model ?? PM_MODEL,
         effort: PM_EFFORT,
         permissionMode: PM_PERMISSION_MODE,
-        disallowedTools: disallowedToolsForProject(project),
+        disallowedTools,
         budgetUsd: fresh.budgetUsd,
         interactive: false,
       });
@@ -709,6 +732,9 @@ class PmEngine {
       return false;
     };
     try {
+      // SPEC §10 — when a worker Loop governs this project, enforce its compiled contract deny-list on
+      // the fix/rework run too; with no worker Loop this is byte-for-byte disallowedToolsForProject.
+      const disallowedTools = disallowedToolsForWorkerBuild(project);
       const run = registry.launch({
         prompt: fixPrompt(card, reviewFindings),
         cwd: project.rootDir,
@@ -718,7 +744,7 @@ class PmEngine {
         model: card.model ?? PM_MODEL,
         effort: PM_EFFORT,
         permissionMode: PM_PERMISSION_MODE,
-        disallowedTools: disallowedToolsForProject(project),
+        disallowedTools,
         budgetUsd: card.budgetUsd,
         interactive: false,
       });
