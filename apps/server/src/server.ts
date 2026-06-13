@@ -37,6 +37,7 @@ import { registerPortabilityRoutes } from './portability.js'; // F10 — config 
 // Import order matters: projects BEFORE kanban (kanban_tasks references a project; tables created on import).
 import { registerProjectsRoutes } from './projects.js';
 import { registerKanbanRoutes, subscribeBoard } from './kanban.js';
+import { registerControlPlaneRoutes } from './controlplane.js'; // Loops — card assessment thread (controlplane §16)
 import { registerFileviewRoutes } from './fileview.js';
 import { registerFileeditRoutes } from './fileedit.js'; // v2 #1 — file CRUD + commit (opt-in per project)
 import { registerPlanboardRoutes, planboard } from './planboard.js'; // v2 #3 — objective → Ready cards
@@ -228,6 +229,7 @@ export function buildServer() {
   // Agent-PM / Kanban — projects BEFORE kanban (FK), then the viewer; then start the PM engine.
   registerProjectsRoutes(app);
   registerKanbanRoutes(app);
+  registerControlPlaneRoutes(app); // Loops — card assessment thread (controlplane §16)
   registerFileviewRoutes(app);
   registerFileeditRoutes(app); // v2 #1 — opt-in file CRUD + commit (per-project editing_enabled gate)
   registerPlanboardRoutes(app); // v2 #3 — plan-board (objective → Ready cards)
