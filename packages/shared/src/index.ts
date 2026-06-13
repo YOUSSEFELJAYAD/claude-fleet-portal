@@ -297,6 +297,40 @@ export interface SubagentInfo {
   description?: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Skill auto-learning loop (F-LEARN, DC.md §29) — hermes-agent closed learning loop
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Config for the autonomous skill-distillation loop. Ships DISABLED by default. */
+export interface LearnerConfig {
+  enabled: boolean;
+  /** A completed operator run qualifies if ANY of these thresholds is met. */
+  minCostUsd: number;
+  minSubagents: number;
+  minDepth: number;
+  minDurationMs: number;
+  /** Hard cap on auto-learned skills per rolling 24h (runaway guard). */
+  maxPerDay: number;
+}
+
+/** A record of one distillation attempt. `ok` = a SKILL.md was written to disk. */
+export interface LearnedSkill {
+  id: string;
+  sourceRunId: string;
+  name: string;
+  slug: string;
+  /** Absolute path of the written SKILL.md (empty for skipped/failed). */
+  skillPath: string;
+  /** Absolute path of the personal-rag copy, if indexing succeeded. */
+  ragPath: string | null;
+  taskSig: string;
+  /** Cost of the run we learned FROM (not the distiller's own cost). */
+  sourceCostUsd: number;
+  status: 'ok' | 'skipped' | 'failed';
+  error: string | null;
+  createdAt: number;
+}
+
 export interface ModelInfo {
   id: string;
   label: string;
@@ -824,6 +858,129 @@ export interface AddonInstallResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Web Research (open-source, SearXNG-backed) — §28
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One normalized web result (from SearXNG's JSON API). */
+export interface WebResult {
+  title: string;
+  url: string;
+  /** Snippet / summary text (SearXNG `content`). */
+  snippet: string;
+  /** Relevance score from the metasearch engine (0 when absent). */
+  score: number;
+  /** Originating engine(s), e.g. "google", "duckduckgo". */
+  engine: string;
+}
+
+/** Persisted config for the `web-research` add-on. */
+export interface WebResearchConfig {
+  /** Base URL of the self-hosted SearXNG instance. */
+  searxngUrl: string;
+  /** Comma-separated SearXNG engine list, or '' for the instance default. */
+  engines: string;
+  /** Default number of results to request (1–20). */
+  maxResults: number;
+  /** SearXNG safesearch level: 0 off, 1 moderate, 2 strict. */
+  safeSearch: 0 | 1 | 2;
+  /** Language code passed to SearXNG (e.g. 'en', 'all'). */
+  language: string;
+}
+
+export interface ResearchSearchRequest {
+  query: string;
+  maxResults?: number;
+}
+export interface ResearchSearchResponse {
+  query: string;
+  results: WebResult[];
+}
+
+export interface ResearchSynthesizeRequest {
+  topic: string;
+  results: WebResult[];
+  /** Catalog model id; null/omitted → 'claude-opus-4-8'. */
+  model?: string | null;
+  /** Working dir for the run; omitted → server default. */
+  cwd?: string;
+}
+export interface ResearchSynthesizeResponse {
+  runId: string;
+}
+
+/** GET /api/research/status — SearXNG reachability for the /research page. */
+export interface ResearchStatusResponse {
+  /** SearXNG reachable AND JSON format enabled. */
+  ok: boolean;
+  searxngUrl: string;
+  /** 'ok' | 'unreachable' | 'json-disabled' */
+  state: 'ok' | 'unreachable' | 'json-disabled';
+  detail: string | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat Dashboard (§30) — multi-session agent control-plane
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ChatRole = 'user' | 'assistant' | 'system';
+export type ChatMessageKind = 'text' | 'command' | 'command-result' | 'error';
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  engine: RunEngine;          // 'claude' | 'codex' | 'opencode'
+  model: string;
+  effort: EffortLevel;
+  permissionMode: PermissionMode;
+  cwd: string;
+  allowedTools: string[] | null;
+  skills: string[] | null;
+  runId: string | null;       // current backing run (null until first turn)
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  role: ChatRole;
+  kind: ChatMessageKind;
+  content: string;
+  runId: string | null;       // links an assistant turn to the run that produced it
+  createdAt: number;
+}
+
+export interface CreateChatSessionRequest {
+  title?: string;
+  engine?: RunEngine;
+  model?: string;
+  effort?: EffortLevel;
+  permissionMode?: PermissionMode;
+  cwd: string;
+  allowedTools?: string[] | null;
+  skills?: string[] | null;
+}
+
+export interface ChatTurnRequest { message: string }
+export interface ChatTurnResponse { runId: string; userMessage: ChatMessage }
+
+export interface AddChatMessageRequest {
+  role: ChatRole;
+  kind: ChatMessageKind;
+  content: string;
+  runId?: string | null;
+}
+
+export interface ChatCommandResult {
+  ok: boolean;
+  kind: 'text' | 'table' | 'error';
+  text?: string;
+  columns?: string[];
+  rows?: string[][];
+  runId?: string | null;      // when a command started a run
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool/skill packs (§23) — operator-defined presets of allowed-tools entries +
 // skills, applied with one click in the launch modal / template editor.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1134,3 +1291,29 @@ export interface ApplyPlanRequest {
   /** Optional column override; defaults to the draft's targetColumn. */
   targetColumn?: KanbanColumn;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Environment & Settings panel (§31)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SettingCategory = 'derived' | 'integration' | 'live';
+export type SettingSource = 'env' | 'portal-config' | 'addon' | 'derived';
+export type SettingApplyTiming = 'live' | 'next-launch' | 'read-only';
+
+export interface SettingValue {
+  key: string;
+  label: string;
+  category: SettingCategory;
+  source: SettingSource;
+  editable: boolean;
+  secret: boolean;
+  applyTiming: SettingApplyTiming;
+  gatedBy: string | null;   // feature/addon id required, or null
+  gatedOn: boolean;         // is the gate satisfied (feature enabled)?
+  value: string | null;     // current value; null for secrets and for unset
+  set: boolean;             // secrets: is a value present?
+  pending: boolean;         // env field: managed-file value differs from the running value
+}
+
+export interface SettingsResponse { settings: SettingValue[] }
+export interface UpdateSettingRequest { value: string | null } // null = clear

@@ -105,6 +105,10 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const selectedModel = models.find((m) => m.id === model);
   const selectedEngine = modelEngine(models.length ? models : MODELS, model);
   const selectedCustomEngine = customModelEngine(model);
+  // Mirror the launch payload's engineModel (see submit): a catalog engine model travels via
+  // `model`, only the "Custom … model" path uses the free-text engineModel input. The footer
+  // preview must derive from the same source or it omits --model for catalog engine models.
+  const previewEngineModel = selectedCustomEngine ? engineModel.trim() : model;
   const effectiveEffort = ultracode ? 'xhigh' : effort;
 
   const isEngineRun = selectedEngine !== 'claude';
@@ -626,8 +630,8 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             <div className="font-mono text-[11px]" style={{ color: err ? '#ff5d5d' : '#5b626d' }}>
               {err ?? (isEngineRun
                 ? selectedEngine === 'codex'
-                  ? `spawns: codex${thinkingLevel ? ` -c model_reasoning_effort=${thinkingLevel}` : ''}${engineModel.trim() ? ` --model ${engineModel.trim()}` : ''} exec --json`
-                  : `spawns: opencode run --format json${engineModel.trim() ? ` --model ${engineModel.trim()}` : ''}${thinkingLevel ? ` --variant ${thinkingLevel}` : ''}`
+                  ? `spawns: codex${thinkingLevel ? ` -c model_reasoning_effort=${thinkingLevel}` : ''}${previewEngineModel ? ` --model ${previewEngineModel}` : ''} exec --json`
+                  : `spawns: opencode run --format json${previewEngineModel ? ` --model ${previewEngineModel}` : ''}${thinkingLevel ? ` --variant ${thinkingLevel}` : ''}`
                 : `spawns: claude -p --effort ${effectiveEffort}${fastMode ? ' (fast)' : ''}${thinkingLevel ? ` · ${thinkingLevel}` : ''}`)}
             </div>
             <div className="flex gap-2">

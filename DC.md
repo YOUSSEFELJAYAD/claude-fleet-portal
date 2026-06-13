@@ -1032,3 +1032,143 @@ runtime-dispatcher pattern used by other process-spawn tests, and remove mislead
 swaps. Bumped app/package metadata to `0.4.1` for a fresh patch tag because `v0.4.0` already
 exists. Verified: `pnpm -r typecheck`, targeted guardrails test, and full `pnpm test` suite
 (`658 pass + 2 by-design skips`).
+
+## 29. Skill auto-learning loop — hermes-agent closed loop ported as F-LEARN (2026-06-13)
+
+**Origin.** Operator asked to "include all the functions" from `NousResearch/hermes-agent`
+into the portal and to lean on the personal-rag system. hermes-agent is a ~80%-Python,
+multi-subsystem agent framework (messaging gateways, terminal backends, trajectory training,
+40+ tools); wholesale porting into this TS/Fastify/Next portal is neither feasible nor
+desirable (wrong runtime; much already overlaps campaigns / guardrails / agent library).
+Decomposed and picked the single highest-leverage, on-brand capability: hermes's **closed
+learning loop** — auto-create reusable skills from completed runs — built on seams the portal
+already has (`registry.onRunTerminal`, the `catalog.ts` skill auto-discovery, and the
+personal-rag file-indexing pipeline).
+
+**What shipped (F-LEARN).** A self-owned `learner.ts` (mirrors F9 `memory.ts`): subscribes to
+`registry.onRunTerminal`, and when a COMPLETED, operator-launched (non-campaign, non-PM) run
+is "complex" (ANY of cost ≥ $0.50 / subagents ≥ 3 / depth ≥ 2 / duration ≥ 5 min, all
+configurable) it distills a reusable SKILL.md from the run's task + result + trajectory via a
+raw `claude -p` subprocess and writes it to `~/.claude/skills/learned-<slug>/SKILL.md` — which
+`catalog.ts` already auto-discovers, so the skill is immediately attachable to any agent
+profile. A copy is dropped into a personal-rag notes dir (`~/rag-sys-perso/learned-skills/`,
+already in `notes_dirs`) so it also becomes semantically searchable on the RAG server's next
+scan.
+
+**Decisions.**
+- **D-29.1 Autonomy = fully autonomous, no human gate**, per explicit operator choice over a
+  review queue. Mitigated by the rails below rather than a gate.
+- **D-29.2 Ships DISABLED by default** (`learner_config.enabled = 0`, mirrors F9). The autonomy
+  choice governs behaviour-when-on; writing to the user's GLOBAL `~/.claude/skills` unattended
+  must be an explicit opt-in (`PUT /api/learner {enabled:true}`).
+- **D-29.3 RAG tie-in is a file-drop, not a live `save_text`.** ChromaDB is single-writer; a
+  second process indexing while `personal-rag serve` is live risks a lock. Writing the skill
+  markdown into an existing `notes_dir` lets the running MCP server index it on its next startup
+  scan with zero cross-process coupling. Trade-off: not instantly searchable (next scan, or
+  enable the RAG watcher).
+- **D-29.4 Distiller is a RAW subprocess, not a fleet run** — spawned with `--strict-mcp-config
+  --mcp-config '{"mcpServers":{}}'` (the same anti-recursion trick the personal-rag `answer`
+  tool uses), async (never blocks the event loop), 180 s timeout. It never enters the registry,
+  so it can't recurse into this very hook or pollute the fleet view.
+- **D-29.5 Deliberate PRD deviation.** `catalog.ts` documents skills as read-only (authoring =
+  PRD non-goal §7.5). F-LEARN crosses that line by design, at operator request. Logged here so
+  the provenance of the deviation is explicit.
+
+**Safety rails (in lieu of a human gate).** default-off · provenance frontmatter (`learned:
+true`, `source_run`, `generated_at`) on every file → distinguishable from hand-authored skills,
+and we NEVER overwrite a dir lacking `learned: true` (hand-authored skills are untouchable;
+name collisions get a run-id suffix) · dedup by normalised task-signature (30-day window) plus
+an in-flight-sig guard against concurrent duplicate distills · rolling-24 h rate cap
+(`maxPerDay`, default 10) · `MAX_INFLIGHT = 2` backpressure · best-effort try/catch around the
+terminal hook (a learning failure can never destabilise run completion — the F9 rule) ·
+`DELETE /api/learner/skills/:id` removes file + RAG copy + row (the escape hatch) · the model
+may emit `SKIP` to decline trivial runs.
+
+**Surface.** Tables `learner_config` + `learned_skills` (self-owned; no edits to `db.ts` /
+`registry.ts`). Routes `GET/PUT /api/learner`, `GET /api/learner/skills`,
+`DELETE /api/learner/skills/:id`, `POST /api/learner/distill/:runId` (manual; force-bypasses
+dedup). Shared contract: `LearnerConfig` + `LearnedSkill`. Wired in `server.ts` immediately
+after the F9 lines.
+
+**Verification.** New hermetic `learner.test.ts` (17 tests): pure helpers
+(`slugify` / `taskSignature` / `isComplex` / `shouldLearn` / `parseSkill`), config default +
+PUT validation, disabled-writes-nothing, enabled-distills (real fake-bin subprocess → SKILL.md
+w/ provenance + RAG copy + ok row), non-complex / campaign / PM gating, dedup (same task → one
+skill), injected-runner edge cases (SKIP → skipped, garbage → failed, valid → ok), DELETE
+cleanup, and 404s. A fake distiller binary stands in for `claude` — no model, no network. Full
+suite: **686 pass + 2 by-design skips** (41 files); `pnpm -r typecheck` clean across
+shared/server/web.
+
+**Not done (future).** Web UI (settings toggle + a Learned-Skills list) — backend + API only
+for now, matching how F9 shipped headless; a notifier toast on "skill learned"; learning from
+campaign/PM runs; live RAG indexing if personal-rag grows a lock-safe ingest path.
+
+**Amendment (2026-06-13, same day).** The web UI shipped: new `/learning` page
+(`apps/web/app/learning/page.tsx`) modelled on `notifications/page.tsx` — a learned-skills feed
+(status badge, source-run link, source cost, "indexed" marker, delete button) plus a loop-config
+panel (enabled toggle + the four thresholds + max-per-day, live/off indicator), 6 s poll, all on
+the existing `@/components/ui` design system; nav entry added to `Shell.tsx` after Templates
+(glyph `✦`). `pnpm -r typecheck` clean across shared/server/web and `next build` lists
+`/learning` as a prerendered route. The "Web UI" item above is now done.
+## 30. Chat Dashboard — multi-session agent control-plane (2026-06-13) — spec docs/superpowers/specs/2026-06-13-chat-dashboard-design.md
+
+A conversational dashboard that doubles as a fleet control-plane: multi-session live chat with
+Claude (and engine add-ons), a running-agents panel, and a slash-command surface that drives the
+app's existing functions. Brainstormed as the "Both (superset)" mental model; the user chose to
+build the full superset in one v1 — chat core + running-agents panel + slash-commands + engine chat.
+
+### D-029 — Transport: one run id per session, resume-per-turn (NOT a long-lived interactive process)
+A chat session maps to a single run id. Turn 1 = `POST /api/agents` (message as prompt); turn N =
+`POST /api/agents/:id/resume`; assistant output streams over the run's existing SSE (`/api/agents/:id/stream`);
+the reply is persisted on completion. Rationale: the fleet caps concurrent runs at 8
+(`config.maxConcurrentRuns`) — holding a live interactive process per open chat would starve the
+fleet. Resume-per-turn only holds a slot during a turn, survives server restarts, and unifies
+Claude + engine sessions. Rejected alternative: long-lived `interactive:true` + `/api/agents/:id/input`
+(snappier but resource-heavy and Claude-only).
+
+### D-030 — Engine add-on chat is one-shot-per-turn with reconstructed context
+Engines (codex/opencode) cannot resume or take stdin, so an engine chat session reconstructs a
+capped transcript prefix into each turn's prompt and is labelled "one-shot per turn · limited
+memory" in the UI. Claude sessions get native context via `--resume`.
+
+### D-031 — Slash-command control-plane reuses existing routes/registry
+v1 command set: `/launch`, `/agents` (running), `/kill`, `/addons`, `/addon enable|disable`,
+`/campaign`, `/schedule`, `/help`. Each dispatches to an existing API route / registry call;
+results render as command/system messages in the thread. No new privileged surface — commands
+inherit the auth and permission posture of the routes they call.
+
+### D-032 — Layout & persistence
+3-pane `/chat` page (sessions · conversation+composer · running-agents). Per-session launch
+options (model/engine/effort/tools/skills/permission-mode/cwd) live in the composer's options
+popover, reusing `ModelSelect` and the existing tool/skill pickers. Sessions + messages persist
+in sqlite (`chat_sessions`, `chat_messages`); the live run is ephemeral and re-derived on reopen.
+
+### DEFERRED — features to be added in a later iteration (explicit out-of-scope for this build)
+These are recorded so the boundary is intentional, not forgotten — they "need to be installed"
+in a future cycle:
+- **Voice** (speech in / out).
+- **File uploads / attachments** into a chat turn.
+- **Multi-user** — the portal is single-operator; no per-user sessions or auth in scope.
+- **In-chat transcript search** — the FTS5 transcript index already exists (`search.ts`, F7) and
+  can be layered onto chat history later; it is NOT wired into the chat UI in this build.
+
+## 31. Environment & Settings panel (2026-06-13) — spec docs/superpowers/specs/2026-06-13-settings-env-design.md
+
+An operator panel that surfaces the app's env/config honestly by apply-timing. A server-side
+registry of field descriptors delegates writes to the right backend: derived/live values (proxy
+URL when compression is up, host/ports) are read-only; live config (guardrail caps) applies
+immediately via `/api/config`; env values (`CLAUDE_BIN`, base URLs, `FLEET_*`) write to a managed
+`data/.env` (0600, git-ignored) loaded at boot before `config.ts` freezes, flagged "applies next
+launch"; secrets (`GITHUB_TOKEN`, `CODEX_API_KEY`) are masked write-only. Fields gate on whether
+their feature is enabled.
+
+### D-033 — Hybrid registry, writes delegated by source
+Each field declares source (derived|env|portal-config|addon), editable, secret, applyTiming
+(read-only|next-launch|live), and gatedBy. No logic duplicated — live fields reuse the existing
+`/api/config` setter; env fields go to the managed `.env`. The full guardrail editor stays on
+`/guardrails`.
+
+### D-034 — env loads before config; secrets write-only; no auto-restart in v1
+`envboot.ts` loads the managed `.env` into `process.env` (never overriding shell-set vars) before
+`config.ts` evaluates. Secrets are masked in GET (value:null, set:true), set/clear only. v1 shows
+a "pending · applies next launch" badge + a manual restart note rather than self-restarting.

@@ -41,6 +41,7 @@ const TEST_PORT = 18791;
 let app: any;
 let PORT: number;
 let addons: typeof import('../src/addons.js');
+let validateResearchConfig: typeof import('../src/addons.js')['validateResearchConfig'];
 
 const H = () => ({ host: `127.0.0.1:${PORT}` });
 
@@ -65,6 +66,7 @@ beforeAll(async () => {
   const cfg = await import('../src/config.js');
   PORT = cfg.PORT;
   addons = await import('../src/addons.js');
+  validateResearchConfig = addons.validateResearchConfig;
   const { buildServer } = await import('../src/server.js');
   app = buildServer();
   await app.ready();
@@ -75,15 +77,16 @@ afterAll(async () => {
 });
 
 describe('marketplace listing', () => {
-  it('lists all 3 built-in add-ons (compression, codex, opencode)', async () => {
+  it('lists all 4 built-in add-ons (compression, codex, opencode, web-research)', async () => {
     const res = await get('/api/addons');
     expect(res.statusCode).toBe(200);
     const list = res.json();
-    expect(list).toHaveLength(3);
+    expect(list).toHaveLength(4);
     const ids = list.map((a: any) => a.id);
     expect(ids).toContain('compression');
     expect(ids).toContain('codex');
     expect(ids).toContain('opencode');
+    expect(ids).toContain('web-research');
     // compression is always first
     expect(list[0].id).toBe('compression');
   });
@@ -414,5 +417,24 @@ describe('launch gating — engine disabled check', () => {
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().code).toBe('engine-disabled');
+  });
+});
+
+describe('web-research add-on config', () => {
+  it('lists web-research in /api/addons (id present)', async () => {
+    const res = await get('/api/addons'); // get() sets the Host header the server's H3 guard requires
+    const ids = (res.json() as any[]).map((a) => a.id);
+    expect(ids).toContain('web-research');
+  });
+
+  it('validateResearchConfig clamps maxResults and applies defaults', () => {
+    const cfg = validateResearchConfig({ maxResults: 999 });
+    expect(cfg.maxResults).toBe(20);
+    expect(cfg.searxngUrl).toBe('http://localhost:8080');
+    expect(cfg.safeSearch).toBe(1);
+  });
+
+  it('validateResearchConfig rejects a non-http URL', () => {
+    expect(() => validateResearchConfig({ searxngUrl: 'ftp://x' })).toThrow();
   });
 });

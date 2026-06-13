@@ -316,7 +316,23 @@ function applyTemplateProfile(lr: LaunchRequest, templateName: string): LaunchRe
 }
 
 // ── tick ──────────────────────────────────────────────────────────────────────
+// Re-entrancy guard: tick() is async and awaits registry.launch, which genuinely suspends
+// for engine-routed schedules (getEngineBin / createWorktree). Without this, a tick that
+// outlasts the 30s interval would let the next interval fire a concurrent tick that
+// re-selects the same due rows whose next_fire_at has not been advanced yet, double-launching
+// them. triggers.ts guards the identical async-conversion hazard the same way.
+let tickInFlight = false;
 async function tick(): Promise<void> {
+  if (tickInFlight) return;
+  tickInFlight = true;
+  try {
+    await tickOnce();
+  } finally {
+    tickInFlight = false;
+  }
+}
+
+async function tickOnce(): Promise<void> {
   const now = Date.now();
   let due: ScheduleRow[];
   try {

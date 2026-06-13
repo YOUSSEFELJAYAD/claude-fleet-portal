@@ -24,10 +24,14 @@ import { registerTagsRoutes } from './tags.js';
 import { registerSearchRoutes } from './search.js'; // F7 — full-text transcript search
 import { registerOtelRoutes } from './otel.js'; // H6
 import { registerMemoryRoutes, initMemory } from './memory.js'; // F9 — fleet memory
+import { registerLearnerRoutes, initLearner } from './learner.js'; // F-LEARN — skill auto-learning loop (§29)
 import { registerReleaseRoutes } from './release.js';
 import { registerBenchmarkRoutes } from './benchmarks.js'; // F4+F5 — benchmark mode + best-of-N
 import { registerAddonRoutes, resetAddonRuntimeForDataWipe } from './addons.js'; // §22 — add-on marketplace (compression/headroom)
+import { registerResearchRoutes } from './research.js'; // §28 — web research (SearXNG)
+import { registerChatRoutes } from './chat.js'; // §30 — chat dashboard
 import { registerPackRoutes } from './packs.js'; // §23 — tool/skill packs (launch presets)
+import { registerSettingsRoutes } from './settings.js'; // §31 — environment & settings panel
 import { registerPortabilityRoutes } from './portability.js'; // F10 — config as code (export/import)
 // Agent-PM / Kanban feature (spec docs/superpowers/specs/2026-06-09-agent-pm-kanban-design.md).
 // Import order matters: projects BEFORE kanban (kanban_tasks references a project; tables created on import).
@@ -209,9 +213,14 @@ export function buildServer() {
   registerOtelRoutes(app); // H6 — OTLP receiver (/v1/metrics, /v1/logs) + /api/agents/:id/otel
   registerMemoryRoutes(app); // F9 — fleet memory (compounding knowledge)
   initMemory(); // F9 — subscribe to run-terminal events
+  registerLearnerRoutes(app); // F-LEARN — skill auto-learning loop (§29)
+  initLearner(); // F-LEARN — autonomous skill distillation on complex run completion
   registerReleaseRoutes(app); // §15 — release page + GitHub update check / self-update
   registerBenchmarkRoutes(app); // F4+F5 — benchmark mode + best-of-N
   registerAddonRoutes(app); // §22 — add-on marketplace + headroom compression-proxy lifecycle
+  registerSettingsRoutes(app); // §31 — environment & settings panel
+  registerChatRoutes(app); // §30 — chat dashboard
+  registerResearchRoutes(app); // §28 — web research (SearXNG)
   registerPackRoutes(app); // §23 — tool/skill packs (launch presets)
   registerPortabilityRoutes(app); // F10 — config as code (export/import)
 

@@ -477,11 +477,12 @@ class CampaignEngine {
   private tickActive() {
     for (const c of repo.listCampaigns()) {
       if (c.status === 'spawning' || c.status === 'running') {
-        try {
-          void this.schedule(c);
-        } catch {
+        // schedule() is async: a throw after its first await rejects the promise rather than
+        // throwing synchronously, so a plain try/catch here would miss it (and surface as an
+        // unhandled rejection). Attach the handler to the promise instead.
+        void this.schedule(c).catch(() => {
           /* one bad campaign must not starve scheduling for the rest */
-        }
+        });
       }
     }
   }

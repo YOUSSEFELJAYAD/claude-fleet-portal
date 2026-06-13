@@ -13,10 +13,12 @@ import { UpdateModal, updateDismissKey, type UpdatePhase } from './UpdateModal';
 const NAV = [
   { href: '/', label: 'Fleet', glyph: '◉' },
   { href: '/inbox', label: 'Inbox', glyph: '◳' },
+  { href: '/chat', label: 'Chat', glyph: '✦' },
   { href: '/projects', label: 'Projects', glyph: '◫' },
   { href: '/fleet', label: 'Scheduler', glyph: '⚖' },
   { href: '/orchestrate', label: 'Orchestrate', glyph: '⛓' },
   { href: '/templates', label: 'Templates', glyph: '⊞' },
+  { href: '/learning', label: 'Learning', glyph: '✦' },
   { href: '/schedules', label: 'Schedules', glyph: '⏱' },
   { href: '/teams', label: 'Teams', glyph: '⧉' },
   { href: '/history', label: 'History', glyph: '▤' },
@@ -26,6 +28,7 @@ const NAV = [
   { href: '/mcp', label: 'MCP', glyph: '⊕' },
   { href: '/notifications', label: 'Notifications', glyph: '◬' },
   { href: '/guardrails', label: 'Guardrails', glyph: '⊘' },
+  { href: '/settings', label: 'Settings', glyph: '⚙' },
   { href: '/addons', label: 'Add-ons', glyph: '⌬' },
   { href: '/releases', label: 'Releases', glyph: '⇪' },
 ];

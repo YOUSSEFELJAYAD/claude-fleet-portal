@@ -512,6 +512,10 @@ class PmEngine {
         cwd: wt.dir,
         budgetPerWorkerUsd: fresh.budgetUsd,
         projectId: project.id,
+        // Honor the card's per-card model override (engine-tagged ids delegate to that engine),
+        // matching the single/fix/resolve launches; omit → campaigns.create falls back to the
+        // orchestrator template's model. (CreateCampaignRequest.model is string|undefined.)
+        model: fresh.model ?? undefined,
         disallowedTools: disallowedToolsForProject({ ...project, pushEnabled: false }),
         permissionMode: PM_PERMISSION_MODE,
       });

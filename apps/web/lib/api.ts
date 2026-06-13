@@ -26,6 +26,19 @@ import type {
   CompressionStats,
   ToolPack,
   CreateToolPackRequest,
+  ResearchSearchRequest,
+  ResearchSearchResponse,
+  ResearchSynthesizeRequest,
+  ResearchSynthesizeResponse,
+  ResearchStatusResponse,
+  SettingsResponse,
+  SettingValue,
+  ChatSession,
+  ChatMessage,
+  CreateChatSessionRequest,
+  ChatTurnResponse,
+  AddChatMessageRequest,
+  ChatCommandResult,
 } from '@fleet/shared';
 // F10 — config-as-code export/import types (defined locally to avoid cross-package imports)
 export interface ExportedSetup {
@@ -303,6 +316,15 @@ export const api = {
   installAddon: (id: string) => j<AddonInstallResult>(`/api/addons/${id}/install`, { method: 'POST', body: JSON.stringify({}) }),
   compressionStats: () => j<CompressionStats>('/api/addons/compression/stats'),
 
+  // ── §28 web research (SearXNG) ──
+  researchSearch: (body: ResearchSearchRequest) =>
+    j<ResearchSearchResponse>('/api/research/search', { method: 'POST', body: JSON.stringify(body) }),
+  researchSynthesize: (body: ResearchSynthesizeRequest) =>
+    j<ResearchSynthesizeResponse>('/api/research/synthesize', { method: 'POST', body: JSON.stringify(body) }),
+  researchStatus: () => j<ResearchStatusResponse>('/api/research/status'),
+  registerSearxngMcp: () =>
+    j<{ ok: boolean; output: string; note?: string }>('/api/addons/web-research/register-mcp', { method: 'POST', body: JSON.stringify({}) }),
+
   // ── tool/skill packs (§23) — launch presets ──
   packs: () => j<ToolPack[]>('/api/packs'),
   createPack: (p: CreateToolPackRequest) => j<ToolPack>('/api/packs', { method: 'POST', body: JSON.stringify(p) }),
@@ -415,4 +437,18 @@ export const api = {
     j<FileEditResult>(`/api/projects/${pid}/files/edit?path=${encodeURIComponent(path)}`),
   commitFile: (pid: string, body: CommitFileBody) =>
     j<CommitFileResult>(`/api/projects/${pid}/files/commit`, { method: 'POST', body: JSON.stringify(body) }),
+
+  // ── §31 settings ──
+  settings: () => j<SettingsResponse>('/api/settings'),
+  updateSetting: (key: string, value: string | null) =>
+    j<SettingValue>(`/api/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
+  // ── §30 chat dashboard ──
+  chatSessions: () => j<ChatSession[]>('/api/chat/sessions'),
+  chatSession: (id: string) => j<{ session: ChatSession; messages: ChatMessage[] }>(`/api/chat/sessions/${id}`),
+  createChatSession: (body: CreateChatSessionRequest) => j<ChatSession>('/api/chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  renameChatSession: (id: string, title: string) => j<ChatSession>(`/api/chat/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+  deleteChatSession: (id: string) => j(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
+  chatTurn: (id: string, message: string) => j<ChatTurnResponse>(`/api/chat/sessions/${id}/turn`, { method: 'POST', body: JSON.stringify({ message }) }),
+  addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
+  chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
 };

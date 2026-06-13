@@ -32,8 +32,8 @@ import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { AddonInfo, AddonStatus, AddonInstallResult, CompressionConfig, CompressionStats, SelfUpdateStep, RunEngine } from '@fleet/shared';
-import { HOME, PORT, WEB_PORT } from './config.js';
+import type { AddonInfo, AddonStatus, AddonInstallResult, CompressionConfig, CompressionStats, SelfUpdateStep, RunEngine, WebResearchConfig } from '@fleet/shared';
+import { HOME, PORT, WEB_PORT, CLAUDE_REAL_BIN } from './config.js';
 import db from './db.js';
 import type { CodexEngineConfig, OpencodeEngineConfig } from './engines.js';
 
@@ -54,10 +54,13 @@ CREATE TABLE IF NOT EXISTS addons (
 const COMPRESSION_ID = 'compression';
 const CODEX_ID = 'codex';
 const OPENCODE_ID = 'opencode';
+const RESEARCH_ID = 'web-research';
 
 /** Discriminator: 'proxy' add-ons manage a child process; 'engine-binary' add-ons
- *  are CLI shims — no backing process, status is derived from installed + enabled. */
-type AddonRuntime = 'proxy' | 'engine-binary';
+ *  are CLI shims — no backing process, status is derived from installed + enabled;
+ *  'service' add-ons (web-research → SearXNG) back onto an external service whose
+ *  status comes from a reachability probe. */
+type AddonRuntime = 'proxy' | 'engine-binary' | 'service';
 
 interface AddonDef {
   id: string;
@@ -114,6 +117,20 @@ const ADDON_DEFS: AddonDef[] = [
     page: '/addons/opencode',
     runtime: 'engine-binary',
   },
+  {
+    id: RESEARCH_ID,
+    name: 'Web Research',
+    tagline: 'Open-source web search (SearXNG) + synthesize-with-agent',
+    description:
+      'Adds a Research page: search the web through your self-hosted SearXNG instance (open source, ' +
+      'AGPL, no API key) and hand the results to a research agent that synthesizes a cited answer. ' +
+      'Optionally registers a SearXNG MCP server so launched agents can search mid-run. ' +
+      'Requires a running SearXNG (the Install button starts the official Docker image if Docker is present).',
+    kind: 'builtin' as const,
+    docsUrl: 'https://docs.searxng.org/',
+    page: '/research',
+    runtime: 'service',
+  },
 ];
 
 export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
@@ -124,6 +141,18 @@ export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
   rateLimit: true,
   dailyBudgetUsd: null,
 };
+
+export const DEFAULT_RESEARCH_CONFIG: WebResearchConfig = {
+  searxngUrl: 'http://localhost:8080',
+  engines: '',
+  maxResults: 10,
+  safeSearch: 1,
+  language: 'en',
+};
+
+export function researchConfig(): WebResearchConfig {
+  return { ...DEFAULT_RESEARCH_CONFIG, ...(loadRow(RESEARCH_ID).config as Partial<WebResearchConfig>) };
+}
 
 // ── persistence ──────────────────────────────────────────────────────────────────
 
@@ -191,6 +220,40 @@ export function validateCompressionConfig(input: unknown): CompressionConfig {
     rateLimit: bool('rateLimit'),
     dailyBudgetUsd,
   };
+}
+
+/**
+ * Validate + merge the web-research (SearXNG) config from a PUT body. The URL governs
+ * outbound fetches from the server, so it must be an http(s) URL; maxResults is clamped
+ * to SearXNG's sensible 1–20 band; safesearch is restricted to SearXNG's 0/1/2 levels.
+ * Missing keys fall back to the stored-then-default value (partial PUTs are fine).
+ */
+export function validateResearchConfig(input: unknown): WebResearchConfig {
+  if (!input || typeof input !== 'object') {
+    throw Object.assign(new Error('config must be an object'), { statusCode: 400 });
+  }
+  const i = input as Record<string, unknown>;
+  const base = researchConfig();
+  const bad = (msg: string) => Object.assign(new Error(msg), { statusCode: 400 });
+
+  let searxngUrl = base.searxngUrl;
+  if (i.searxngUrl !== undefined) {
+    if (typeof i.searxngUrl !== 'string' || !/^https?:\/\//.test(i.searxngUrl)) throw bad('searxngUrl must be an http(s) URL');
+    searxngUrl = i.searxngUrl.replace(/\/+$/, '');
+  }
+  let maxResults = base.maxResults;
+  if (i.maxResults !== undefined) {
+    if (typeof i.maxResults !== 'number' || !Number.isInteger(i.maxResults)) throw bad('maxResults must be an integer');
+    maxResults = Math.max(1, Math.min(i.maxResults, 20));
+  }
+  let safeSearch = base.safeSearch;
+  if (i.safeSearch !== undefined) {
+    if (i.safeSearch !== 0 && i.safeSearch !== 1 && i.safeSearch !== 2) throw bad('safeSearch must be 0, 1, or 2');
+    safeSearch = i.safeSearch;
+  }
+  const engines = i.engines === undefined ? base.engines : String(i.engines);
+  const language = i.language === undefined ? base.language : String(i.language || 'en');
+  return { searxngUrl, engines, maxResults, safeSearch, language };
 }
 
 // ── headroom binary detection ────────────────────────────────────────────────────
@@ -676,6 +739,26 @@ export function addonRunEnvForEngine(engine: 'claude' | 'codex' | 'opencode', mo
   return {};
 }
 
+// ── service add-on (web-research → SearXNG) reachability probe ─────────────────────
+
+/** Probe a SearXNG instance for /search?format=json reachability. Kept inline here
+ *  (not imported from research.ts) to avoid an addons.ts ↔ research.ts module cycle. */
+async function probeSearxng(url: string): Promise<{ state: 'ok' | 'unreachable' | 'json-disabled'; detail: string | null }> {
+  const base = url.replace(/\/+$/, '');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5_000);
+  try {
+    const r = await fetch(`${base}/search?q=ping&format=json`, { headers: { accept: 'application/json' }, signal: ctrl.signal });
+    if (r.status === 403) return { state: 'json-disabled', detail: 'enable `json` in SearXNG settings.yml `search.formats`' };
+    if (!r.ok) return { state: 'unreachable', detail: `SearXNG returned ${r.status}` };
+    return { state: 'ok', detail: null };
+  } catch {
+    return { state: 'unreachable', detail: `not reachable at ${base}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── AddonInfo assembly ───────────────────────────────────────────────────────────
 
 async function addonInfo(id: string): Promise<AddonInfo | null> {
@@ -710,6 +793,27 @@ async function addonInfo(id: string): Promise<AddonInfo | null> {
     };
   }
 
+  // ── service add-on (web-research → SearXNG) — status from a reachability probe ──
+  if (def.runtime === 'service') {
+    const cfg = researchConfig();
+    const probe = await probeSearxng(cfg.searxngUrl);
+    const installed = probe.state !== 'unreachable';
+    let status: AddonStatus;
+    if (!installed) status = 'not-installed';
+    else if (!enabled) status = 'disabled';
+    else if (probe.state === 'json-disabled') status = 'error';
+    else status = 'running';
+    return {
+      ...def,
+      enabled,
+      installed,
+      version: null,
+      status,
+      statusDetail: probe.detail,
+      config: cfg as unknown as Record<string, unknown>,
+    };
+  }
+
   // ── proxy add-on (compression) ──
   const det = await detectHeadroom();
   const installed = !!det.bin;
@@ -733,6 +837,26 @@ async function addonInfo(id: string): Promise<AddonInfo | null> {
     statusDetail,
     config: cfg as unknown as Record<string, unknown>,
   };
+}
+
+// ── §30 chat-command exports ───────────────────────────────────────────────────────
+
+/** §30 chat commands — list all add-on infos (same shape as GET /api/addons). */
+export async function listAddonInfos(): Promise<AddonInfo[]> {
+  const infos = await Promise.all(ADDON_DEFS.map((d) => addonInfo(d.id)));
+  return infos.filter((x): x is AddonInfo => !!x);
+}
+
+/** §30 chat commands — enable/disable an add-on by id; returns the updated info or throws 404. */
+export async function setAddonEnabledById(id: string, enabled: boolean): Promise<AddonInfo> {
+  const def = ADDON_DEFS.find((d) => d.id === id);
+  if (!def) throw Object.assign(new Error(`unknown add-on: ${id}`), { statusCode: 404 });
+  const row = loadRow(id);
+  saveRow(id, enabled, row.config);
+  if (def.runtime === 'proxy') { if (enabled) void startProxy(); else stopProxy(); }
+  const info = await addonInfo(id);
+  if (!info) throw Object.assign(new Error('add-on not found'), { statusCode: 404 });
+  return info;
 }
 
 // ── dependency install (uv → pipx → pip, first available) ───────────────────────
@@ -862,6 +986,40 @@ async function installHeadroom(): Promise<AddonInstallResult> {
     steps,
     note: det.bin ? 'Headroom installed — enable the add-on to start compressing.' : 'Installed but not found on PATH.',
   };
+}
+
+// ── service dependency install (web-research → SearXNG via Docker) ──────────────────
+
+async function installSearxng(): Promise<AddonInstallResult> {
+  const steps: SelfUpdateStep[] = [];
+  const trunc = (s: string) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
+  const hasDocker = await executableAvailable('docker', ['--version']);
+  steps.push({
+    step: 'detect docker',
+    ok: hasDocker,
+    output: hasDocker ? 'docker found' : 'docker not found — install Docker or run SearXNG yourself, then set the URL',
+  });
+  if (!hasDocker) {
+    return {
+      ok: false,
+      steps,
+      note: 'Docker not found. Run SearXNG yourself (docker run -d -p 8080:8080 searxng/searxng) with json enabled in settings.yml `search.formats`, then set the URL on the Web Research page.',
+    };
+  }
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      'docker',
+      ['run', '-d', '--name', 'fleet-searxng', '-p', '8080:8080',
+       '-e', 'SEARXNG_SETTINGS_PATH=', '-e', 'SEARXNG_FORMATS=json',
+       'searxng/searxng'],
+      { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024 },
+    );
+    steps.push({ step: 'docker run searxng/searxng', ok: true, output: trunc(stdout + stderr) });
+    return { ok: true, steps, note: 'SearXNG started on http://localhost:8080. If json is still disabled, set `search.formats: [html, json]` in its settings.yml and restart the container.' };
+  } catch (e: any) {
+    steps.push({ step: 'docker run searxng/searxng', ok: false, output: trunc(String(e?.stderr ?? e?.message ?? e)) });
+    return { ok: false, steps, note: 'Could not start SearXNG via Docker (a container named fleet-searxng may already exist). Check `docker ps -a`.' };
+  }
 }
 
 // ── engine dependency install (npm first; brew/curl advisory fallback) ──────────────
@@ -1040,6 +1198,13 @@ export function registerAddonRoutes(app: FastifyInstance) {
       return addonInfo(id);
     }
 
+    // ── service enable (web-research) ──
+    if (def.runtime === 'service') {
+      const row = loadRow(id);
+      saveRow(id, true, row.config); // status reflects reachability; enabling never blocks
+      return addonInfo(id);
+    }
+
     // ── proxy enable (compression) ──
     const row = loadRow(id);
     // idempotent: re-enabling a live add-on must NOT bounce (or orphan) the proxy —
@@ -1074,9 +1239,9 @@ export function registerAddonRoutes(app: FastifyInstance) {
     const id = (req.params as any).id as string;
     const def = ADDON_DEFS.find((d) => d.id === id);
     if (!def) return reply.code(404).send({ error: 'unknown add-on' });
-    // engine-binary: no backing process to restart
-    if (def.runtime === 'engine-binary') {
-      return reply.code(409).send({ error: 'restart is not applicable to engine add-ons', code: 'not-applicable' });
+    // engine-binary / service: no backing process to restart
+    if (def.runtime === 'engine-binary' || def.runtime === 'service') {
+      return reply.code(409).send({ error: 'restart is not applicable to this add-on', code: 'not-applicable' });
     }
     if (!loadRow(id).enabled) return reply.code(409).send({ error: 'add-on is disabled' });
     stopProxy();
@@ -1094,6 +1259,19 @@ export function registerAddonRoutes(app: FastifyInstance) {
       let cfg: CodexEngineConfig | OpencodeEngineConfig;
       try {
         cfg = validateEngineConfig(id, req.body ?? {});
+      } catch (e: any) {
+        return reply.code(e?.statusCode ?? 400).send({ error: e?.message ?? 'invalid config' });
+      }
+      const row = loadRow(id);
+      saveRow(id, row.enabled, cfg as unknown as Record<string, unknown>);
+      return addonInfo(id);
+    }
+
+    // ── service config (web-research) ──
+    if (def.runtime === 'service') {
+      let cfg: WebResearchConfig;
+      try {
+        cfg = validateResearchConfig(req.body ?? {});
       } catch (e: any) {
         return reply.code(e?.statusCode ?? 400).send({ error: e?.message ?? 'invalid config' });
       }
@@ -1126,6 +1304,11 @@ export function registerAddonRoutes(app: FastifyInstance) {
     const def = ADDON_DEFS.find((d) => d.id === id);
     if (!def) return reply.code(404).send({ error: 'unknown add-on' });
 
+    // ── service install (web-research → SearXNG via Docker) ──
+    if (def.runtime === 'service') {
+      return reply.send(await installSearxng());
+    }
+
     // ── engine-binary install ──
     if (def.runtime === 'engine-binary') {
       const engine = id as 'codex' | 'opencode';
@@ -1152,6 +1335,26 @@ export function registerAddonRoutes(app: FastifyInstance) {
       return await installHeadroom();
     } finally {
       installInFlight = false;
+    }
+  });
+
+  // Register a SearXNG MCP server so launched agents can search mid-run (open source).
+  app.post('/api/addons/web-research/register-mcp', async () => {
+    const cfg = researchConfig();
+    const trunc = (s: string) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        CLAUDE_REAL_BIN,
+        ['mcp', 'add', 'searxng', '--', 'npx', '-y', 'mcp-searxng'],
+        { timeout: 60_000, env: { ...process.env, SEARXNG_URL: cfg.searxngUrl }, maxBuffer: 1024 * 1024 },
+      );
+      return { ok: true, output: trunc(stdout + stderr) };
+    } catch (e: any) {
+      return {
+        ok: false,
+        output: trunc(String(e?.stderr ?? e?.message ?? e)),
+        note: `Run it yourself: SEARXNG_URL=${cfg.searxngUrl} claude mcp add searxng -- npx -y mcp-searxng`,
+      };
     }
   });
 }
