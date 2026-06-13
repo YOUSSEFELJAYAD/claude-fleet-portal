@@ -152,8 +152,9 @@ The github adapter writes assessments as GitHub issue comments instead (see §5)
 ```ts
 export type RiskLevel = 'low' | 'medium' | 'high';
 export type WorkType = 'bug' | 'feature' | 'docs' | 'test' | 'refactor' | 'chore';
-export const RISK_LABELS = ['risk:low', 'risk:medium', 'risk:high'] as const;
-export const TYPE_LABELS = ['bug','feature','docs','test','refactor','chore'].map(t => `type:${t}`);
+// Keyed (object) form — consumers index by key, e.g. RISK_LABELS.low === 'risk:low'.
+export const RISK_LABELS = { low: 'risk:low', medium: 'risk:medium', high: 'risk:high' } as const;
+export const TYPE_LABELS: Record<WorkType, string> = { bug:'type:bug', feature:'type:feature', docs:'type:docs', test:'type:test', refactor:'type:refactor', chore:'type:chore' };
 export const ROUTING = { ready: 'agent:ready', needsHuman: 'needs:human' } as const;
 
 export interface Loop { /* mirrors the loops table, camelCase */ }
