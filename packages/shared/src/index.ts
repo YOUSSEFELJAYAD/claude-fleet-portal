@@ -660,6 +660,114 @@ export interface CreateProjectRequest {
 export type KanbanColumn = 'Backlog' | 'Ready' | 'InProgress' | 'Review' | 'Done' | 'Blocked' | 'Canceled';
 export const KANBAN_COLUMNS: KanbanColumn[] = ['Backlog', 'Ready', 'InProgress', 'Review', 'Done', 'Blocked', 'Canceled'];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Loop engineering (spec docs/superpowers/specs/2026-06-13-loop-engineering-design.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Agent-inferred (and rubric-floored) risk of a backlog item. */
+export type RiskLevel = 'low' | 'medium' | 'high';
+/** The kind of work a backlog item represents. */
+export type WorkType = 'bug' | 'feature' | 'docs' | 'test' | 'refactor' | 'chore';
+
+/** `risk:<level>` board/issue label for each RiskLevel. */
+export const RISK_LABELS = { low: 'risk:low', medium: 'risk:medium', high: 'risk:high' } as const;
+/** `type:<work>` board/issue label for each WorkType. */
+export const TYPE_LABELS: Record<WorkType, string> = {
+  bug: 'type:bug',
+  feature: 'type:feature',
+  docs: 'type:docs',
+  test: 'type:test',
+  refactor: 'type:refactor',
+  chore: 'type:chore',
+};
+/** Routing vocabulary distinct from a tag: agent-routable vs human-escalated. */
+export const ROUTING = { ready: 'agent:ready', needsHuman: 'needs:human' } as const;
+
+/** A loop is a 'manager' (triage) loop or a 'worker' (build/PR) loop. */
+export type LoopKind = 'manager' | 'worker';
+/** A loop runs inspection-only ('dry-run') until it auto-escalates to 'apply'. */
+export type LoopMode = 'dry-run' | 'apply';
+/** Pluggable per-loop control plane: the local Kanban board or GitHub issues. */
+export type ControlPlaneKind = 'board' | 'github';
+/** Merge gate posture: human-gated by default, or bounded low-risk auto-merge. */
+export type MergePosture = 'human-gate' | 'auto-low-risk';
+
+/** The tutorial's six-field pre-flight card as machine-readable data (spec §3). */
+export interface LoopContract {
+  job: string;          // the single responsibility (free text, required)
+  inputs: string;       // what STATE it inspects (free text, required)
+  allowed: string[];    // tool patterns it MAY use      → LaunchRequest.allowedTools
+  forbidden: string[];  // tool patterns it must NEVER use → LaunchRequest.disallowedTools
+  output: string;       // the concrete artifact after a good run (free text, required)
+  evaluation: string;   // how we grade success (REQUIRED — create fails if empty)
+}
+
+/** A deterministic rubric hard-floor: a glob match forces this risk (overrides the agent). */
+export interface RiskRule {
+  glob: string;
+  forceRisk: RiskLevel;
+}
+
+/** The Manager's per-item triage output (emitted via --json-schema). */
+export interface TriageVerdict {
+  risk: RiskLevel;
+  type: WorkType;
+  agentReady: boolean;
+  reason: string;
+  questions?: string[];
+}
+
+/** The loopEval LLM-judge grade of a single dry-run; `clean` gates escalation. */
+export interface LoopEvalResult {
+  clean: boolean;
+  score: number;
+  notes: string;
+}
+
+/** The maker/checker Reviewer verdict on a worker diff. */
+export interface ReviewVerdict {
+  pass: boolean;
+  findings: string;
+}
+
+/** A first-class, persisted, contract-bearing loop (mirrors the `loops` table, camelCase). */
+export interface Loop {
+  id: string;
+  name: string;
+  projectId: string;
+  kind: LoopKind;
+  controlPlane: ControlPlaneKind;
+  scheduleId: string | null;
+  contract: LoopContract;
+  mode: LoopMode;
+  consecutiveGoodRuns: number;
+  escalationThreshold: number;
+  mergePosture: MergePosture;
+  reviewPolicy: string; // 'always' | 'off' | 'threshold:<N>'
+  riskRubric: RiskRule[];
+  routableCeiling: RiskLevel;
+  enabled: boolean;
+  lastRunId: string | null;
+  lastEval: LoopEvalResult | null;
+  lastError: string | null;
+  createdAt: number;
+}
+
+/** Create-loop payload (POST /api/loops); omitted optionals default server-side. */
+export interface CreateLoopRequest {
+  name: string;
+  projectId: string;
+  kind: LoopKind;
+  controlPlane?: ControlPlaneKind;
+  scheduleId?: string | null;
+  contract: LoopContract;
+  escalationThreshold?: number;
+  mergePosture?: MergePosture;
+  reviewPolicy?: string;
+  riskRubric?: RiskRule[];
+  routableCeiling?: RiskLevel;
+}
+
 /** Derived execution badge, orthogonal to the column. `resolving` = a conflict-resolution agent is
  *  reconciling the task branch (v2 #9, §3.6). */
 export type ExecutionPhase =
@@ -670,7 +778,9 @@ export type ExecutionPhase =
   | 'conflicts'
   | 'paused-budget'
   | 'failed'
-  | 'resolving';
+  | 'resolving'
+  | 'inspecting' // NEW: a dry-run loop is reporting intended actions, changing nothing
+  | 'reviewing'; // NEW: a separate Reviewer agent (maker/checker) is judging the diff
 
 /** A kanban card = a human-curated work unit; the PARENT of execution. */
 export interface KanbanTask {
