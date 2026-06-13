@@ -297,6 +297,40 @@ export interface SubagentInfo {
   description?: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Skill auto-learning loop (F-LEARN, DC.md §29) — hermes-agent closed learning loop
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Config for the autonomous skill-distillation loop. Ships DISABLED by default. */
+export interface LearnerConfig {
+  enabled: boolean;
+  /** A completed operator run qualifies if ANY of these thresholds is met. */
+  minCostUsd: number;
+  minSubagents: number;
+  minDepth: number;
+  minDurationMs: number;
+  /** Hard cap on auto-learned skills per rolling 24h (runaway guard). */
+  maxPerDay: number;
+}
+
+/** A record of one distillation attempt. `ok` = a SKILL.md was written to disk. */
+export interface LearnedSkill {
+  id: string;
+  sourceRunId: string;
+  name: string;
+  slug: string;
+  /** Absolute path of the written SKILL.md (empty for skipped/failed). */
+  skillPath: string;
+  /** Absolute path of the personal-rag copy, if indexing succeeded. */
+  ragPath: string | null;
+  taskSig: string;
+  /** Cost of the run we learned FROM (not the distiller's own cost). */
+  sourceCostUsd: number;
+  status: 'ok' | 'skipped' | 'failed';
+  error: string | null;
+  createdAt: number;
+}
+
 export interface ModelInfo {
   id: string;
   label: string;

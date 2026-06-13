@@ -24,6 +24,7 @@ import { registerTagsRoutes } from './tags.js';
 import { registerSearchRoutes } from './search.js'; // F7 — full-text transcript search
 import { registerOtelRoutes } from './otel.js'; // H6
 import { registerMemoryRoutes, initMemory } from './memory.js'; // F9 — fleet memory
+import { registerLearnerRoutes, initLearner } from './learner.js'; // F-LEARN — skill auto-learning loop (§29)
 import { registerReleaseRoutes } from './release.js';
 import { registerBenchmarkRoutes } from './benchmarks.js'; // F4+F5 — benchmark mode + best-of-N
 import { registerAddonRoutes, resetAddonRuntimeForDataWipe } from './addons.js'; // §22 — add-on marketplace (compression/headroom)
@@ -210,6 +211,8 @@ export function buildServer() {
   registerOtelRoutes(app); // H6 — OTLP receiver (/v1/metrics, /v1/logs) + /api/agents/:id/otel
   registerMemoryRoutes(app); // F9 — fleet memory (compounding knowledge)
   initMemory(); // F9 — subscribe to run-terminal events
+  registerLearnerRoutes(app); // F-LEARN — skill auto-learning loop (§29)
+  initLearner(); // F-LEARN — autonomous skill distillation on complex run completion
   registerReleaseRoutes(app); // §15 — release page + GitHub update check / self-update
   registerBenchmarkRoutes(app); // F4+F5 — benchmark mode + best-of-N
   registerAddonRoutes(app); // §22 — add-on marketplace + headroom compression-proxy lifecycle
