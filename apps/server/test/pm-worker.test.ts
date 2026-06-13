@@ -70,6 +70,45 @@ function stubLaunch(impl: (req: any) => any): { calls: any[]; restore: () => voi
   registry.launch = (req: any) => { calls.push(req); return impl(req); };
   return { calls, restore: () => { registry.launch = real; } };
 }
+
+/**
+ * Stub a launch that models the REAL async terminal contract for the Reviewer run (review.ts
+ * awaitTerminal): `registry.launch` returns a still-RUNNING run, and the verdict only lands later
+ * via the onRunTerminal stream. For a Reviewer launch (jsonSchema present) the helper returns a
+ * running run, then fires the captured awaitTerminal subscriber on the next tick with the COMPLETED
+ * run that `impl` produced (its status/structuredOutput carry the verdict). Non-Reviewer launches
+ * (build/fix) return `impl`'s run unchanged — those code paths read run.id at launch, not terminal.
+ * This is what catches a launchReview that reads run.structuredOutput at launch time: such a launch
+ * would see the running run's null structuredOutput and fail closed, never the completed verdict.
+ */
+function stubLaunchAsyncReview(impl: (req: any) => any): { calls: any[]; restore: () => void } {
+  const calls: any[] = [];
+  const realLaunch = registry.launch;
+  const realOnTerminal = registry.onRunTerminal;
+  const subs = new Set<(run: any) => void>();
+  registry.onRunTerminal = (cb: (run: any) => void) => {
+    subs.add(cb);
+    return () => subs.delete(cb);
+  };
+  registry.launch = (req: any) => {
+    calls.push(req);
+    const terminalRun = impl(req);
+    if (!req?.jsonSchema) return terminalRun; // build/fix launch — no terminal await
+    // Reviewer launch: hand back a running run, fire terminal once awaitTerminal has subscribed.
+    const running = { ...terminalRun, status: 'running', endedAt: null, structuredOutput: null };
+    setTimeout(() => {
+      for (const cb of [...subs]) cb(terminalRun);
+    }, 0);
+    return running;
+  };
+  return {
+    calls,
+    restore: () => {
+      registry.launch = realLaunch;
+      registry.onRunTerminal = realOnTerminal;
+    },
+  };
+}
 // Minimal worker Loop for a project (only the fields tick/gate read).
 function makeWorkerLoop(projectId: string, patch: Record<string, any> = {}): any {
   return loopsRepo.create({
@@ -159,7 +198,7 @@ describe('pm reviewing phase (maker/checker) in validateAndGate (SPEC §9)', () 
     kanbanRepo.updateTask(card.id, { worktreeName: wtName, executionPhase: 'validating' });
 
     let reviewReq: any = null;
-    const stub = stubLaunch((req) => {
+    const stub = stubLaunchAsyncReview((req) => {
       reviewReq = req; // the Reviewer launch carries the json-schema
       return baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } });
     });
@@ -183,9 +222,9 @@ describe('pm reviewing phase (maker/checker) in validateAndGate (SPEC §9)', () 
     kanbanRepo.updateTask(card.id, { worktreeName: wtName, attemptCount: 0, maxAttempts: 3 });
 
     const reqs: any[] = [];
-    const stub = stubLaunch((req) => {
+    const stub = stubLaunchAsyncReview((req) => {
       reqs.push(req);
-      // first launch = the Reviewer (json-schema), reject; second = the fix run.
+      // first launch = the Reviewer (json-schema, async-terminal), reject; second = the fix run.
       if (req.jsonSchema) return baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: false, findings: 'fix the null deref at f:12' } });
       return baseRun('fix-run', project.id);
     });
@@ -243,7 +282,7 @@ describe('pm gate — mergePosture (SPEC §11)', () => {
     const { wtName } = makeFinishedWorktree(root, card.id, (wt) => writeFileSync(join(wt, 'feature.txt'), 'x\n'));
     kanbanRepo.updateTask(card.id, { worktreeName: wtName });
     const preHead = git(root, 'rev-parse', 'HEAD');
-    const stub = stubLaunch((req) => baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } }));
+    const stub = stubLaunchAsyncReview((req) => baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } }));
     try {
       await pm.validateAndGate(card.id, project);
     } finally { stub.restore(); }
@@ -263,7 +302,7 @@ describe('pm gate — mergePosture (SPEC §11)', () => {
     // global ceiling: allow auto-merge up to risk:low.
     const cfg = registry.getConfig();
     registry.setConfig({ ...cfg, loopAutoMergeCeiling: 'low' });
-    const stub = stubLaunch((req) => baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } }));
+    const stub = stubLaunchAsyncReview((req) => baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } }));
     try {
       await pm.validateAndGate(card.id, project);
     } finally {
@@ -285,7 +324,7 @@ describe('pm gate — mergePosture (SPEC §11)', () => {
     kanbanRepo.updateTask(card.id, { worktreeName: wtName });
     const cfg = registry.getConfig();
     registry.setConfig({ ...cfg, loopAutoMergeCeiling: null }); // ceiling off
-    const stub = stubLaunch((req) => baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } }));
+    const stub = stubLaunchAsyncReview((req) => baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } }));
     try {
       await pm.validateAndGate(card.id, project);
     } finally { stub.restore(); registry.setConfig(cfg); }
@@ -303,7 +342,7 @@ describe('pm gate — mergePosture (SPEC §11)', () => {
     kanbanRepo.updateTask(card.id, { worktreeName: wtName });
     const cfg = registry.getConfig();
     registry.setConfig({ ...cfg, loopAutoMergeCeiling: 'low' });
-    const stub = stubLaunch((req) => baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } }));
+    const stub = stubLaunchAsyncReview((req) => baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } }));
     try {
       await pm.validateAndGate(card.id, project);
     } finally { stub.restore(); registry.setConfig(cfg); }

@@ -164,7 +164,7 @@ function reviewDecision(policy: string): { review: boolean; thresholdFiles: numb
 
 /** Count files changed in the worktree branch's diff vs base (for the threshold:N review gate). */
 async function changedFilesVsBase(worktreeDir: string, baseBranch: string): Promise<number> {
-  const r = await gitExec(worktreeDir, ['-C', worktreeDir, 'diff', '--name-only', '-z', baseBranch]);
+  const r = await gitExec(worktreeDir, ['diff', '--name-only', '-z', baseBranch]);
   if (!r.ok) return 0;
   return r.stdout.split('\0').filter((p) => p !== '').length;
 }
@@ -879,14 +879,16 @@ class PmEngine {
     if (PM_DONE_COLUMNS.has(fresh.column) || fresh.column === 'Backlog' || fresh.column === 'Ready') return true;
     // Thread the findings EXPLICITLY (not via lastError — rework clears that before re-reading the card)
     // through the SAME no-progress + attempt_count machinery the validation-fail path uses. fixPrompt
-    // injects them into the fix prompt under its '[human request-changes]' branch.
-    await this.rework(cardId, project, fresh.validationOutput, verdict.findings);
+    // injects them into the fix prompt under its '[human request-changes]' branch. Pass null for the
+    // validationOutput: validation just PASSED on this attempt (we're here only because the reviewer
+    // rejected), so a stale prior validationOutput must not leak into the fix prompt.
+    await this.rework(cardId, project, null, verdict.findings);
     return true;
   }
 
   /** The raw diff text of the worktree branch vs base (threaded into the Reviewer prompt). */
   private async diffText(worktreeDir: string, baseBranch: string): Promise<string> {
-    const r = await gitExec(worktreeDir, ['-C', worktreeDir, 'diff', baseBranch], { maxBuffer: VALIDATION_MAX_BUFFER });
+    const r = await gitExec(worktreeDir, ['diff', baseBranch], { maxBuffer: VALIDATION_MAX_BUFFER });
     return r.ok ? r.stdout : '';
   }
 
@@ -905,7 +907,7 @@ class PmEngine {
     // (default) preserves today's behavior exactly. The PR path never auto-merges (guarded in the
     // eligibility helper). When neither path authorizes a merge, park in Review for a human.
     const loop = loopsRepo.enabledByKind(project.id, 'worker')[0];
-    const ceiling = (registry.getConfig() as any).loopAutoMergeCeiling as RiskLevel | null;
+    const ceiling = registry.getConfig().loopAutoMergeCeiling;
     const postureAuto = !!loop && autoLowRiskEligible(card, project, loop, ceiling);
 
     if (!project.autoMerge && !postureAuto) {
