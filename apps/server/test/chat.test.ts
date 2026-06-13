@@ -53,3 +53,42 @@ describe('buildEnginePrompt', () => {
     expect(p).not.toContain('OLD0'); // oldest dropped
   });
 });
+
+import { vi } from 'vitest';
+vi.mock('../src/registry.js', () => ({
+  registry: {
+    launch: vi.fn(async (req: any) => ({ id: 'run-launch', sessionId: 's', status: 'running', ...req })),
+    resume: vi.fn(async (id: string) => ({ id: 'run-resume', sessionId: 's', status: 'running' })),
+    launchEngine: vi.fn(async (req: any) => ({ id: 'run-engine', sessionId: 's', status: 'running', ...req })),
+  },
+}));
+
+describe('startTurn', () => {
+  it('turn 1 launches; turn 2 resumes the stored run id', async () => {
+    const { registry } = await import('../src/registry.js');
+    const { chatRepo, startTurn } = await import('../src/chat.js');
+    const s = chatRepo.createSession({ cwd: '/tmp/t' });
+
+    const t1 = await startTurn(s.id, 'first');
+    expect((registry.launch as any)).toHaveBeenCalledTimes(1);
+    expect(t1.runId).toBe('run-launch');
+    expect(chatRepo.getSession(s.id)?.runId).toBe('run-launch');
+    expect(t1.userMessage.content).toBe('first');
+
+    const t2 = await startTurn(s.id, 'second');
+    expect((registry.resume as any)).toHaveBeenCalledWith('run-launch', 'second', undefined);
+    expect(t2.runId).toBe('run-resume');
+    expect(chatRepo.getSession(s.id)?.runId).toBe('run-resume');
+  });
+
+  it('engine session launches an engine run with a reconstructed prompt each turn', async () => {
+    const { registry } = await import('../src/registry.js');
+    const { chatRepo, startTurn } = await import('../src/chat.js');
+    const s = chatRepo.createSession({ cwd: '/tmp/e', engine: 'codex', model: 'gpt-5-codex' });
+    await startTurn(s.id, 'hello engine');
+    expect((registry.launchEngine as any)).toHaveBeenCalled();
+    const arg = (registry.launchEngine as any).mock.calls.at(-1)[0];
+    expect(arg.engine).toBe('codex');
+    expect(arg.prompt).toContain('hello engine');
+  });
+});

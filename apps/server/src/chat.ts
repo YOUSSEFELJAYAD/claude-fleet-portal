@@ -6,9 +6,11 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import db from './db.js';
+import { registry } from './registry.js';
 import type {
   ChatSession, ChatMessage, ChatRole, ChatMessageKind,
   CreateChatSessionRequest, RunEngine, EffortLevel, PermissionMode,
+  ChatTurnResponse, AddChatMessageRequest,
 } from '@fleet/shared';
 
 db.exec(`
@@ -111,4 +113,79 @@ export function buildEnginePrompt(history: Array<{ role: string; content: string
     body = next;
   }
   return (body + tail).trimStart();
+}
+
+/** Run one chat turn. Persists the user message, then launches (turn 1) or resumes (turn N) for
+ *  Claude, or launches a fresh engine one-shot with a reconstructed prompt for engines. */
+export async function startTurn(sessionId: string, message: string): Promise<ChatTurnResponse> {
+  const session = chatRepo.getSession(sessionId);
+  if (!session) throw Object.assign(new Error('session not found'), { statusCode: 404 });
+  if (typeof message !== 'string' || !message.trim()) throw Object.assign(new Error('message is required'), { statusCode: 400 });
+
+  const userMessage = chatRepo.addMessage({ sessionId, role: 'user', kind: 'text', content: message, runId: null });
+  const opts = {
+    cwd: session.cwd, model: session.model, effort: session.effort, permissionMode: session.permissionMode,
+    allowedTools: session.allowedTools ?? undefined, skills: session.skills ?? undefined,
+  };
+
+  let run: { id: string };
+  if (session.engine && session.engine !== 'claude') {
+    const history = chatRepo.listMessages(sessionId).slice(0, -1); // exclude the just-added user msg
+    const prompt = buildEnginePrompt(history.map((m) => ({ role: m.role, content: m.content })), message);
+    run = await registry.launchEngine({ ...opts, engine: session.engine, prompt });
+  } else if (!session.runId) {
+    run = await registry.launch({ ...opts, prompt: message });
+  } else {
+    run = await registry.resume(session.runId, message, undefined);
+  }
+  chatRepo.setSessionRun(sessionId, run.id);
+  return { runId: run.id, userMessage };
+}
+
+export function registerChatRoutes(app: FastifyInstance) {
+  app.get('/api/chat/sessions', async () => chatRepo.listSessions());
+
+  app.post('/api/chat/sessions', async (req, reply) => {
+    const b = (req.body ?? {}) as CreateChatSessionRequest;
+    if (!b.cwd || typeof b.cwd !== 'string') return reply.code(400).send({ error: 'cwd is required' });
+    return chatRepo.createSession(b);
+  });
+
+  app.get('/api/chat/sessions/:id', async (req, reply) => {
+    const id = (req.params as any).id;
+    const session = chatRepo.getSession(id);
+    if (!session) return reply.code(404).send({ error: 'not found' });
+    return { session, messages: chatRepo.listMessages(id) };
+  });
+
+  app.patch('/api/chat/sessions/:id', async (req, reply) => {
+    const id = (req.params as any).id;
+    if (!chatRepo.getSession(id)) return reply.code(404).send({ error: 'not found' });
+    const title = (req.body as any)?.title;
+    if (typeof title !== 'string' || !title.trim()) return reply.code(400).send({ error: 'title is required' });
+    chatRepo.renameSession(id, title.trim());
+    return chatRepo.getSession(id);
+  });
+
+  app.delete('/api/chat/sessions/:id', async (req) => {
+    chatRepo.deleteSession((req.params as any).id);
+    return { ok: true };
+  });
+
+  app.post('/api/chat/sessions/:id/turn', async (req, reply) => {
+    try {
+      return await startTurn((req.params as any).id, (req.body as any)?.message);
+    } catch (e: any) {
+      return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'turn failed' });
+    }
+  });
+
+  // Generic add-message — the client persists the assistant reply on stream-terminal (plan note 1).
+  app.post('/api/chat/sessions/:id/messages', async (req, reply) => {
+    const id = (req.params as any).id;
+    if (!chatRepo.getSession(id)) return reply.code(404).send({ error: 'not found' });
+    const b = (req.body ?? {}) as AddChatMessageRequest;
+    if (typeof b.content !== 'string') return reply.code(400).send({ error: 'content is required' });
+    return chatRepo.addMessage({ sessionId: id, role: b.role, kind: b.kind, content: b.content, runId: b.runId ?? null });
+  });
 }
