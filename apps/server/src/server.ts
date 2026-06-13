@@ -167,7 +167,16 @@ export function validateTemplateFields(body: any): { fields: Partial<AgentTempla
 export function buildServer() {
   // forceCloseConnections — hijacked SSE responses are ACTIVE connections, so the default
   // 'idle' close would let app.close() hang until every dashboard tab disconnects (H4).
-  const app = Fastify({ logger: false, bodyLimit: 4 * 1024 * 1024, forceCloseConnections: true });
+  // maxParamLength — Fastify defaults to 100, which silently 404s any longer :param BEFORE the
+  // handler runs (so e.g. the /api/mcp/:name handler's own length guard was unreachable). Raise it
+  // to 256 so handler-level validation governs and over-long names get a clean 400, not a confusing
+  // 404. 256 still bounds a single path segment well below any DoS concern.
+  const app = Fastify({
+    logger: false,
+    bodyLimit: 4 * 1024 * 1024,
+    forceCloseConnections: true,
+    routerOptions: { maxParamLength: 256 }, // fastify@5 — top-level maxParamLength is deprecated
+  });
 
   // The web client sets `content-type: application/json` on every call, including body-less
   // DELETEs/POSTs. Fastify's default parser rejects an EMPTY body for that content-type with
