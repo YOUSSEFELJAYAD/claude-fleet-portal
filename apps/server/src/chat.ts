@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import db from './db.js';
 import { registry } from './registry.js';
+import { dispatchCommand } from './commands.js';
 import type {
   ChatSession, ChatMessage, ChatRole, ChatMessageKind,
   CreateChatSessionRequest, RunEngine, EffortLevel, PermissionMode,
@@ -187,5 +188,17 @@ export function registerChatRoutes(app: FastifyInstance) {
     const b = (req.body ?? {}) as AddChatMessageRequest;
     if (typeof b.content !== 'string') return reply.code(400).send({ error: 'content is required' });
     return chatRepo.addMessage({ sessionId: id, role: b.role, kind: b.kind, content: b.content, runId: b.runId ?? null });
+  });
+
+  app.post('/api/chat/sessions/:id/command', async (req, reply) => {
+    const id = (req.params as any).id;
+    const session = chatRepo.getSession(id);
+    if (!session) return reply.code(404).send({ error: 'not found' });
+    const line = (req.body as any)?.line;
+    if (typeof line !== 'string' || !line.trim()) return reply.code(400).send({ error: 'line is required' });
+    chatRepo.addMessage({ sessionId: id, role: 'user', kind: 'command', content: line, runId: null });
+    const result = await dispatchCommand(line, session.cwd);
+    chatRepo.addMessage({ sessionId: id, role: 'system', kind: result.ok ? 'command-result' : 'error', content: result.text ?? JSON.stringify(result), runId: result.runId ?? null });
+    return result;
   });
 }
