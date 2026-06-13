@@ -8,6 +8,7 @@ import type { SettingValue, SettingCategory, SettingSource, SettingApplyTiming }
 import { DATA_DIR, HOST, PORT, WEB_PORT, validateConfig } from './config.js';
 import { registry } from './registry.js';
 import { addonRunEnv, isEngineEnabled } from './addons.js';
+import { getLearnerConfig, updateLearnerConfig } from './learner.js';
 import { readMap, upsert, del } from './envfile.js';
 
 const ENV_PATH = path.join(DATA_DIR, '.env');
@@ -21,6 +22,7 @@ interface FieldDef {
   secret: boolean;
   applyTiming: SettingApplyTiming;
   gatedBy: string | null;
+  control?: 'text' | 'toggle';   // default: 'text'
   gate?: () => boolean;          // default: true
   get: () => string | null;      // running/derived value (plaintext; masked later for secrets)
   liveSet?: (value: string | null) => void; // live fields only
@@ -44,6 +46,13 @@ const FIELDS: FieldDef[] = [
   { key: 'dailySpendCeilingUsd', label: 'Daily spend ceiling (USD)', category: 'live', source: 'portal-config', editable: true, secret: false, applyTiming: 'live', gatedBy: null, get: () => cfgNum(registry.getConfig().dailySpendCeilingUsd), liveSet: (v) => registry.setConfig(validateConfig({ ...registry.getConfig(), dailySpendCeilingUsd: v === '' || v == null ? null : Number(v) })) },
   { key: 'maxRunMinutes', label: 'Max run minutes', category: 'live', source: 'portal-config', editable: true, secret: false, applyTiming: 'live', gatedBy: null, get: () => cfgNum(registry.getConfig().maxRunMinutes), liveSet: (v) => registry.setConfig(validateConfig({ ...registry.getConfig(), maxRunMinutes: v === '' || v == null ? null : Number(v) })) },
   { key: 'maxConcurrentRuns', label: 'Max concurrent runs', category: 'live', source: 'portal-config', editable: true, secret: false, applyTiming: 'live', gatedBy: null, get: () => String(registry.getConfig().maxConcurrentRuns), liveSet: (v) => registry.setConfig(validateConfig({ ...registry.getConfig(), maxConcurrentRuns: Number(v) })) },
+  // ── learner (F-LEARN, §29) — live (applies now), delegated to the learner_config store ──
+  { key: 'learnerEnabled', label: 'Skill auto-learning', category: 'live', source: 'addon', editable: true, secret: false, applyTiming: 'live', gatedBy: null, control: 'toggle', get: () => (getLearnerConfig().enabled ? 'true' : 'false'), liveSet: (v) => { updateLearnerConfig({ enabled: v === 'true' }); } },
+  { key: 'learnerMinCostUsd', label: 'Learner · min cost (USD)', category: 'live', source: 'addon', editable: true, secret: false, applyTiming: 'live', gatedBy: null, get: () => String(getLearnerConfig().minCostUsd), liveSet: (v) => { updateLearnerConfig({ minCostUsd: Number(v) }); } },
+  { key: 'learnerMinSubagents', label: 'Learner · min subagents', category: 'live', source: 'addon', editable: true, secret: false, applyTiming: 'live', gatedBy: null, get: () => String(getLearnerConfig().minSubagents), liveSet: (v) => { updateLearnerConfig({ minSubagents: Number(v) }); } },
+  { key: 'learnerMinDepth', label: 'Learner · min depth', category: 'live', source: 'addon', editable: true, secret: false, applyTiming: 'live', gatedBy: null, get: () => String(getLearnerConfig().minDepth), liveSet: (v) => { updateLearnerConfig({ minDepth: Number(v) }); } },
+  { key: 'learnerMinDurationMin', label: 'Learner · min duration (min)', category: 'live', source: 'addon', editable: true, secret: false, applyTiming: 'live', gatedBy: null, get: () => String(getLearnerConfig().minDurationMs / 60000), liveSet: (v) => { updateLearnerConfig({ minDurationMs: Math.round(Number(v) * 60000) }); } },
+  { key: 'learnerMaxPerDay', label: 'Learner · max per day', category: 'live', source: 'addon', editable: true, secret: false, applyTiming: 'live', gatedBy: null, get: () => String(getLearnerConfig().maxPerDay), liveSet: (v) => { updateLearnerConfig({ maxPerDay: Number(v) }); } },
 ];
 
 function toValue(f: FieldDef): SettingValue {
@@ -58,6 +67,7 @@ function toValue(f: FieldDef): SettingValue {
     value: f.secret ? null : running,
     set: f.secret ? !!(running && running.length) : !!(running && running.length),
     pending,
+    control: f.control ?? 'text',
   };
 }
 
@@ -100,8 +110,8 @@ export function registerSettingsRoutes(app: FastifyInstance) {
     if (err) return reply.code(400).send({ error: err });
 
     try {
-      if (f.source === 'portal-config' && f.liveSet) {
-        f.liveSet(value);
+      if (f.liveSet) {
+        f.liveSet(value); // live fields: portal-config + addon (learner) delegate to their store
       } else if (f.source === 'env') {
         if (value == null || value === '') del(ENV_PATH, f.key);
         else upsert(ENV_PATH, f.key, value);

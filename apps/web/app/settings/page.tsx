@@ -27,6 +27,14 @@ export default function SettingsPage() {
     } catch (e: any) { setErr(`${s.key}: ${e?.message ?? 'update failed'}`); }
   }
 
+  async function toggle(s: SettingValue) {
+    setErr(null);
+    try {
+      await api.updateSetting(s.key, s.value === 'true' ? 'false' : 'true'); // live; persists immediately
+      await refresh();
+    } catch (e: any) { setErr(`${s.key}: ${e?.message ?? 'update failed'}`); }
+  }
+
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-5">
       <h1 className="text-lg font-semibold">Environment &amp; Settings</h1>
@@ -43,6 +51,10 @@ export default function SettingsPage() {
               </div>
               {!s.editable ? (
                 <span className="font-mono opacity-80">{s.value ?? '—'}</span>
+              ) : s.control === 'toggle' ? (
+                <Btn disabled={!s.gatedOn} variant={s.value === 'true' ? 'solid' : 'ghost'} onClick={() => toggle(s)}>
+                  {s.value === 'true' ? '● ON' : '○ OFF'}
+                </Btn>
               ) : s.secret ? (
                 <>
                   <span className="font-mono opacity-60">{s.set ? '••••set' : '(unset)'}</span>

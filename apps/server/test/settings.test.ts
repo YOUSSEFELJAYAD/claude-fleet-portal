@@ -11,6 +11,10 @@ vi.mock('../src/addons.js', () => ({
   addonRunEnv: vi.fn(() => ({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787' })),
   isEngineEnabled: vi.fn((e: string) => e === 'codex'),
 }));
+vi.mock('../src/learner.js', () => ({
+  getLearnerConfig: vi.fn(() => ({ enabled: false, minCostUsd: 0.5, minSubagents: 3, minDepth: 2, minDurationMs: 300_000, maxPerDay: 10 })),
+  updateLearnerConfig: vi.fn((patch: any) => ({ enabled: false, minCostUsd: 0.5, minSubagents: 3, minDepth: 2, minDurationMs: 300_000, maxPerDay: 10, ...patch })),
+}));
 
 import { buildSettings } from '../src/settings.js';
 
@@ -44,6 +48,21 @@ describe('settings registry', () => {
     const codex = buildSettings().find((s) => s.key === 'CODEX_API_KEY')!;
     expect(codex.gatedBy).toBe('codex');
     expect(codex.gatedOn).toBe(true); // mock says codex enabled
+  });
+
+  it('exposes the learner enabled flag as a live toggle reflecting learner config', () => {
+    const t = buildSettings().find((s) => s.key === 'learnerEnabled')!;
+    expect(t.control).toBe('toggle');
+    expect(t.category).toBe('live');
+    expect(t.applyTiming).toBe('live');
+    expect(t.value).toBe('false'); // mock config enabled:false
+  });
+
+  it('surfaces the learner thresholds (min duration in minutes)', () => {
+    const dur = buildSettings().find((s) => s.key === 'learnerMinDurationMin')!;
+    expect(dur.value).toBe('5'); // 300_000 ms → 5 min
+    const cap = buildSettings().find((s) => s.key === 'learnerMaxPerDay')!;
+    expect(cap.value).toBe('10');
   });
 
   it('GET /api/settings returns the registry', async () => {
@@ -87,6 +106,24 @@ describe('PUT /api/settings/:key', () => {
     const res = await a.inject({ method: 'PUT', url: '/api/settings/maxConcurrentRuns', payload: { value: '4' } });
     expect(res.statusCode).toBe(200);
     expect((registry.setConfig as any)).toHaveBeenCalled();
+    await a.close();
+  });
+
+  it('toggling learnerEnabled delegates to updateLearnerConfig({enabled})', async () => {
+    const { updateLearnerConfig } = await import('../src/learner.js');
+    const a = await app();
+    const res = await a.inject({ method: 'PUT', url: '/api/settings/learnerEnabled', payload: { value: 'true' } });
+    expect(res.statusCode).toBe(200);
+    expect((updateLearnerConfig as any)).toHaveBeenCalledWith({ enabled: true });
+    await a.close();
+  });
+
+  it('a learner threshold delegates to updateLearnerConfig (minutes → ms)', async () => {
+    const { updateLearnerConfig } = await import('../src/learner.js');
+    const a = await app();
+    const res = await a.inject({ method: 'PUT', url: '/api/settings/learnerMinDurationMin', payload: { value: '10' } });
+    expect(res.statusCode).toBe(200);
+    expect((updateLearnerConfig as any)).toHaveBeenCalledWith({ minDurationMs: 600_000 });
     await a.close();
   });
 });

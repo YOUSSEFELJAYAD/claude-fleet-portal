@@ -1313,6 +1313,7 @@ export interface SettingValue {
   value: string | null;     // current value; null for secrets and for unset
   set: boolean;             // secrets: is a value present?
   pending: boolean;         // env field: managed-file value differs from the running value
+  control: 'text' | 'toggle'; // UI hint: 'toggle' renders an on/off switch (value is 'true'|'false')
 }
 
 export interface SettingsResponse { settings: SettingValue[] }
