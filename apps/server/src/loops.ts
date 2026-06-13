@@ -163,7 +163,9 @@ export const loopsRepo = {
       contract: JSON.stringify(req.contract),
       mode: 'dry-run', // forced start (spec §6.2 / §20)
       consecutive_good_runs: 0,
-      escalation_threshold: req.escalationThreshold ?? 3,
+      // Defensive clamp: a threshold <= 0 makes the dry-run ramp inert (1 >= 0 is true on the first
+      // clean run → instant apply, bypassing the safety ramp). Floor at 1 (Fix: threshold bypass).
+      escalation_threshold: Math.max(1, Math.trunc(req.escalationThreshold ?? 3)),
       merge_posture: req.mergePosture ?? 'human-gate',
       review_policy: req.reviewPolicy ?? 'always',
       risk_rubric: JSON.stringify(req.riskRubric ?? []),
@@ -197,7 +199,8 @@ export const loopsRepo = {
       control_plane: patch.controlPlane ?? current.controlPlane,
       schedule_id: patch.scheduleId !== undefined ? patch.scheduleId : current.scheduleId,
       contract: JSON.stringify(patch.contract ?? current.contract),
-      escalation_threshold: patch.escalationThreshold ?? current.escalationThreshold,
+      // Defensive clamp (mirrors create): never persist a threshold < 1 that would defeat the ramp.
+      escalation_threshold: Math.max(1, Math.trunc(patch.escalationThreshold ?? current.escalationThreshold)),
       merge_posture: patch.mergePosture ?? current.mergePosture,
       review_policy: patch.reviewPolicy ?? current.reviewPolicy,
       risk_rubric: JSON.stringify(patch.riskRubric ?? current.riskRubric),
@@ -240,10 +243,38 @@ export const loopsRepo = {
     return n;
   },
 
+  /**
+   * Atomic bump-and-escalate (Fix: the un-transactioned bumpGoodRuns→setMode pair could crash between
+   * the two writes, leaving counter==threshold with mode still 'dry-run' → a duplicate escalation on
+   * the next clean run). Increment consecutive_good_runs and, IN THE SAME TRANSACTION, flip mode to
+   * 'apply' iff the post-bump counter reaches the threshold. Returns { n, escalated }. The escalation
+   * NOTIFICATION is intentionally NOT emitted here — callers fire it best-effort OUTSIDE the txn so a
+   * notifier failure can never roll back the (committed) counter+mode change.
+   */
+  bumpAndEscalate(id: string, threshold: number): { n: number; escalated: boolean } {
+    return bumpAndEscalateTxn(id, threshold) as { n: number; escalated: boolean };
+  },
+
   resetGoodRuns(id: string): void {
     setGoodRunsStmt.run({ id, n: 0 });
   },
 };
+
+// The bump+flip must be a single SQLite transaction so a crash can never interleave the two writes.
+// better-sqlite3 transactions are synchronous — the whole fn body runs atomically (BEGIN…COMMIT, or a
+// full ROLLBACK on throw). We re-read inside the txn so the increment is computed from the committed row.
+const bumpAndEscalateTxn = db.transaction((id: string, threshold: number) => {
+  const row = getStmt.get(id) as any;
+  if (!row) return { n: 0, escalated: false };
+  const n = row.consecutive_good_runs + 1;
+  setGoodRunsStmt.run({ id, n });
+  let escalated = false;
+  if (n >= threshold && row.mode === 'dry-run') {
+    setModeStmt.run({ id, mode: 'apply' });
+    escalated = true;
+  }
+  return { n, escalated };
+});
 
 // ── validateContract ─────────────────────────────────────────────────────────────
 
@@ -326,9 +357,11 @@ export function applyEvalResult(loop: Loop, evalResult: LoopEvalResult): number 
     loopsRepo.resetGoodRuns(loop.id);
     return 0;
   }
-  const n = loopsRepo.bumpGoodRuns(loop.id);
-  if (n >= loop.escalationThreshold) {
-    loopsRepo.setMode(loop.id, 'apply');
+  // Atomic bump+flip (Fix: a crash between the old un-transactioned bumpGoodRuns and setMode left
+  // counter==threshold while mode stayed 'dry-run', causing a DUPLICATE escalation on re-entry). The
+  // notification is best-effort and lives OUTSIDE the transaction so a notifier failure can't roll back.
+  const { n, escalated } = loopsRepo.bumpAndEscalate(loop.id, loop.escalationThreshold);
+  if (escalated) {
     notifyEscalation(loop, n);
   }
   return n;
@@ -440,8 +473,15 @@ class LoopEngine {
       // honors. RETHROW those; all OTHER errors are swallowed into a non-clean run (never auto-escalate
       // on uncertainty): the error lands in last_error and the dry-run counter resets.
       if (e?.statusCode === 429 || e?.code === 'daily-cap') throw e;
-      loopsRepo.recordRun(loop.id, { error: e?.message ?? 'fire failed' });
-      if (loop.mode === 'dry-run') loopsRepo.resetGoodRuns(loop.id);
+      // Prefix the error so init()'s boot-reconcile (UPDATE ... WHERE last_error LIKE 'mid-fire:%')
+      // can clear it on the next boot — without the prefix the predicate never matches and a crashed
+      // fire's error persists forever (Fix: boot-reconcile was inert).
+      loopsRepo.recordRun(loop.id, { error: `mid-fire: ${e?.message ?? 'fire failed'}` });
+      // Re-fetch the LIVE loop: a concurrent promote during the awaits above may have flipped mode to
+      // 'apply' in the DB, but the `loop` snapshot (captured before the awaits) still says 'dry-run'.
+      // Gate the reset on the FRESH mode so we never wrongly reset an already-escalated loop's counter.
+      const live = loopsRepo.get(loop.id);
+      if (live?.mode === 'dry-run') loopsRepo.resetGoodRuns(loop.id);
     }
   }
 }
@@ -494,6 +534,15 @@ export function registerLoopRoutes(app: FastifyInstance): void {
       reply.code(400);
       return { error: cErr };
     }
+    // escalationThreshold, when provided, must be an integer >= 1. A 0 (or negative) would defeat the
+    // dry-run ramp entirely — the FIRST clean run satisfies `1 >= 0`, instant-applying with no safety
+    // window (Fix: threshold bypass).
+    if (body.escalationThreshold !== undefined) {
+      if (!Number.isInteger(body.escalationThreshold) || body.escalationThreshold < 1) {
+        reply.code(400);
+        return { error: 'escalationThreshold must be an integer >= 1' };
+      }
+    }
     const created = loopsRepo.create({
       name: body.name.trim(),
       projectId: body.projectId,
@@ -539,6 +588,13 @@ export function registerLoopRoutes(app: FastifyInstance): void {
         error:
           "mergePosture 'auto-low-risk' requires a review — set reviewPolicy to 'always' or 'threshold:<N>' (an auto-merge with no maker/checker pass is forbidden)",
       };
+    }
+    // Same threshold guard as POST: a provided escalationThreshold must be an integer >= 1 (Fix).
+    if (body.escalationThreshold !== undefined) {
+      if (!Number.isInteger(body.escalationThreshold) || body.escalationThreshold < 1) {
+        reply.code(400);
+        return { error: 'escalationThreshold must be an integer >= 1' };
+      }
     }
     return loopsRepo.update(id, {
       name: body.name,

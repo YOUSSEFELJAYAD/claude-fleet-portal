@@ -164,9 +164,10 @@ function makeBoardAdapter(projectId: string): ControlPlane {
       kanbanRepo.updateTask(itemId, patch); // broadcasts a task frame
     },
     async postAssessment(itemId: string, markdown: string): Promise<void> {
-      commentsRepo.add(itemId, 'manager', markdown);
       const card = kanbanRepo.getTask(itemId);
-      if (card) broadcastTask(card); // no comment frame in KanbanBoardMessage → refresh via task frame
+      if (!card) return; // guard: never throw on a deleted card (mirrors classify/attachQuestions)
+      commentsRepo.add(itemId, 'manager', markdown);
+      broadcastTask(card); // no comment frame in KanbanBoardMessage → refresh via task frame
     },
     async attachQuestions(itemId: string, questions: string[]): Promise<void> {
       if (questions.length === 0) return;
@@ -221,7 +222,7 @@ async function fetchOpenIssues(root: string, ghRepo: string): Promise<GhIssue[] 
     'api', `repos/${ghRepo}/issues`,
     '--method', 'GET',
     '-f', 'state=open',
-    '-f', 'per_page=20',
+    '-f', 'per_page=100',
   ]);
   if (!r.ok) return null;
   try {
@@ -267,6 +268,17 @@ export function githubControlPlane(loop: Loop, project: Project): ControlPlane {
     },
     async classify(itemId: string, v: TriageVerdict) {
       const n = Number(itemId);
+      // Strip stale verdict labels before applying the new set so re-triaging
+      // an issue never accumulates contradictory labels (e.g. risk:low AND risk:high).
+      const current = await fetchAll();
+      const item = current.find((w) => w.id === itemId);
+      if (item) {
+        const staleLabels = item.labels.filter(
+          (l) => (l.startsWith('risk:') || l.startsWith('type:') || ROUTING_LABELS.has(l)) &&
+                 l !== RISK_LABELS[v.risk] && l !== TYPE_LABELS[v.type],
+        );
+        await Promise.all(staleLabels.map((l) => ghLabelRemove(root, n, l)));
+      }
       await ghLabelAdd(root, n, RISK_LABELS[v.risk]);
       await ghLabelAdd(root, n, TYPE_LABELS[v.type]);
       if (v.agentReady) {

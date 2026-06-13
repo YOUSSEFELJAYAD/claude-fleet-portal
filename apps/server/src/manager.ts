@@ -33,7 +33,7 @@ export const TRIAGE_JSON_SCHEMA = {
 /** Convert a shell-style glob (`*`, `?`) into a case-insensitive RegExp. */
 function globToRegExp(glob: string): RegExp {
   const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
-  return new RegExp(`^${escaped}$`, 'i');
+  return new RegExp(`^${escaped}$`, 'is');
 }
 
 /** True when `glob` matches any of the item's title, body, or labels. */
@@ -57,9 +57,13 @@ export function applyRubricFloors(item: WorkItem, verdict: TriageVerdict, rubric
   for (const rule of rubric) {
     if (ruleMatches(item, rule.glob)) {
       // Hard-floor: the rule can only RAISE risk, never lower it.
+      const prevRisk = next.risk;
       next.risk = RANK[rule.forceRisk] >= RANK[next.risk] ? rule.forceRisk : next.risk;
       next.agentReady = false;
-      next.reason = `${verdict.reason} [rubric override: glob "${rule.glob}" → forced risk:${rule.forceRisk}, not agent-ready]`;
+      const riskNote = next.risk !== prevRisk
+        ? ` raised risk:${prevRisk}→${next.risk},`
+        : '';
+      next.reason = `${next.reason} [rubric override: glob "${rule.glob}" →${riskNote} not agent-ready]`;
       return next;
     }
   }

@@ -20,6 +20,7 @@ import db from './db.js';
 import { repo } from './db.js';
 import { registry } from './registry.js';
 import type { LaunchRequest } from '@fleet/shared';
+import { loopsRepo } from './loops.js';
 
 // ── F2: add new columns if they don't exist (migration-safe) ────────────────
 db.exec(`
@@ -475,6 +476,10 @@ export function registerScheduleRoutes(app: FastifyInstance) {
         reply.code(400);
         return { error: 'loop_id must be a string (loop id)' };
       }
+      if (!loopsRepo.get(body.loop_id)) {
+        reply.code(400);
+        return { error: `loop "${body.loop_id}" not found` };
+      }
       loopId = body.loop_id;
     }
 
@@ -621,6 +626,26 @@ export function registerScheduleRoutes(app: FastifyInstance) {
       reply.code(404);
       return { error: 'not found' };
     }
+
+    // Slice 04: a schedule targeting a Loop drives loops.fire(loop_id), not registry.launch.
+    if (existing.loop_id) {
+      try {
+        const { loops } = await import('./loops.js');
+        const hasWork = await loops.hasWork(existing.loop_id);
+        if (hasWork) {
+          await loops.fire(existing.loop_id);
+        }
+        const now = Date.now();
+        // Advance the next slot only for an enabled schedule (manual run counts as a firing).
+        const next = existing.enabled ? computeNextFire(existing, now) : existing.next_fire_at;
+        updateFiredStmt.run({ id, last_run_id: null, last_fired_at: now, next_fire_at: next });
+        return { ok: true, runId: null };
+      } catch (e: any) {
+        reply.code(e?.statusCode ?? 500);
+        return { error: e?.message ?? 'loop fire failed' };
+      }
+    }
+
     let parsed: LaunchRequest;
     try {
       parsed = JSON.parse(existing.launch_request);

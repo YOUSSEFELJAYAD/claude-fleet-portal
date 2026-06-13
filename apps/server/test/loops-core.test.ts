@@ -244,6 +244,85 @@ describe('applyEvalResult — escalation counter (spec §6.2, the heart of the l
     applyEvalResult(loopsRepo.get(loop.id)!, dirty); // apply-mode: counter logic is skipped
     expect(loopsRepo.get(loop.id)!.mode).toBe('apply');
   });
+
+  // Fix 3: bumpAndEscalate is a single transaction (bump + flip), and applyEvalResult fires the
+  // notification ONLY on the transaction's `escalated` signal — so a re-entry where the counter already
+  // equals the threshold (e.g. after a crash between the old un-transactioned writes) can never
+  // double-escalate or double-notify.
+  it('bumpAndEscalate is atomic and applyEvalResult never double-escalates on re-entry', () => {
+    const loop = loopsRepo.create({
+      name: 'esc-atomic', projectId: PID, kind: 'manager', contract: baseContract(), escalationThreshold: 2,
+    });
+    const before = (db.prepare("SELECT COUNT(*) AS c FROM notifications WHERE kind='loop-escalation'").get() as any).c;
+
+    // First atomic bump+flip via the repo: 0→1, no escalation yet.
+    let r = loopsRepo.bumpAndEscalate(loop.id, 2);
+    expect(r).toEqual({ n: 1, escalated: false });
+    expect(loopsRepo.get(loop.id)!.mode).toBe('dry-run');
+
+    // Second bump reaches the threshold → the SAME transaction flips mode to 'apply' and reports it.
+    r = loopsRepo.bumpAndEscalate(loop.id, 2);
+    expect(r).toEqual({ n: 2, escalated: true });
+    expect(loopsRepo.get(loop.id)!.mode).toBe('apply');
+
+    // Re-entry: counter already == threshold AND mode already 'apply'. applyEvalResult must short-circuit
+    // (apply-mode is frozen) and emit NO new notification.
+    applyEvalResult(loopsRepo.get(loop.id)!, clean(9));
+    // Even a raw re-call of the txn at/above threshold returns escalated:false (mode no longer dry-run).
+    const reentry = loopsRepo.bumpAndEscalate(loop.id, 2);
+    expect(reentry.escalated).toBe(false);
+
+    const after = (db.prepare("SELECT COUNT(*) AS c FROM notifications WHERE kind='loop-escalation'").get() as any).c;
+    expect(after).toBe(before); // no notification from these repo-level calls; none double-fired
+  });
+});
+
+describe('Fix: escalationThreshold guard + clamp (threshold <= 0 must not defeat the ramp)', () => {
+  it('loopsRepo.create clamps a 0 / negative threshold up to 1', () => {
+    const zero = loopsRepo.create({
+      name: 'clamp-0', projectId: PID, kind: 'manager', contract: baseContract(), escalationThreshold: 0,
+    });
+    expect(zero.escalationThreshold).toBe(1);
+    const neg = loopsRepo.create({
+      name: 'clamp-neg', projectId: PID, kind: 'manager', contract: baseContract(), escalationThreshold: -5,
+    });
+    expect(neg.escalationThreshold).toBe(1);
+  });
+
+  it('loopsRepo.update clamps a 0 threshold up to 1', () => {
+    const loop = loopsRepo.create({
+      name: 'clamp-upd', projectId: PID, kind: 'manager', contract: baseContract(), escalationThreshold: 4,
+    });
+    const updated = loopsRepo.update(loop.id, { escalationThreshold: 0 });
+    expect(updated!.escalationThreshold).toBe(1);
+  });
+
+  it('a clamped threshold of 1 still ramps (one clean run flips to apply, not instant on a 0-counter)', () => {
+    // With the OLD bug, threshold 0 made `1 >= 0` true on the first bump — but the counter starts at 0,
+    // and a value of 0 stored as-is would have applied on run 1 with no safety. Clamp to 1 means apply
+    // happens after exactly ONE clean run (the minimum sane ramp), never before any run.
+    const loop = loopsRepo.create({
+      name: 'clamp-ramp', projectId: PID, kind: 'manager', contract: baseContract(), escalationThreshold: 0,
+    });
+    expect(loop.mode).toBe('dry-run'); // not applied at creation
+    applyEvalResult(loopsRepo.get(loop.id)!, { clean: true, score: 1, notes: 'ok' });
+    expect(loopsRepo.get(loop.id)!.mode).toBe('apply'); // clamped-1 → applies after one clean run
+  });
+});
+
+describe('Fix: boot-reconcile clears mid-fire errors only', () => {
+  it('init() clears a last_error prefixed mid-fire: but leaves a bare error untouched', () => {
+    const midFire = loopsRepo.create({ name: 'recon-mid', projectId: PID, kind: 'manager', contract: baseContract() });
+    const bare = loopsRepo.create({ name: 'recon-bare', projectId: PID, kind: 'manager', contract: baseContract() });
+    // Write directly via recordRun to seed the two error shapes.
+    loopsRepo.recordRun(midFire.id, { error: 'mid-fire: interrupted dry run' });
+    loopsRepo.recordRun(bare.id, { error: 'a normal recorded error' });
+
+    loops.init();
+
+    expect(loopsRepo.get(midFire.id)!.lastError).toBeNull(); // cleared by the reconcile predicate
+    expect(loopsRepo.get(bare.id)!.lastError).toBe('a normal recorded error'); // NOT matched → preserved
+  });
 });
 
 describe('loops singleton — fire(manager) drives runManagerLoop → grade → escalate', () => {
@@ -296,9 +375,37 @@ describe('loops singleton — fire(manager) drives runManagerLoop → grade → 
 
     await expect(loops.fire(loop.id)).resolves.toBeUndefined(); // (a) does not throw
     const fresh = loopsRepo.get(loop.id)!;
-    expect(fresh.lastError).toBe('manager boom'); // (b) recordRun captured the message
+    // (b) recordRun captured the message, PREFIXED 'mid-fire:' so init()'s boot-reconcile can clear it.
+    expect(fresh.lastError).toBe('mid-fire: manager boom');
     expect(fresh.consecutiveGoodRuns).toBe(0); // (c) the dry-run counter was reset
     expect(fresh.mode).toBe('dry-run'); // never auto-escalates on an error
+  });
+
+  // Fix 4: fire()'s catch must gate resetGoodRuns on the LIVE mode, not the stale `loop` snapshot
+  // captured before the awaits. We simulate a concurrent promote DURING the awaits by flipping the
+  // loop to apply-mode from inside runManagerLoop, then throwing. The catch re-fetches and sees 'apply'
+  // → it must NOT reset the (escalated) counter.
+  it('fire() catch does NOT reset the counter when the loop was promoted to apply mid-fire', async () => {
+    const loop = loopsRepo.create({
+      name: 'fire-promote-race', projectId: PID, kind: 'manager', contract: baseContract(), escalationThreshold: 5,
+    });
+    // Seed a non-zero counter representing dry-run escalation progress.
+    applyEvalResult(loopsRepo.get(loop.id)!, { clean: true, score: 1, notes: 'ok' });
+    applyEvalResult(loopsRepo.get(loop.id)!, { clean: true, score: 1, notes: 'ok' });
+    expect(loopsRepo.get(loop.id)!.consecutiveGoodRuns).toBe(2);
+
+    const manager = await import('../src/manager.js');
+    // Simulate a concurrent promote landing DURING the awaits, then a fire failure.
+    (manager as any).runManagerLoop = async (l: any) => {
+      loopsRepo.setMode(l.id, 'apply'); // concurrent promote flips the LIVE row
+      throw new Error('boom after promote');
+    };
+
+    await expect(loops.fire(loop.id)).resolves.toBeUndefined();
+    const fresh = loopsRepo.get(loop.id)!;
+    expect(fresh.mode).toBe('apply'); // promote stuck
+    expect(fresh.consecutiveGoodRuns).toBe(2); // counter NOT reset (gated on the live 'apply' mode)
+    expect(fresh.lastError).toBe('mid-fire: boom after promote');
   });
 
   it('hasWork is false for missing/disabled and reflects the control-plane list length', async () => {
@@ -346,6 +453,37 @@ describe('loop routes (spec §16)', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body).error).toMatch(/review/i);
+  });
+
+  // Fix: escalationThreshold, when provided, must be an integer >= 1 (a 0 would defeat the dry-run ramp).
+  it('POST /api/loops rejects escalationThreshold: 0 with 400', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/loops', headers: H(),
+      payload: { name: 'r-thr0', projectId: PID, kind: 'manager', contract: baseContract(), escalationThreshold: 0 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/escalationThreshold/i);
+  });
+
+  it('PUT /api/loops/:id rejects escalationThreshold: 0 with 400', async () => {
+    const created = await app.inject({
+      method: 'POST', url: '/api/loops', headers: H(),
+      payload: { name: 'r-thr-put', projectId: PID, kind: 'manager', contract: baseContract() },
+    });
+    const id = JSON.parse(created.body).id;
+    const res = await app.inject({
+      method: 'PUT', url: `/api/loops/${id}`, headers: H(),
+      payload: { escalationThreshold: 0 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/escalationThreshold/i);
+  });
+
+  // Fix (MINOR): POST /api/loops/:id/fire returns 404 when the loop is missing (e.g. deleted mid-fire).
+  it('POST /api/loops/:id/fire returns 404 for a missing loop', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/loops/no-such-loop/fire', headers: H() });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body).error).toMatch(/not found/i);
   });
 
   it('POST then GET list + detail', async () => {

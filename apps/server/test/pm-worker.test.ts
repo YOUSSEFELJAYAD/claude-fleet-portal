@@ -405,4 +405,113 @@ describe('pm gate — mergePosture (SPEC §11)', () => {
     expect(kanbanRepo.getTask(card.id)!.column).toBe('Review'); // risk>ceiling → not auto-merged
     void registryGetConfig;
   });
+
+  it('threshold:N + sub-threshold diff (review SKIPPED) + auto-low-risk + risk:low → does NOT auto-merge; parks in Review (threshold-skip hole)', async () => {
+    const root = makeRepo('posture-threshskip');
+    const project = makeProject(root, { defaultBranch: 'master', autoMerge: false }); // local mode
+    // threshold:5 → review only fires when the diff changed > 5 files. Our diff changes 1 file → SKIP.
+    makeWorkerLoop(project.id, { reviewPolicy: 'threshold:5', mergePosture: 'auto-low-risk' });
+    const card = makeCard(project.id, { title: 'feat', column: 'InProgress', labels: ['risk:low'] });
+    const { wtName } = makeFinishedWorktree(root, card.id, (wt) => writeFileSync(join(wt, 'feature.txt'), 'x\n'));
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+    const preHead = git(root, 'rev-parse', 'HEAD');
+    const cfg = registry.getConfig();
+    registry.setConfig({ ...cfg, loopAutoMergeCeiling: 'low' }); // ceiling WOULD allow low
+    const stub = stubLaunch((req) => baseRun('x', project.id, { structuredOutput: { pass: true, findings: 'n/a' } }));
+    try {
+      await pm.validateAndGate(card.id, project);
+    } finally { stub.restore(); registry.setConfig(cfg); }
+    // No Reviewer (json-schema) launch happened — the diff is under threshold, so review was SKIPPED.
+    expect(stub.calls.filter((c) => c.jsonSchema).length).toBe(0);
+    const parked = kanbanRepo.getTask(card.id);
+    // Pre-fix this auto-merged (no maker/checker ran). Post-fix reviewWasRun===false blocks it → parks.
+    expect(parked!.column).toBe('Review');
+    expect(parked!.mergeSha).toBeFalsy();
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(preHead); // main untouched
+  });
+
+  it('threshold:N + ABOVE-threshold diff (review RAN + passed) + auto-low-risk + risk:low → auto-merges → Done (reviewWasRun gate lets reviewed cards through)', async () => {
+    const root = makeRepo('posture-threshrun');
+    const project = makeProject(root, { defaultBranch: 'master', autoMerge: false }); // local mode
+    makeWorkerLoop(project.id, { reviewPolicy: 'threshold:1', mergePosture: 'auto-low-risk' });
+    const card = makeCard(project.id, { title: 'feat', column: 'InProgress', labels: ['risk:low'] });
+    // 2 files changed > threshold:1 → review FIRES.
+    const { wtName } = makeFinishedWorktree(root, card.id, (wt) => {
+      writeFileSync(join(wt, 'a.txt'), 'x\n');
+      writeFileSync(join(wt, 'b.txt'), 'y\n');
+    });
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName });
+    const cfg = registry.getConfig();
+    registry.setConfig({ ...cfg, loopAutoMergeCeiling: 'low' });
+    const stub = stubLaunchAsyncReview((req) => baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } }));
+    try {
+      await pm.validateAndGate(card.id, project);
+    } finally { stub.restore(); registry.setConfig(cfg); }
+    expect(stub.calls.filter((c) => c.jsonSchema).length).toBe(1); // review actually ran
+    const done = kanbanRepo.getTask(card.id);
+    expect(done!.column).toBe('Done'); // reviewed + low-risk → auto-merged (regression guard for the fix)
+    expect(done!.mergeSha).toBeTruthy();
+  });
+});
+
+describe('pm.reconcile() — mid-review zombie (SPEC §9)', () => {
+  it("a card stuck in InProgress/'reviewing' at boot is re-driven through validateAndGate (re-review → human-gate parks in Review), NOT left stuck or dropped to Ready", async () => {
+    const root = makeRepo('recon-review');
+    const project = makeProject(root, { defaultBranch: 'master', autoMerge: false });
+    makeWorkerLoop(project.id, { reviewPolicy: 'always', mergePosture: 'human-gate' });
+    const card = makeCard(project.id, { title: 'feat', column: 'InProgress' });
+    const { wtName } = makeFinishedWorktree(root, card.id, (wt) => writeFileSync(join(wt, 'feature.txt'), 'x\n'));
+    // Simulate a crash mid-review: phase 'reviewing', the Reviewer run is gone (runId points at the
+    // already-terminal build run, which review.ts never touches). Pre-fix reconcile had no branch for
+    // this → the card was wrongly swept back to Ready (losing the validated worktree).
+    kanbanRepo.updateTask(card.id, { worktreeName: wtName, executionPhase: 'reviewing', runId: null });
+
+    let reviewReq: any = null;
+    const stub = stubLaunchAsyncReview((req) => {
+      if (req.jsonSchema) reviewReq = req;
+      return baseRun('rev', project.id, { status: 'completed', endedAt: 2, structuredOutput: { pass: true, findings: 'ok' } });
+    });
+    try {
+      await pm.reconcile();
+    } finally { stub.restore(); }
+
+    expect(reviewReq).toBeTruthy(); // the reviewer was re-launched (card was re-driven, not abandoned)
+    const fresh = kanbanRepo.getTask(card.id);
+    expect(fresh!.column).toBe('Review'); // re-review passed → human-gate parks in Review
+    expect(fresh!.executionPhase).not.toBe('reviewing'); // no longer stuck in 'reviewing'
+    expect(fresh!.executionPhase).toBe('idle');
+  });
+});
+
+describe('pm review-reject fix prompt — no stale validation block (SPEC §9 minor)', () => {
+  it('request-changes reject path with a lingering validationOutput → fix prompt carries the reviewer comment but SUPPRESSES the contradictory validation-FAILED block', () => {
+    const root = makeRepo('rev-stalevout');
+    const project = makeProject(root, { defaultBranch: 'master', autoMerge: false });
+    // The kanban request-changes route moves the card to InProgress, bumps attemptCount, and stashes
+    // the reviewer comment in lastError. A stale validationOutput from an EARLIER failed attempt still
+    // lingers on the card — the review-reject path (validation PASSED) must not resurrect it: a "FAILED
+    // validation" block would directly contradict the reviewer's request-changes comment.
+    const card = makeCard(project.id, { title: 'feat', column: 'InProgress' });
+    kanbanRepo.updateTask(card.id, {
+      worktreeName: 'task-existing',
+      attemptCount: 1,
+      maxAttempts: 3,
+      lastError: '[human request-changes] guard the null case in handler.ts',
+      validationOutput: 'STALE: TypeError at old.ts:7',
+    });
+
+    const stub = stubLaunch((req) => baseRun('fix-run', req.projectId));
+    try {
+      pm.requestChanges(card.id);
+    } finally { stub.restore(); }
+
+    const fixReq = stub.calls.find((r) => !r.jsonSchema && r.worktree === 'task-existing');
+    expect(fixReq).toBeTruthy();
+    expect(fixReq.prompt).toContain('reviewer requested changes'); // the comment reaches the prompt
+    expect(fixReq.prompt).toContain('guard the null case in handler.ts');
+    // Pre-fix the lingering validationOutput leaked a "FAILED validation … Validation output (tail)"
+    // block that contradicts the reviewer comment. Post-fix that block is suppressed on the reject path.
+    expect(fixReq.prompt).not.toContain('FAILED validation');
+    expect(fixReq.prompt).not.toContain('STALE: TypeError at old.ts:7');
+  });
 });
