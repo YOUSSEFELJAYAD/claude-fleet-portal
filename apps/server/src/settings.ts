@@ -61,6 +61,18 @@ function toValue(f: FieldDef): SettingValue {
   };
 }
 
+function validateFieldValue(f: FieldDef, value: string | null): string | null {
+  if (value == null || value === '') return null; // clearing is allowed (null/empty)
+  if (f.key === 'maxConcurrentRuns') {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1 || n > 100) return 'maxConcurrentRuns must be an integer 1–100';
+  }
+  if ((f.key === 'ANTHROPIC_BASE_URL' || f.key === 'OPENAI_BASE_URL') && !/^https?:\/\//.test(value)) {
+    return `${f.key} must be an http(s) URL`;
+  }
+  return null;
+}
+
 /** Build the full registry as client-facing values (secrets masked). Exported for tests. */
 export function buildSettings(): SettingValue[] {
   return FIELDS.map(toValue);
@@ -72,4 +84,31 @@ export function fieldDef(key: string): FieldDef | undefined {
 
 export function registerSettingsRoutes(app: FastifyInstance) {
   app.get('/api/settings', async () => ({ settings: buildSettings() }));
+
+  app.put('/api/settings/:key', async (req, reply) => {
+    const key = (req.params as any).key as string;
+    const f = fieldDef(key);
+    if (!f) return reply.code(404).send({ error: 'unknown setting' });
+    if (!f.editable || f.applyTiming === 'read-only') return reply.code(400).send({ error: 'this setting is read-only' });
+    if (f.gate && !f.gate()) return reply.code(400).send({ error: `enable ${f.gatedBy} first` });
+
+    const value = (req.body as any)?.value as string | null;
+    if (value != null && typeof value !== 'string') return reply.code(400).send({ error: 'value must be a string or null' });
+
+    // validation for non-secret formats
+    const err = validateFieldValue(f, value);
+    if (err) return reply.code(400).send({ error: err });
+
+    try {
+      if (f.source === 'portal-config' && f.liveSet) {
+        f.liveSet(value);
+      } else if (f.source === 'env') {
+        if (value == null || value === '') del(ENV_PATH, f.key);
+        else upsert(ENV_PATH, f.key, value);
+      }
+    } catch (e: any) {
+      return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'update failed' });
+    }
+    return toValue(f);
+  });
 }
