@@ -839,6 +839,26 @@ async function addonInfo(id: string): Promise<AddonInfo | null> {
   };
 }
 
+// ── §30 chat-command exports ───────────────────────────────────────────────────────
+
+/** §30 chat commands — list all add-on infos (same shape as GET /api/addons). */
+export async function listAddonInfos(): Promise<AddonInfo[]> {
+  const infos = await Promise.all(ADDON_DEFS.map((d) => addonInfo(d.id)));
+  return infos.filter((x): x is AddonInfo => !!x);
+}
+
+/** §30 chat commands — enable/disable an add-on by id; returns the updated info or throws 404. */
+export async function setAddonEnabledById(id: string, enabled: boolean): Promise<AddonInfo> {
+  const def = ADDON_DEFS.find((d) => d.id === id);
+  if (!def) throw Object.assign(new Error(`unknown add-on: ${id}`), { statusCode: 404 });
+  const row = loadRow(id);
+  saveRow(id, enabled, row.config);
+  if (def.runtime === 'proxy') { if (enabled) void startProxy(); else stopProxy(); }
+  const info = await addonInfo(id);
+  if (!info) throw Object.assign(new Error('add-on not found'), { statusCode: 404 });
+  return info;
+}
+
 // ── dependency install (uv → pipx → pip, first available) ───────────────────────
 
 const INSTALL_TIMEOUT_MS = 10 * 60_000;

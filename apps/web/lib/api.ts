@@ -31,6 +31,12 @@ import type {
   ResearchSynthesizeRequest,
   ResearchSynthesizeResponse,
   ResearchStatusResponse,
+  ChatSession,
+  ChatMessage,
+  CreateChatSessionRequest,
+  ChatTurnResponse,
+  AddChatMessageRequest,
+  ChatCommandResult,
 } from '@fleet/shared';
 // F10 — config-as-code export/import types (defined locally to avoid cross-package imports)
 export interface ExportedSetup {
@@ -429,4 +435,14 @@ export const api = {
     j<FileEditResult>(`/api/projects/${pid}/files/edit?path=${encodeURIComponent(path)}`),
   commitFile: (pid: string, body: CommitFileBody) =>
     j<CommitFileResult>(`/api/projects/${pid}/files/commit`, { method: 'POST', body: JSON.stringify(body) }),
+
+  // ── §30 chat dashboard ──
+  chatSessions: () => j<ChatSession[]>('/api/chat/sessions'),
+  chatSession: (id: string) => j<{ session: ChatSession; messages: ChatMessage[] }>(`/api/chat/sessions/${id}`),
+  createChatSession: (body: CreateChatSessionRequest) => j<ChatSession>('/api/chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  renameChatSession: (id: string, title: string) => j<ChatSession>(`/api/chat/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+  deleteChatSession: (id: string) => j(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
+  chatTurn: (id: string, message: string) => j<ChatTurnResponse>(`/api/chat/sessions/${id}/turn`, { method: 'POST', body: JSON.stringify({ message }) }),
+  addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
+  chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
 };
