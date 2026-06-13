@@ -37,10 +37,13 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
-import type { Run, Project, KanbanTask, Campaign, ExecutionPhase } from '@fleet/shared';
+import type { Run, Project, KanbanTask, Campaign, ExecutionPhase, Loop, RiskLevel } from '@fleet/shared';
+import { RISK_LABELS, ROUTING } from '@fleet/shared';
 import { registry } from './registry.js';
 import { projectsRepo, onProjectDeleted } from './projects.js';
 import { kanbanRepo } from './kanban.js';
+import { loopsRepo } from './loops.js';
+import { launchReview } from './review.js';
 import {
   ensureCommitted,
   conflictProbe,
@@ -55,6 +58,7 @@ import {
   isMergeInProgress,
   conflictedFiles,
   hasConflictMarkers,
+  gitExec,
 } from './git.js';
 import { campaigns } from './campaigns.js';
 import { tryAdmit } from './fleet.js';
@@ -123,6 +127,62 @@ function validationCommandFor(card: KanbanTask, project: Project): string | null
   return cmd && cmd.trim() ? cmd : null;
 }
 
+/** Risk ordering for the `routableCeiling` comparison (low < medium < high). */
+const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
+
+/** The card's inferred risk from its `risk:*` label (default 'low' when unlabeled). */
+function cardRisk(card: KanbanTask): RiskLevel {
+  if (card.labels.includes(RISK_LABELS.high)) return 'high';
+  if (card.labels.includes(RISK_LABELS.medium)) return 'medium';
+  return 'low';
+}
+
+/**
+ * SPEC §9 worker-loop selection filter (BACKWARD COMPATIBLE). When an enabled kind='worker' Loop owns
+ * the project, only `agent:ready` cards within the loop's `routableCeiling` are routable — a human-
+ * dragged-but-untriaged card is left alone for the Manager to triage. With NO worker Loop the filter
+ * is OFF and every Ready card is routable, preserving today's bare `column='Ready'` behavior exactly.
+ */
+function routableReadyCards(projectId: string): KanbanTask[] {
+  const ready = kanbanRepo.readyTasks(projectId); // priority DESC, rank ASC
+  const workerLoops = loopsRepo.enabledByKind(projectId, 'worker');
+  if (workerLoops.length === 0) return ready; // no worker Loop → unchanged
+  const ceiling = workerLoops[0].routableCeiling;
+  return ready.filter(
+    (c) => c.labels.includes(ROUTING.ready) && RISK_RANK[cardRisk(c)] <= RISK_RANK[ceiling],
+  );
+}
+
+/** Parse a Loop.reviewPolicy ('always' | 'off' | 'threshold:<N>') into a decision. For 'threshold:N'
+ *  the review fires only when the diff changed MORE than N files; a malformed value → treat as 'always'. */
+function reviewDecision(policy: string): { review: boolean; thresholdFiles: number | null } {
+  if (policy === 'off') return { review: false, thresholdFiles: null };
+  const m = /^threshold:(\d+)$/.exec(policy);
+  if (m) return { review: true, thresholdFiles: Number(m[1]) };
+  return { review: true, thresholdFiles: null }; // 'always' (or unknown) → always review
+}
+
+/** Count files changed in the worktree branch's diff vs base (for the threshold:N review gate). */
+async function changedFilesVsBase(worktreeDir: string, baseBranch: string): Promise<number> {
+  const r = await gitExec(worktreeDir, ['-C', worktreeDir, 'diff', '--name-only', '-z', baseBranch]);
+  if (!r.ok) return 0;
+  return r.stdout.split('\0').filter((p) => p !== '').length;
+}
+
+/**
+ * SPEC §11 — is a card eligible for auto-low-risk merge? ALL must hold: the loop opted into
+ * 'auto-low-risk', the project is in LOCAL merge mode (the PR path NEVER auto-merges), the card is
+ * labeled risk:low, and the GLOBAL loopAutoMergeCeiling permits risk:low (null = off → never). The
+ * review pass is implied: this is only reached after reviewGate returned pass (or review was skipped).
+ */
+function autoLowRiskEligible(card: KanbanTask, project: Project, loop: Loop, ceiling: RiskLevel | null): boolean {
+  if (loop.mergePosture !== 'auto-low-risk') return false;
+  if (project.mergeMode === 'pr') return false; // PR path never auto-merges
+  if (cardRisk(card) !== 'low') return false;
+  if (ceiling == null) return false; // global ceiling off
+  return RISK_RANK[cardRisk(card)] <= RISK_RANK[ceiling];
+}
+
 /** Effective server-start command (card override, else project). null/empty → pure (non-server) checks. */
 function serverStartCommandFor(card: KanbanTask, project: Project): string | null {
   const cmd = card.serverStartCommand ?? project.serverStartCommand ?? null;
@@ -177,12 +237,16 @@ function buildPrompt(card: KanbanTask): string {
   return parts.join('\n');
 }
 
-/** Build a rework/fix prompt threading the failing validation output (SPEC §5.6). */
-function fixPrompt(card: KanbanTask): string {
+/** Build a rework/fix prompt threading the failing validation output (SPEC §5.6). When a reviewer
+ *  rejected the diff, `reviewFindings` carries the maker/checker verdict (SPEC §9) injected directly
+ *  — it does NOT depend on lastError (rework clears that before relaunch). */
+function fixPrompt(card: KanbanTask, reviewFindings?: string): string {
   const base = buildPrompt(card);
-  const evidence = card.lastError?.startsWith('[human request-changes]')
-    ? `\n\nA reviewer requested changes:\n${card.lastError}`
-    : '';
+  const evidence = reviewFindings
+    ? `\n\nA reviewer requested changes:\n${reviewFindings}`
+    : card.lastError?.startsWith('[human request-changes]')
+      ? `\n\nA reviewer requested changes:\n${card.lastError}`
+      : '';
   const vout = card.validationOutput
     ? `\n\nThe previous attempt FAILED validation. Fix the issues so the validation command passes. ` +
       `Validation output (tail):\n${card.validationOutput}`
@@ -340,8 +404,10 @@ class PmEngine {
       let inProgress = kanbanRepo.inProgressCount(projectId);
       if (inProgress >= project.wipLimit) return;
 
-      // readyTasks() is already ordered priority DESC, rank ASC.
-      for (const card of kanbanRepo.readyTasks(projectId)) {
+      // routableReadyCards() applies the worker-loop selection filter (agent:ready + risk<=ceiling)
+      // ONLY when an enabled worker Loop owns the project; otherwise it returns kanbanRepo.readyTasks
+      // unchanged (priority DESC, rank ASC) — today's exact bare column='Ready' behavior (SPEC §9).
+      for (const card of routableReadyCards(projectId)) {
         if (inProgress >= project.wipLimit) break;
         if (!this.depsSatisfied(card)) continue; // reblockReadyCards already moved it to Blocked
         const launched = await this.launchBuild(card, project);
@@ -614,8 +680,9 @@ class PmEngine {
     this.tickSoon(card.projectId);
   }
 
-  /** Relaunch a fix run for a card already in InProgress, threading validation output (SPEC §5.6). */
-  private launchFix(card: KanbanTask, project: Project): boolean | Promise<boolean> {
+  /** Relaunch a fix run for a card already in InProgress, threading validation output (SPEC §5.6)
+   *  and, when a reviewer rejected the diff (SPEC §9), the reviewer findings. */
+  private launchFix(card: KanbanTask, project: Project, reviewFindings?: string): boolean | Promise<boolean> {
     const wtName = card.worktreeName ?? worktreeNameFor(card);
     const onRun = (run: Run): boolean => {
       kanbanRepo.updateTask(card.id, {
@@ -643,7 +710,7 @@ class PmEngine {
     };
     try {
       const run = registry.launch({
-        prompt: fixPrompt(card),
+        prompt: fixPrompt(card, reviewFindings),
         cwd: project.rootDir,
         worktree: wtName,
         projectId: project.id,
@@ -762,10 +829,65 @@ class PmEngine {
     const validationOutput = vr.output;
 
     if (passed) {
+      // SPEC §9 maker/checker: a separate Reviewer judges the worker's diff before the gate. Engages
+      // ONLY for a project that has an enabled worker Loop with reviewPolicy != 'off' (and, for
+      // 'threshold:N', only when the diff changed MORE than N files). reject → rework with the findings
+      // threaded as the fix prompt; pass → gate. No worker Loop → straight to the gate (v1 behavior).
+      const workerLoops = loopsRepo.enabledByKind(project.id, 'worker');
+      const loop = workerLoops[0];
+      if (loop) {
+        const dec = reviewDecision(loop.reviewPolicy);
+        let doReview = dec.review;
+        if (doReview && dec.thresholdFiles !== null) {
+          doReview = (await changedFilesVsBase(wtDir, project.defaultBranch)) > dec.thresholdFiles;
+        }
+        if (doReview) {
+          if (await this.reviewGate(cardId, project)) return; // rejected → reworked, do not gate
+        }
+      }
       await this.gate(cardId, project);
     } else {
       await this.rework(cardId, project, validationOutput);
     }
+  }
+
+  /**
+   * SPEC §9 maker/checker step: mark the card 'reviewing', compute its diff vs base, launch a separate
+   * Reviewer (review.ts) on it, then route the verdict. Returns true when the review REJECTED and the
+   * card was reworked (so the caller must NOT proceed to the gate); false when the review PASSED (the
+   * caller proceeds to the gate). On a rejected verdict, the reviewer findings are threaded through
+   * `rework`'s new `reviewFindings` parameter (→ launchFix → fixPrompt) so they reach the fix prompt
+   * WITHOUT relying on `lastError` — which `rework` clears to null before re-reading the card. Reworks
+   * under the existing attempt_count cap + last_diff_hash no-progress guard.
+   */
+  private async reviewGate(cardId: string, project: Project): Promise<boolean> {
+    const card = kanbanRepo.getTask(cardId);
+    if (!card) return false;
+    if (PM_DONE_COLUMNS.has(card.column) || card.column === 'Backlog' || card.column === 'Ready') return false;
+    const wtName = card.worktreeName ?? worktreeNameFor(card);
+    const wtDir = worktreeDirFor(project.rootDir, wtName);
+
+    kanbanRepo.updateTask(cardId, { executionPhase: 'reviewing' });
+    const diff = await this.diffText(wtDir, project.defaultBranch);
+    const verdict = await launchReview(card, project, diff);
+
+    if (verdict.pass) return false; // proceed to gate
+
+    // REJECT → rework with the findings as the fix prompt. Re-read after the (long) review await.
+    const fresh = kanbanRepo.getTask(cardId);
+    if (!fresh) return true;
+    if (PM_DONE_COLUMNS.has(fresh.column) || fresh.column === 'Backlog' || fresh.column === 'Ready') return true;
+    // Thread the findings EXPLICITLY (not via lastError — rework clears that before re-reading the card)
+    // through the SAME no-progress + attempt_count machinery the validation-fail path uses. fixPrompt
+    // injects them into the fix prompt under its '[human request-changes]' branch.
+    await this.rework(cardId, project, fresh.validationOutput, verdict.findings);
+    return true;
+  }
+
+  /** The raw diff text of the worktree branch vs base (threaded into the Reviewer prompt). */
+  private async diffText(worktreeDir: string, baseBranch: string): Promise<string> {
+    const r = await gitExec(worktreeDir, ['-C', worktreeDir, 'diff', baseBranch], { maxBuffer: VALIDATION_MAX_BUFFER });
+    return r.ok ? r.stdout : '';
   }
 
   // ── GATE (SPEC §5.5 / §6) ──────────────────────────────────────────────────────
@@ -777,12 +899,22 @@ class PmEngine {
     // or re-queued it meanwhile (H2 ordering) — do not resurrect it.
     if (PM_DONE_COLUMNS.has(card.column) || card.column === 'Backlog' || card.column === 'Ready') return;
 
-    if (!project.autoMerge) {
+    // SPEC §11 — a worker Loop's mergePosture can authorize a bounded auto-merge even when the
+    // project's own autoMerge flag is off: 'auto-low-risk' merges only for LOCAL mode + risk:low +
+    // (review already passed) + the global loopAutoMergeCeiling permitting risk:low. 'human-gate'
+    // (default) preserves today's behavior exactly. The PR path never auto-merges (guarded in the
+    // eligibility helper). When neither path authorizes a merge, park in Review for a human.
+    const loop = loopsRepo.enabledByKind(project.id, 'worker')[0];
+    const ceiling = (registry.getConfig() as any).loopAutoMergeCeiling as RiskLevel | null;
+    const postureAuto = !!loop && autoLowRiskEligible(card, project, loop, ceiling);
+
+    if (!project.autoMerge && !postureAuto) {
       // STOP for a human Approve — park in Review (phase idle so the badge isn't "merging" yet).
       kanbanRepo.updateTask(cardId, { column: 'Review', executionPhase: 'idle', lastError: null });
       return;
     }
-    // auto_merge: probe + merge under the per-project mutex (re-validate happens inside doMerge).
+    // auto_merge OR posture-authorized auto-low-risk: probe + merge under the per-project mutex
+    // (re-validate happens inside doMerge).
     await this.doMerge(cardId, project, /*humanApproved*/ false);
   }
 
@@ -1345,7 +1477,7 @@ class PmEngine {
    * no-progress guard: if the worktree's diff-vs-base hash equals the previously stored hash, the
    * last attempt produced an IDENTICAL tree → stop (avoids burning budget on a stuck agent).
    */
-  private async rework(cardId: string, project: Project, validationOutput: string | null): Promise<void> {
+  private async rework(cardId: string, project: Project, validationOutput: string | null, reviewFindings?: string): Promise<void> {
     const card = kanbanRepo.getTask(cardId);
     if (!card) return;
     // Re-check after the (long) validate await: a human/cancel may have moved the card terminal
@@ -1388,7 +1520,7 @@ class PmEngine {
       lastError: null,
     });
     const fresh = kanbanRepo.getTask(cardId);
-    if (fresh) await this.launchFix(fresh, project);
+    if (fresh) await this.launchFix(fresh, project, reviewFindings);
   }
 
   /** SHA-ish hash of the worktree branch's diff vs base (stable across identical trees). */
