@@ -23,9 +23,10 @@ describe('validateConfig — loopAutoMergeCeiling', () => {
     expect(validateConfig({ loopAutoMergeCeiling: null }).loopAutoMergeCeiling).toBeNull();
   });
 
-  it('survives a setConfig→getConfig round-trip via the registry', () => {
-    // registry.setConfig routes through validateConfig and getConfig returns the stored
-    // result, so a valid ceiling round-trips and the key is not dropped.
+  it('round-trips a full config through validateConfig without dropping the key', () => {
+    // validateConfig returns a fixed literal that drops unnamed keys, so this proves the
+    // ceiling is threaded into that literal — a valid value survives and unrelated guardrail
+    // keys are preserved. (registry.setConfig/getConfig route through this same function.)
     const merged = validateConfig({ ...DEFAULT_CONFIG, loopAutoMergeCeiling: 'low' });
     expect(merged.loopAutoMergeCeiling).toBe('low');
     // unrelated guardrail keys are still present (the literal was threaded, not replaced)

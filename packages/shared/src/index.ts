@@ -350,6 +350,16 @@ export interface ModelInfo {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Loop engineering risk/type unions (defined here so PortalConfig below can
+// reference RiskLevel; the rest of the Loop types live in their own section later).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Agent-inferred (and rubric-floored) risk of a backlog item. */
+export type RiskLevel = 'low' | 'medium' | 'high';
+/** The kind of work a backlog item represents. */
+export type WorkType = 'bug' | 'feature' | 'docs' | 'test' | 'refactor' | 'chore';
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Config / guardrails (PRD §7.7, §9.3 config)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -665,24 +675,20 @@ export const KANBAN_COLUMNS: KanbanColumn[] = ['Backlog', 'Ready', 'InProgress',
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Loop engineering (spec docs/superpowers/specs/2026-06-13-loop-engineering-design.md)
+// (RiskLevel / WorkType are defined above, before PortalConfig which references RiskLevel.)
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** Agent-inferred (and rubric-floored) risk of a backlog item. */
-export type RiskLevel = 'low' | 'medium' | 'high';
-/** The kind of work a backlog item represents. */
-export type WorkType = 'bug' | 'feature' | 'docs' | 'test' | 'refactor' | 'chore';
 
 /** `risk:<level>` board/issue label for each RiskLevel. */
 export const RISK_LABELS = { low: 'risk:low', medium: 'risk:medium', high: 'risk:high' } as const;
 /** `type:<work>` board/issue label for each WorkType. */
-export const TYPE_LABELS: Record<WorkType, string> = {
+export const TYPE_LABELS = {
   bug: 'type:bug',
   feature: 'type:feature',
   docs: 'type:docs',
   test: 'type:test',
   refactor: 'type:refactor',
   chore: 'type:chore',
-};
+} as const satisfies Record<WorkType, string>;
 /** Routing vocabulary distinct from a tag: agent-routable vs human-escalated. */
 export const ROUTING = { ready: 'agent:ready', needsHuman: 'needs:human' } as const;
 

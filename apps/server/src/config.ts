@@ -113,14 +113,15 @@ export function validateConfig(input: unknown): PortalConfig {
     if (v < opts.min) throw bad(`${key} must be >= ${opts.min}`);
     return v;
   };
-  // Loop — nullable RiskLevel ceiling: absent → default; an unrecognized value falls
-  // back to the default rather than throwing (a stale/garbage UI value must not 400 the
-  // whole config save), null → null. Accepts only 'low' | 'medium' | 'high'.
+  // Loop — nullable RiskLevel ceiling. Branches: absent → default; a valid level
+  // ('low' | 'medium' | 'high') → that level; null or any unrecognized value → null
+  // (a stale/garbage UI value must not 400 the whole config save, so it falls back
+  // to the "never auto-merge" posture rather than throwing).
   const nullableRisk = (key: 'loopAutoMergeCeiling'): RiskLevel | null => {
     const v = i[key];
     if (v === undefined) return DEFAULT_CONFIG[key];
     if (v === 'low' || v === 'medium' || v === 'high') return v;
-    return DEFAULT_CONFIG[key]; // null/invalid → fall back
+    return null; // null/invalid → never auto-merge
   };
   return {
     maxConcurrentRuns: num('maxConcurrentRuns', { min: 1, max: 100, int: true }),
