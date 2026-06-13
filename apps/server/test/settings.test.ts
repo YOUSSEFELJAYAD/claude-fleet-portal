@@ -55,3 +55,38 @@ describe('settings registry', () => {
     await app.close();
   });
 });
+
+describe('PUT /api/settings/:key', () => {
+  async function app() {
+    const { registerSettingsRoutes } = await import('../src/settings.js');
+    const a = Fastify(); registerSettingsRoutes(a); await a.ready(); return a;
+  }
+  it('rejects a read-only/derived field', async () => {
+    const a = await app();
+    const res = await a.inject({ method: 'PUT', url: '/api/settings/proxyUrl', payload: { value: 'x' } });
+    expect(res.statusCode).toBe(400);
+    await a.close();
+  });
+  it('rejects an unknown key', async () => {
+    const a = await app();
+    const res = await a.inject({ method: 'PUT', url: '/api/settings/NOPE', payload: { value: 'x' } });
+    expect(res.statusCode).toBe(404);
+    await a.close();
+  });
+  it('rejects when the gate is off', async () => {
+    const { isEngineEnabled } = await import('../src/addons.js');
+    (isEngineEnabled as any).mockReturnValueOnce(false);
+    const a = await app();
+    const res = await a.inject({ method: 'PUT', url: '/api/settings/CODEX_API_KEY', payload: { value: 'k' } });
+    expect(res.statusCode).toBe(400);
+    await a.close();
+  });
+  it('delegates a live field to registry.setConfig', async () => {
+    const { registry } = await import('../src/registry.js');
+    const a = await app();
+    const res = await a.inject({ method: 'PUT', url: '/api/settings/maxConcurrentRuns', payload: { value: '4' } });
+    expect(res.statusCode).toBe(200);
+    expect((registry.setConfig as any)).toHaveBeenCalled();
+    await a.close();
+  });
+});
