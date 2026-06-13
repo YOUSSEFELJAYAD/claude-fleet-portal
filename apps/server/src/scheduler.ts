@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS schedules (
 for (const [col, def] of [
   ['recurrence', 'TEXT'],
   ['template', 'TEXT'],
+  ['loop_id', 'TEXT'], // Slice 04: a schedule may target a Loop instead of a raw launch_request
 ] as [string, string][]) {
   try {
     db.exec(`ALTER TABLE schedules ADD COLUMN ${col} ${def}`);
@@ -59,6 +60,8 @@ interface ScheduleRow {
   recurrence: string | null;
   /** F2: template NAME whose profile fields apply at fire time */
   template: string | null;
+  /** Slice 04: FK → loops.id; when set the tick fires loops.fire(loop_id) instead of registry.launch */
+  loop_id: string | null;
   launch_request: string;
   enabled: number;
   last_run_id: string | null;
@@ -76,6 +79,8 @@ interface ScheduleView {
   recurrence: string | null;
   /** F2 template name or null */
   template: string | null;
+  /** Slice 04: target Loop id or null for a raw launch_request schedule */
+  loopId: string | null;
   launchRequest: LaunchRequest;
   enabled: boolean;
   lastRunId: string | null;
@@ -104,6 +109,7 @@ function rowToView(row: ScheduleRow): ScheduleView {
     dailyAt: row.daily_at,
     recurrence: row.recurrence ?? null,
     template: row.template ?? null,
+    loopId: row.loop_id ?? null,
     launchRequest,
     enabled: !!row.enabled,
     lastRunId: row.last_run_id,
@@ -115,8 +121,8 @@ function rowToView(row: ScheduleRow): ScheduleView {
 
 // ── statements ───────────────────────────────────────────────────────────────
 const insertStmt = db.prepare(`
-INSERT INTO schedules (id, name, interval_ms, daily_at, recurrence, template, launch_request, enabled, last_run_id, last_fired_at, next_fire_at, created_at)
-VALUES (@id, @name, @interval_ms, @daily_at, @recurrence, @template, @launch_request, @enabled, @last_run_id, @last_fired_at, @next_fire_at, @created_at)
+INSERT INTO schedules (id, name, interval_ms, daily_at, recurrence, template, loop_id, launch_request, enabled, last_run_id, last_fired_at, next_fire_at, created_at)
+VALUES (@id, @name, @interval_ms, @daily_at, @recurrence, @template, @loop_id, @launch_request, @enabled, @last_run_id, @last_fired_at, @next_fire_at, @created_at)
 `);
 const listStmt = db.prepare('SELECT * FROM schedules ORDER BY created_at DESC');
 const getStmt = db.prepare('SELECT * FROM schedules WHERE id = ?');
@@ -126,7 +132,7 @@ const dueStmt = db.prepare(
 );
 const updateStmt = db.prepare(`
 UPDATE schedules SET name=@name, interval_ms=@interval_ms, daily_at=@daily_at, recurrence=@recurrence, template=@template,
-  launch_request=@launch_request, enabled=@enabled, next_fire_at=@next_fire_at WHERE id=@id
+  loop_id=@loop_id, launch_request=@launch_request, enabled=@enabled, next_fire_at=@next_fire_at WHERE id=@id
 `);
 const updateFiredStmt = db.prepare(
   'UPDATE schedules SET last_run_id=@last_run_id, last_fired_at=@last_fired_at, next_fire_at=@next_fire_at WHERE id=@id',
@@ -345,21 +351,35 @@ async function tickOnce(): Promise<void> {
     let launched = false;
     let capBlocked = false;
     try {
-      let parsed: LaunchRequest = JSON.parse(row.launch_request);
-      // F2: apply template profile first (template wins for unset fields), then fill defaults.
-      if (row.template) {
-        parsed = applyTemplateProfile(parsed, row.template);
+      // Slice 04: a schedule targeting a Loop drives loops.fire(loop_id), not registry.launch.
+      if (row.loop_id) {
+        // Lazy import keeps scheduler.ts free of a static edge to loops.ts (→ pm/server),
+        // avoiding a module cycle.
+        const { loops } = await import('./loops.js');
+        const hasWork = await loops.hasWork(row.loop_id);
+        if (hasWork) {
+          await loops.fire(row.loop_id);
+        }
+        // Whether or not there was work, treat this as a firing: advance the cadence so
+        // an empty-work loop simply retries next cadence (no spend, no penalty, no hot-loop).
+        launched = true;
+      } else {
+        let parsed: LaunchRequest = JSON.parse(row.launch_request);
+        // F2: apply template profile first (template wins for unset fields), then fill defaults.
+        if (row.template) {
+          parsed = applyTemplateProfile(parsed, row.template);
+        }
+        // Apply defaults for any fields still unset after template merge.
+        parsed = {
+          ...parsed,
+          model: parsed.model || 'claude-opus-4-8',
+          effort: parsed.effort || 'high',
+          permissionMode: parsed.permissionMode || 'default',
+        };
+        const run = await registry.launch(parsed);
+        runId = run?.id ?? null;
+        launched = true;
       }
-      // Apply defaults for any fields still unset after template merge.
-      parsed = {
-        ...parsed,
-        model: parsed.model || 'claude-opus-4-8',
-        effort: parsed.effort || 'high',
-        permissionMode: parsed.permissionMode || 'default',
-      };
-      const run = await registry.launch(parsed);
-      runId = run?.id ?? null;
-      launched = true;
     } catch (e: any) {
       // F2 guardrail: 429 (concurrency cap) or 409 'daily-cap' must NOT advance next_fire_at.
       // We track capBlocked and skip the updateFiredStmt call in that case.
@@ -445,6 +465,16 @@ export function registerScheduleRoutes(app: FastifyInstance) {
       templateName = body.template;
     }
 
+    // Slice 04: optional loop_id — a schedule may drive a Loop instead of a raw launch.
+    let loopId: string | null = null;
+    if (body.loop_id != null && body.loop_id !== '') {
+      if (typeof body.loop_id !== 'string') {
+        reply.code(400);
+        return { error: 'loop_id must be a string (loop id)' };
+      }
+      loopId = body.loop_id;
+    }
+
     const enabled = body.enabled === undefined ? true : !!body.enabled;
     const now = Date.now();
     const next = enabled ? computeNextFire({ interval_ms: trig.intervalMs, daily_at: trig.dailyAt, recurrence: trig.recurrence }, now) : null;
@@ -456,6 +486,7 @@ export function registerScheduleRoutes(app: FastifyInstance) {
       daily_at: trig.dailyAt,
       recurrence: trig.recurrence,
       template: templateName,
+      loop_id: loopId,
       launch_request: JSON.stringify(lr.value),
       enabled: enabled ? 1 : 0,
       last_run_id: null,
@@ -557,6 +588,7 @@ export function registerScheduleRoutes(app: FastifyInstance) {
       daily_at: dailyAt,
       recurrence,
       template: templateName,
+      loop_id: existing.loop_id ?? null,
       launch_request: launchRequestStr,
       enabled: enabled ? 1 : 0,
       next_fire_at: nextFire,
