@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { makeLoopStubsWritable } from './setup-loop-stubs.js';
 
 // Isolate the DB BEFORE any src module is imported (config.js reads FLEET_DATA_DIR at load).
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'fleet-test-loops-'));
@@ -26,6 +27,26 @@ const baseContract = () => ({
   evaluation: 'no risk:high marked agent:ready',
 });
 
+// Re-establish the placeholder modules' default exports so a stub set inside one `it` never bleeds
+// into the next (the namespaces are cached singletons; we reset them after every test).
+async function resetLoopStubs(): Promise<void> {
+  const controlplane = await import('../src/controlplane.js');
+  const manager = await import('../src/manager.js');
+  const loopEval = await import('../src/loopEval.js');
+  (controlplane as any).controlPlaneFor = () => ({
+    cp: {
+      listBacklog: async () => [],
+      listReady: async () => [],
+      classify: async () => {},
+      postAssessment: async () => {},
+      attachQuestions: async () => {},
+    },
+    intended: [],
+  });
+  (manager as any).runManagerLoop = async () => [];
+  (loopEval as any).gradeLoopRun = async () => ({ clean: true, score: 100, notes: '' });
+}
+
 let PID = '';
 beforeAll(async () => {
   ({ projectsRepo } = await import('../src/projects.js'));
@@ -35,8 +56,16 @@ beforeAll(async () => {
   const { buildServer } = await import('../src/server.js');
   app = buildServer();
   await app.ready();
+  // Make the placeholder exports writable for THIS suite only (not a global setupFile).
+  await makeLoopStubsWritable();
+  await resetLoopStubs();
   // projectsRepo.createProject does not validate rootDir on disk (see kanban.test.ts).
   PID = projectsRepo.createProject({ name: 'loops-' + randomUUID().slice(0, 8), rootDir: '/tmp' }).id;
+});
+
+afterEach(async () => {
+  // Restore the placeholder stubs to their known defaults so cross-`it` state never leaks.
+  await resetLoopStubs();
 });
 
 afterAll(async () => {
@@ -237,6 +266,25 @@ describe('loops singleton — fire(manager) drives runManagerLoop → grade → 
     expect(loopsRepo.get(loop.id)!.consecutiveGoodRuns).toBe(0);
   });
 
+  it('a NON-cap error in fire() is swallowed into last_error and resets the dry-run counter', async () => {
+    const loop = loopsRepo.create({
+      name: 'fire-err', projectId: PID, kind: 'manager', contract: baseContract(), escalationThreshold: 3,
+    });
+    // Seed a non-zero counter so we can prove the error path resets it to 0.
+    applyEvalResult(loopsRepo.get(loop.id)!, { clean: true, score: 1, notes: 'ok' });
+    expect(loopsRepo.get(loop.id)!.consecutiveGoodRuns).toBe(1);
+
+    const manager = await import('../src/manager.js');
+    // A plain error (no statusCode 429 / code 'daily-cap') must NOT propagate.
+    (manager as any).runManagerLoop = async () => { throw new Error('manager boom'); };
+
+    await expect(loops.fire(loop.id)).resolves.toBeUndefined(); // (a) does not throw
+    const fresh = loopsRepo.get(loop.id)!;
+    expect(fresh.lastError).toBe('manager boom'); // (b) recordRun captured the message
+    expect(fresh.consecutiveGoodRuns).toBe(0); // (c) the dry-run counter was reset
+    expect(fresh.mode).toBe('dry-run'); // never auto-escalates on an error
+  });
+
   it('hasWork is false for missing/disabled and reflects the control-plane list length', async () => {
     // Missing loop → false.
     expect(await loops.hasWork('no-such-loop')).toBe(false);
@@ -310,7 +358,9 @@ describe('loop routes (spec §16)', () => {
     expect(JSON.parse(promote.body).mode).toBe('apply');
 
     const demote = await app.inject({ method: 'POST', url: `/api/loops/${id}/demote`, headers: H() });
-    expect(JSON.parse(demote.body).mode).toBe('dry-run');
+    const demoteBody = JSON.parse(demote.body);
+    expect(demoteBody.mode).toBe('dry-run');
+    expect(demoteBody.consecutiveGoodRuns).toBe(0); // demoting restarts the dry-run ramp
 
     const fired = await app.inject({ method: 'POST', url: `/api/loops/${id}/fire`, headers: H() });
     expect(fired.statusCode).toBe(200);
