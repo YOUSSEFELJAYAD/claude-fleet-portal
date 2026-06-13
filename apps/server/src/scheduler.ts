@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS schedules (
 for (const [col, def] of [
   ['recurrence', 'TEXT'],
   ['template', 'TEXT'],
-  ['loop_id', 'TEXT'], // Slice 04: a schedule may target a Loop instead of a raw launch_request
+  // Slice 04: a schedule may target a Loop instead of a raw launch_request. NOTE: a loop-targeted
+  // schedule still stores an (unused) placeholder launch_request — the loop fire path ignores it
+  // (known v1 API wart; launch_request stays NOT NULL for backward-compat with raw-launch rows).
+  ['loop_id', 'TEXT'],
 ] as [string, string][]) {
   try {
     db.exec(`ALTER TABLE schedules ADD COLUMN ${col} ${def}`);
@@ -588,6 +591,8 @@ export function registerScheduleRoutes(app: FastifyInstance) {
       daily_at: dailyAt,
       recurrence,
       template: templateName,
+      // Slice 04: loop_id is intentionally immutable via PUT — it is set only at POST (Task 04.1).
+      // We carry the existing value through unchanged so the widened updateStmt has every bind.
       loop_id: existing.loop_id ?? null,
       launch_request: launchRequestStr,
       enabled: enabled ? 1 : 0,
