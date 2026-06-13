@@ -42,16 +42,21 @@ function ruleMatches(item: WorkItem, glob: string): boolean {
   return item.labels.some((l) => re.test(l));
 }
 
+/** Numeric rank for risk comparison: higher number = higher risk. */
+const RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
+
 /**
  * PURE deterministic rubric hard-floor (§12). If the item touches a configured sensitive glob,
- * FORCE risk=rule.forceRisk and agentReady=false, overriding the agent's verdict, and record the
- * override in `reason`. First matching rule wins. Never raises agentReady. Never mutates inputs.
+ * FORCE risk to at least rule.forceRisk (hard-floor: only raises, never lowers) and set
+ * agentReady=false, overriding the agent's verdict, and record the override in `reason`. First
+ * matching rule wins. Never raises agentReady. Never mutates inputs.
  */
 export function applyRubricFloors(item: WorkItem, verdict: TriageVerdict, rubric: RiskRule[]): TriageVerdict {
   const next: TriageVerdict = { ...verdict };
   for (const rule of rubric) {
     if (ruleMatches(item, rule.glob)) {
-      next.risk = rule.forceRisk;
+      // Hard-floor: the rule can only RAISE risk, never lower it.
+      next.risk = RANK[rule.forceRisk] >= RANK[next.risk] ? rule.forceRisk : next.risk;
       next.agentReady = false;
       next.reason = `${verdict.reason} [rubric override: glob "${rule.glob}" → forced risk:${rule.forceRisk}, not agent-ready]`;
       return next;

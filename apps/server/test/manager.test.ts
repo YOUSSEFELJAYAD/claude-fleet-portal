@@ -84,6 +84,17 @@ describe('applyRubricFloors (PURE)', () => {
     const item = base({ title: 'Update SECRETS handling' });
     const out = applyRubricFloors(item, lowReady, [{ glob: '*secrets*', forceRisk: 'high' }]);
     expect(out.risk).toBe('high');
+    expect(out.agentReady).toBe(false);
+  });
+
+  it('hard-floor never LOWERS risk: forceRisk:medium on a high verdict stays high, agentReady false', () => {
+    const highVerdict = { risk: 'high' as const, type: 'chore' as const, agentReady: true, reason: 'agent over-confident' };
+    const item = base({ title: 'update ci config' });
+    const out = applyRubricFloors(item, highVerdict, [{ glob: '*ci*', forceRisk: 'medium' as const }]);
+    // The rule forceRisk is 'medium' but current risk is 'high' — must stay 'high'
+    expect(out.risk).toBe('high');
+    expect(out.agentReady).toBe(false);
+    expect(out.reason).toMatch(/rubric override/);
   });
 
   it('returns the verdict UNCHANGED (fresh copy) when no rule matches', () => {
@@ -271,6 +282,26 @@ describe('runManagerLoop', () => {
     await runManagerLoop(loop(), project, cp as any);
     expect(cp.classifyCalls.map((c) => c.id).sort()).toEqual(['a', 'b']);
     expect(cp.assessmentCalls).toHaveLength(2);
+  });
+
+  it('safety path: when registry.launch throws, verdict defaults to risk high + agentReady false', async () => {
+    // Temporarily replace launch with a throwing stub.
+    const savedLaunch = registry.launch;
+    registry.launch = async () => { throw new Error('engine unavailable'); };
+    try {
+      const cp = new FakeCP([{ id: 'fail-item', title: 'Some task', body: 'body', labels: [] }]);
+      await runManagerLoop(loop(), project, cp as any);
+
+      // Fallback verdict must be risk 'high' + agentReady false.
+      expect(cp.classifyCalls).toHaveLength(1);
+      expect(cp.classifyCalls[0].v.risk).toBe('high');
+      expect(cp.classifyCalls[0].v.agentReady).toBe(false);
+      // Must still attach questions and post assessment (the safety path does both).
+      expect(cp.questionCalls).toHaveLength(1);
+      expect(cp.assessmentCalls).toHaveLength(1);
+    } finally {
+      registry.launch = savedLaunch;
+    }
   });
 
   it('honors a higher routableCeiling (medium): medium stays ready, high never does', async () => {
