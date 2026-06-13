@@ -42,6 +42,7 @@ import { registerFileeditRoutes } from './fileedit.js'; // v2 #1 — file CRUD +
 import { registerPlanboardRoutes, planboard } from './planboard.js'; // v2 #3 — objective → Ready cards
 import { registerFleetRoutes, assertCapAboveReserve } from './fleet.js'; // v2 #7 — cross-project fleet scheduler (admission)
 import { registerTriggersRoutes, startTriggerPoller } from './triggers.js'; // F1 — GitHub triggers
+import { registerLoopRoutes, loops } from './loops.js'; // Loops (loop-engineering)
 import { pm } from './pm.js';
 
 /** H21 — a cwd query must be an absolute path with no traversal/null byte (or absent). */
@@ -232,9 +233,11 @@ export function buildServer() {
   registerPlanboardRoutes(app); // v2 #3 — plan-board (objective → Ready cards)
   registerFleetRoutes(app); // v2 #7 — fleet config + status (admission gate is in pm.launchBuild)
   registerTriggersRoutes(app); // F1 — GitHub triggers
+  registerLoopRoutes(app); // Loops — CRUD + fire/promote/demote (spec §16)
   startTriggerPoller(); // F1 — 120s poll interval (unref'd)
   planboard.init(); // subscribe onRunTerminal — partitioned (§3.7): acts only on its own planning runs
   pm.init(); // subscribe onRunTerminal + safety tick
+  loops.init(); // Loops — boot reconcile (clears mid-fire last_error; mode/counter persist in SQLite)
   void pm.reconcile().catch(() => {}); // boot guardrail: reset cards whose run died (async: aborts mid-resolve worktrees)
   // Kanban board live stream (sse() is module-private here; subscribeBoard never returns null).
   app.get('/api/projects/:pid/board/stream', (req, reply) => {
