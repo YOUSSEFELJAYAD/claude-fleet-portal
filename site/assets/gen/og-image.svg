@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-hidden="true">
+<defs>
+<pattern id="og-grid-minor" width="40" height="40" patternUnits="userSpaceOnUse">
+  <path d="M 40 0 H 0 V 40" fill="none" stroke="#ffffff" stroke-opacity="0.026" stroke-width="1"/>
+</pattern>
+<pattern id="og-grid-major" width="160" height="160" patternUnits="userSpaceOnUse">
+  <path d="M 160 0 H 0 V 160" fill="none" stroke="#ffffff" stroke-opacity="0.0377" stroke-width="1"/>
+</pattern>
+<pattern id="og-scan" width="1" height="4" patternUnits="userSpaceOnUse">
+  <path d="M 0 .5 H 1" stroke="#ffffff" stroke-opacity="0.012" stroke-width="1"/>
+</pattern>
+<radialGradient id="og-amber-glow" cx="88%" cy="-8%" r="82%">
+  <stop offset="0%" stop-color="#ffb000" stop-opacity="0.105"/>
+  <stop offset="45%" stop-color="#ffb000" stop-opacity="0.045"/>
+  <stop offset="100%" stop-color="#ffb000" stop-opacity="0"/>
+</radialGradient>
+<radialGradient id="og-core-glow" cx="50%" cy="39%" r="32%">
+  <stop offset="0%" stop-color="#ffb000" stop-opacity="0.15"/>
+  <stop offset="52%" stop-color="#ffb000" stop-opacity="0.045"/>
+  <stop offset="100%" stop-color="#ffb000" stop-opacity="0"/>
+</radialGradient>
+<radialGradient id="og-vignette" cx="50%" cy="46%" r="74%">
+  <stop offset="55%" stop-color="#0a0b0e" stop-opacity="0"/>
+  <stop offset="100%" stop-color="#0a0b0e" stop-opacity="0.55"/>
+</radialGradient>
+</defs>
+<rect width="1200" height="630" fill="#0a0b0e"/>
+<rect width="1200" height="630" fill="url(#og-amber-glow)"/>
+<rect width="1200" height="630" fill="url(#og-grid-minor)"/>
+<rect width="1200" height="630" fill="url(#og-grid-major)"/>
+<rect width="1200" height="630" fill="url(#og-scan)"/>
+<rect width="1200" height="630" fill="url(#og-core-glow)"/>
+<path d="M 76 94 H 244 M 956 94 H 1124 M 76 536 H 244 M 956 536 H 1124" stroke="#ffb000" stroke-opacity="0.42" stroke-width="1.25"/>
+<path d="M 94 76 V 164 M 1106 76 V 164 M 94 466 V 554 M 1106 466 V 554" stroke="#ffb000" stroke-opacity="0.28" stroke-width="1"/>
+<g>
+  <path d="M 550.67 225.04 C 506.27 256.09 445.37 166.66 369.79 177.3" fill="none" stroke="#ffb000" stroke-opacity="0.42" stroke-width="1.35" stroke-linecap="round"/>
+  <circle cx="369.79" cy="177.3" r="4.5" fill="#ffb000" fill-opacity="0.64"/>
+  <circle cx="369.79" cy="177.3" r="8.5" fill="none" stroke="#ffb000" stroke-opacity="0.16" stroke-width="1"/>
+  <path d="M 576.33 198.47 C 590.89 183.04 509.29 144.21 499.17 106.43" fill="none" stroke="#e8704a" stroke-opacity="0.55" stroke-width="1.1" stroke-linecap="round"/>
+  <circle cx="499.17" cy="106.43" r="5.2" fill="#e8704a" fill-opacity="0.76"/>
+  <circle cx="499.17" cy="106.43" r="10" fill="none" stroke="#e8704a" stroke-opacity="0.16" stroke-width="1"/>
+  <path d="M 614.88 195.09 C 591.59 186.34 664.03 139.79 660.09 104.5" fill="none" stroke="#ffb000" stroke-opacity="0.42" stroke-width="1.35" stroke-linecap="round"/>
+  <circle cx="660.09" cy="104.5" r="4.5" fill="#ffb000" fill-opacity="0.64"/>
+  <circle cx="660.09" cy="104.5" r="8.5" fill="none" stroke="#ffb000" stroke-opacity="0.16" stroke-width="1"/>
+  <path d="M 645.79 218.38 C 690.58 244.67 737.69 154.05 810.32 157.63" fill="none" stroke="#ffb000" stroke-opacity="0.42" stroke-width="1.1" stroke-linecap="round"/>
+  <circle cx="810.32" cy="157.63" r="4.5" fill="#ffb000" fill-opacity="0.64"/>
+  <circle cx="810.32" cy="157.63" r="8.5" fill="none" stroke="#ffb000" stroke-opacity="0.16" stroke-width="1"/>
+  <path d="M 647.68 272.35 C 690.07 248.09 748.11 330.72 820.74 326.81" fill="none" stroke="#ffb000" stroke-opacity="0.42" stroke-width="1.35" stroke-linecap="round"/>
+  <circle cx="820.74" cy="326.81" r="4.5" fill="#ffb000" fill-opacity="0.64"/>
+  <circle cx="820.74" cy="326.81" r="8.5" fill="none" stroke="#ffb000" stroke-opacity="0.16" stroke-width="1"/>
+  <path d="M 618.47 297.74 C 599.04 307.79 672.63 350.73 674.56 386.3" fill="none" stroke="#e8704a" stroke-opacity="0.55" stroke-width="1.1" stroke-linecap="round"/>
+  <circle cx="674.56" cy="386.3" r="5.2" fill="#e8704a" fill-opacity="0.76"/>
+  <circle cx="674.56" cy="386.3" r="10" fill="none" stroke="#e8704a" stroke-opacity="0.16" stroke-width="1"/>
+  <path d="M 578.04 296.33 C 595.32 312.19 512.33 352.66 505.64 391.12" fill="none" stroke="#ffb000" stroke-opacity="0.42" stroke-width="1.35" stroke-linecap="round"/>
+  <circle cx="505.64" cy="391.12" r="4.5" fill="#ffb000" fill-opacity="0.64"/>
+  <circle cx="505.64" cy="391.12" r="8.5" fill="none" stroke="#ffb000" stroke-opacity="0.16" stroke-width="1"/>
+  <path d="M 551.47 270.67 C 505.46 238.67 449.55 332.54 373.5 322.12" fill="none" stroke="#ffb000" stroke-opacity="0.42" stroke-width="1.1" stroke-linecap="round"/>
+  <circle cx="373.5" cy="322.12" r="4.5" fill="#ffb000" fill-opacity="0.64"/>
+  <circle cx="373.5" cy="322.12" r="8.5" fill="none" stroke="#ffb000" stroke-opacity="0.16" stroke-width="1"/>
+  <circle cx="600" cy="247" r="132" fill="#ffb000" fill-opacity="0.025"/>
+  <circle cx="600" cy="247" r="36" fill="none" stroke="#ffb000" stroke-opacity="0.78" stroke-width="2"/>
+  <circle cx="600" cy="247" r="60" fill="none" stroke="#ffb000" stroke-opacity="0.63" stroke-width="1.25"/>
+  <circle cx="600" cy="247" r="86" fill="none" stroke="#ffb000" stroke-opacity="0.48" stroke-width="1.25"/>
+  <circle cx="600" cy="247" r="116" fill="none" stroke="#ffb000" stroke-opacity="0.33" stroke-width="1.25"/>
+  <path d="M 484 247 H 518 M 682 247 H 716 M 600 131 V 165 M 600 329 V 363" stroke="#ffb000" stroke-opacity="0.48" stroke-width="1.1"/>
+  <circle cx="600" cy="247" r="18" fill="#101217" stroke="#ffb000" stroke-opacity="0.88" stroke-width="1.5"/>
+  <circle cx="600" cy="247" r="5" fill="#39d4cf" fill-opacity="0.82"/>
+</g>
+<text x="600" y="463" text-anchor="middle" fill="#e9e7df" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="64" font-weight="800" letter-spacing="4">CLAUDE FLEET PORTAL</text>
+<text x="600" y="514" text-anchor="middle" fill="#9aa1ab" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="26" font-weight="500">mission control for Claude &#183; Codex &#183; OpenCode agents</text>
+<g>
+  <rect x="501" y="542" width="198" height="38" rx="19" fill="#101217" stroke="#ffb000" stroke-opacity="0.32"/>
+  <text x="600" y="567" text-anchor="middle" fill="#54e08a" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="16" font-weight="600" letter-spacing="1.3">MIT &#183; open source</text>
+</g>
+<rect width="1200" height="630" fill="url(#og-vignette)"/>
+</svg>
