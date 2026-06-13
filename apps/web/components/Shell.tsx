@@ -17,6 +17,7 @@ const NAV = [
   { href: '/fleet', label: 'Scheduler', glyph: '⚖' },
   { href: '/orchestrate', label: 'Orchestrate', glyph: '⛓' },
   { href: '/templates', label: 'Templates', glyph: '⊞' },
+  { href: '/learning', label: 'Learning', glyph: '✦' },
   { href: '/schedules', label: 'Schedules', glyph: '⏱' },
   { href: '/teams', label: 'Teams', glyph: '⧉' },
   { href: '/history', label: 'History', glyph: '▤' },

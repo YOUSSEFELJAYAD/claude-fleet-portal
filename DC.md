@@ -1102,3 +1102,11 @@ shared/server/web.
 **Not done (future).** Web UI (settings toggle + a Learned-Skills list) — backend + API only
 for now, matching how F9 shipped headless; a notifier toast on "skill learned"; learning from
 campaign/PM runs; live RAG indexing if personal-rag grows a lock-safe ingest path.
+
+**Amendment (2026-06-13, same day).** The web UI shipped: new `/learning` page
+(`apps/web/app/learning/page.tsx`) modelled on `notifications/page.tsx` — a learned-skills feed
+(status badge, source-run link, source cost, "indexed" marker, delete button) plus a loop-config
+panel (enabled toggle + the four thresholds + max-per-day, live/off indicator), 6 s poll, all on
+the existing `@/components/ui` design system; nav entry added to `Shell.tsx` after Templates
+(glyph `✦`). `pnpm -r typecheck` clean across shared/server/web and `next build` lists
+`/learning` as a prerendered route. The "Web UI" item above is now done.
