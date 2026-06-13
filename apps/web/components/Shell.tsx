@@ -13,6 +13,7 @@ import { UpdateModal, updateDismissKey, type UpdatePhase } from './UpdateModal';
 const NAV = [
   { href: '/', label: 'Fleet', glyph: '◉' },
   { href: '/inbox', label: 'Inbox', glyph: '◳' },
+  { href: '/chat', label: 'Chat', glyph: '✦' },
   { href: '/projects', label: 'Projects', glyph: '◫' },
   { href: '/fleet', label: 'Scheduler', glyph: '⚖' },
   { href: '/orchestrate', label: 'Orchestrate', glyph: '⛓' },

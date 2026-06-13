@@ -1110,3 +1110,65 @@ panel (enabled toggle + the four thresholds + max-per-day, live/off indicator), 
 the existing `@/components/ui` design system; nav entry added to `Shell.tsx` after Templates
 (glyph `✦`). `pnpm -r typecheck` clean across shared/server/web and `next build` lists
 `/learning` as a prerendered route. The "Web UI" item above is now done.
+## 30. Chat Dashboard — multi-session agent control-plane (2026-06-13) — spec docs/superpowers/specs/2026-06-13-chat-dashboard-design.md
+
+A conversational dashboard that doubles as a fleet control-plane: multi-session live chat with
+Claude (and engine add-ons), a running-agents panel, and a slash-command surface that drives the
+app's existing functions. Brainstormed as the "Both (superset)" mental model; the user chose to
+build the full superset in one v1 — chat core + running-agents panel + slash-commands + engine chat.
+
+### D-029 — Transport: one run id per session, resume-per-turn (NOT a long-lived interactive process)
+A chat session maps to a single run id. Turn 1 = `POST /api/agents` (message as prompt); turn N =
+`POST /api/agents/:id/resume`; assistant output streams over the run's existing SSE (`/api/agents/:id/stream`);
+the reply is persisted on completion. Rationale: the fleet caps concurrent runs at 8
+(`config.maxConcurrentRuns`) — holding a live interactive process per open chat would starve the
+fleet. Resume-per-turn only holds a slot during a turn, survives server restarts, and unifies
+Claude + engine sessions. Rejected alternative: long-lived `interactive:true` + `/api/agents/:id/input`
+(snappier but resource-heavy and Claude-only).
+
+### D-030 — Engine add-on chat is one-shot-per-turn with reconstructed context
+Engines (codex/opencode) cannot resume or take stdin, so an engine chat session reconstructs a
+capped transcript prefix into each turn's prompt and is labelled "one-shot per turn · limited
+memory" in the UI. Claude sessions get native context via `--resume`.
+
+### D-031 — Slash-command control-plane reuses existing routes/registry
+v1 command set: `/launch`, `/agents` (running), `/kill`, `/addons`, `/addon enable|disable`,
+`/campaign`, `/schedule`, `/help`. Each dispatches to an existing API route / registry call;
+results render as command/system messages in the thread. No new privileged surface — commands
+inherit the auth and permission posture of the routes they call.
+
+### D-032 — Layout & persistence
+3-pane `/chat` page (sessions · conversation+composer · running-agents). Per-session launch
+options (model/engine/effort/tools/skills/permission-mode/cwd) live in the composer's options
+popover, reusing `ModelSelect` and the existing tool/skill pickers. Sessions + messages persist
+in sqlite (`chat_sessions`, `chat_messages`); the live run is ephemeral and re-derived on reopen.
+
+### DEFERRED — features to be added in a later iteration (explicit out-of-scope for this build)
+These are recorded so the boundary is intentional, not forgotten — they "need to be installed"
+in a future cycle:
+- **Voice** (speech in / out).
+- **File uploads / attachments** into a chat turn.
+- **Multi-user** — the portal is single-operator; no per-user sessions or auth in scope.
+- **In-chat transcript search** — the FTS5 transcript index already exists (`search.ts`, F7) and
+  can be layered onto chat history later; it is NOT wired into the chat UI in this build.
+
+## 31. Environment & Settings panel (2026-06-13) — spec docs/superpowers/specs/2026-06-13-settings-env-design.md
+
+An operator panel that surfaces the app's env/config honestly by apply-timing. A server-side
+registry of field descriptors delegates writes to the right backend: derived/live values (proxy
+URL when compression is up, host/ports) are read-only; live config (guardrail caps) applies
+immediately via `/api/config`; env values (`CLAUDE_BIN`, base URLs, `FLEET_*`) write to a managed
+`data/.env` (0600, git-ignored) loaded at boot before `config.ts` freezes, flagged "applies next
+launch"; secrets (`GITHUB_TOKEN`, `CODEX_API_KEY`) are masked write-only. Fields gate on whether
+their feature is enabled.
+
+### D-033 — Hybrid registry, writes delegated by source
+Each field declares source (derived|env|portal-config|addon), editable, secret, applyTiming
+(read-only|next-launch|live), and gatedBy. No logic duplicated — live fields reuse the existing
+`/api/config` setter; env fields go to the managed `.env`. The full guardrail editor stays on
+`/guardrails`.
+
+### D-034 — env loads before config; secrets write-only; no auto-restart in v1
+`envboot.ts` loads the managed `.env` into `process.env` (never overriding shell-set vars) before
+`config.ts` evaluates. Secrets are masked in GET (value:null, set:true), set/clear only. v1 shows
+a "pending · applies next launch" badge + a manual restart note rather than self-restarting.
