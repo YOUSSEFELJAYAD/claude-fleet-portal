@@ -121,6 +121,47 @@ describe('applyRubricFloors (PURE)', () => {
     expect(out).toEqual(lowReady);
     expect(out).not.toBe(lowReady);
   });
+
+  // CRITICAL fix: dotAll 's' flag — glob '*auth*' must match 'auth' on a non-first line in body.
+  // Without 's', the '.*' in the compiled regex cannot cross newlines, so multi-line bodies fail.
+  it('dotAll: glob "*auth*" matches body with auth on a non-first line → forces risk:high + agentReady:false', () => {
+    const item = base({
+      title: 'Refactor login flow',
+      body: 'First line with no sensitive words.\nSecond line touches auth token rotation.',
+    });
+    const rule = { glob: '*auth*', forceRisk: 'high' as const };
+    const out = applyRubricFloors(item, lowReady, [rule]);
+    expect(out.risk).toBe('high');
+    expect(out.agentReady).toBe(false);
+    expect(out.reason).toContain('mechanical doc fix'); // original reason preserved
+    expect(out.reason).toMatch(/rubric override/);
+  });
+
+  // IMPORTANT fix: reason built from next.reason; no false "raised" claim when risk didn't change.
+  it('floor that does NOT raise risk does not claim risk was raised in the reason', () => {
+    // forceRisk:'medium' against an already 'high' verdict → risk stays 'high', not raised
+    const highVerdict = { risk: 'high' as const, type: 'chore' as const, agentReady: true, reason: 'very risky work' };
+    const item = base({ title: 'update ci config' });
+    const out = applyRubricFloors(item, highVerdict, [{ glob: '*ci*', forceRisk: 'medium' as const }]);
+    expect(out.risk).toBe('high'); // hard-floor never lowers
+    expect(out.agentReady).toBe(false);
+    // reason should NOT mention "raised risk" or "forced risk:medium" since risk didn't change
+    expect(out.reason).not.toMatch(/raised risk/);
+    expect(out.reason).not.toMatch(/forced risk:/);
+    // but it should still note the glob and not-agent-ready override
+    expect(out.reason).toMatch(/rubric override/);
+    expect(out.reason).toMatch(/not agent-ready/);
+  });
+
+  // IMPORTANT fix: reason is built from next.reason (accumulated), not stale verdict.reason.
+  it('reason is built from next.reason so a prior mutation in the verdict is reflected', () => {
+    // When verdict.reason has been updated before applyRubricFloors, next.reason should reflect it
+    const mutatedVerdict = { risk: 'low' as const, type: 'docs' as const, agentReady: true, reason: 'pre-modified reason text' };
+    const item = base({ title: 'auth cleanup' });
+    const out = applyRubricFloors(item, mutatedVerdict, [{ glob: '*auth*', forceRisk: 'high' as const }]);
+    expect(out.reason).toContain('pre-modified reason text');
+    expect(out.reason).toMatch(/rubric override/);
+  });
 });
 
 // ── 3. runManagerLoop ─────────────────────────────────────────────────────────

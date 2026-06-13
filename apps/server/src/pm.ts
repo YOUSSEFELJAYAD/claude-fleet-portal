@@ -187,16 +187,31 @@ async function changedFilesVsBase(worktreeDir: string, baseBranch: string): Prom
 
 /**
  * SPEC §11 — is a card eligible for auto-low-risk merge? ALL must hold: the loop opted into
- * 'auto-low-risk', the project is in LOCAL merge mode (the PR path NEVER auto-merges), the card is
- * labeled risk:low, and the GLOBAL loopAutoMergeCeiling permits risk:low (null = off → never). The
- * review pass is implied: this is only reached after reviewGate returned pass (or review was skipped).
+ * 'auto-low-risk', a maker/checker review ACTUALLY ran and passed on this attempt (reviewWasRun),
+ * the project is in LOCAL merge mode (the PR path NEVER auto-merges), the card is labeled risk:low,
+ * and the GLOBAL loopAutoMergeCeiling permits risk:low (null = off → never).
+ *
+ * `reviewWasRun` closes the threshold-skip hole: under reviewPolicy='threshold:N' a sub-threshold
+ * diff SKIPS the reviewing phase (no maker/checker runs), yet the card is otherwise low-risk — without
+ * this conjunct it would auto-merge UNREVIEWED. We require the review to have actually executed and
+ * passed (not merely "not been rejected"), so an unreviewed card always parks for a human.
  */
-function autoLowRiskEligible(card: KanbanTask, project: Project, loop: Loop, ceiling: RiskLevel | null): boolean {
+function autoLowRiskEligible(
+  card: KanbanTask,
+  project: Project,
+  loop: Loop,
+  ceiling: RiskLevel | null,
+  reviewWasRun: boolean,
+): boolean {
   if (loop.mergePosture !== 'auto-low-risk') return false;
   // SPEC §11 (Fix 2): "maker/checker passed" is a hard conjunct. When reviewPolicy is 'off' the
   // reviewing phase is SKIPPED entirely, so no review ever ran — there is no maker/checker to pass.
   // Never auto-merge without a review, defensively (the create/edit gate also rejects this combo).
   if (loop.reviewPolicy === 'off') return false;
+  // SPEC §11 — the threshold-skip hole: a 'threshold:N' policy with a sub-threshold diff never launches
+  // a Reviewer, so there is no maker/checker verdict to authorize an auto-merge. Require a review that
+  // actually ran (and passed — we only reach the gate on pass/skip, never on reject) before auto-merging.
+  if (!reviewWasRun) return false;
   if (project.mergeMode === 'pr') return false; // PR path never auto-merges
   if (cardRisk(card) !== 'low') return false;
   if (ceiling == null) return false; // global ceiling off
@@ -262,15 +277,22 @@ function buildPrompt(card: KanbanTask): string {
  *  — it does NOT depend on lastError (rework clears that before relaunch). */
 function fixPrompt(card: KanbanTask, reviewFindings?: string): string {
   const base = buildPrompt(card);
+  // On the review-REJECT path the reviewer findings ARE the evidence. Validation PASSED on this
+  // attempt (the reviewer rejected an otherwise-passing diff), so a stale prior validationOutput must
+  // never be emitted — it would contradict the findings ("validation FAILED" vs a passing diff the
+  // reviewer flagged). Prefer reviewFindings and suppress the validation-failure block on this path.
+  const onReviewRejectPath = !!reviewFindings || !!card.lastError?.startsWith('[human request-changes]');
   const evidence = reviewFindings
     ? `\n\nA reviewer requested changes:\n${reviewFindings}`
     : card.lastError?.startsWith('[human request-changes]')
       ? `\n\nA reviewer requested changes:\n${card.lastError}`
       : '';
-  const vout = card.validationOutput
-    ? `\n\nThe previous attempt FAILED validation. Fix the issues so the validation command passes. ` +
-      `Validation output (tail):\n${card.validationOutput}`
-    : '\n\nThe previous attempt did not pass. Address the remaining issues.';
+  const vout = onReviewRejectPath
+    ? '\n\nAddress the reviewer feedback above; the previous diff passed validation but was rejected on review.'
+    : card.validationOutput
+      ? `\n\nThe previous attempt FAILED validation. Fix the issues so the validation command passes. ` +
+        `Validation output (tail):\n${card.validationOutput}`
+      : '\n\nThe previous attempt did not pass. Address the remaining issues.';
   return base + evidence + vout;
 }
 
@@ -861,6 +883,10 @@ class PmEngine {
       // threaded as the fix prompt; pass → gate. No worker Loop → straight to the gate (v1 behavior).
       const workerLoops = loopsRepo.enabledByKind(project.id, 'worker');
       const loop = workerLoops[0];
+      // reviewWasRun: true ONLY when a Reviewer actually executed AND passed on this attempt. A
+      // skipped review (policy 'off', no worker loop, or a sub-threshold 'threshold:N' diff) leaves
+      // it false so gate()→autoLowRiskEligible refuses to auto-merge an UNREVIEWED card (SPEC §11).
+      let reviewWasRun = false;
       if (loop) {
         const dec = reviewDecision(loop.reviewPolicy);
         let doReview = dec.review;
@@ -869,9 +895,10 @@ class PmEngine {
         }
         if (doReview) {
           if (await this.reviewGate(cardId, project)) return; // rejected → reworked, do not gate
+          reviewWasRun = true; // reviewGate returned false → the Reviewer ran and PASSED
         }
       }
-      await this.gate(cardId, project);
+      await this.gate(cardId, project, reviewWasRun);
     } else {
       await this.rework(cardId, project, validationOutput);
     }
@@ -919,8 +946,10 @@ class PmEngine {
   }
 
   // ── GATE (SPEC §5.5 / §6) ──────────────────────────────────────────────────────
-  /** Validation passed: human-approve (default) parks in Review; auto_merge proceeds to merge. */
-  private async gate(cardId: string, project: Project): Promise<void> {
+  /** Validation passed: human-approve (default) parks in Review; auto_merge proceeds to merge.
+   *  `reviewWasRun` (from validateAndGate) is true only when a maker/checker review actually ran and
+   *  passed — required for auto-low-risk auto-merge so an unreviewed (e.g. sub-threshold) card parks. */
+  private async gate(cardId: string, project: Project, reviewWasRun = false): Promise<void> {
     const card = kanbanRepo.getTask(cardId);
     if (!card) return;
     // Re-check after the (long) validate await: a human/cancel may have moved the card terminal
@@ -934,7 +963,7 @@ class PmEngine {
     // eligibility helper). When neither path authorizes a merge, park in Review for a human.
     const loop = loopsRepo.enabledByKind(project.id, 'worker')[0];
     const ceiling = registry.getConfig().loopAutoMergeCeiling;
-    const postureAuto = !!loop && autoLowRiskEligible(card, project, loop, ceiling);
+    const postureAuto = !!loop && autoLowRiskEligible(card, project, loop, ceiling, reviewWasRun);
 
     if (!project.autoMerge && !postureAuto) {
       // STOP for a human Approve — park in Review (phase idle so the badge isn't "merging" yet).
@@ -1621,8 +1650,10 @@ class PmEngine {
    * zombie → reset it. A card mid-merge whose run is gone is parked in Review (re-approve/inspect); a
    * card mid build/validate is sent back to Ready to be re-picked; a card mid-RESOLVE (v2 #9) left a
    * worktree with MERGE_HEAD set → `git merge --abort` it (never leave a half-merged tree) and park
-   * it in Review/conflicts. Called once by the main loop on boot. Async because the resolve sweep must
-   * abort a real in-progress merge before the worktree is clean (callers may fire-and-forget).
+   * it in Review/conflicts; a card mid-REVIEW (SPEC §9) had an in-flight Reviewer run whose process is
+   * dead → re-drive it through validateAndGate (re-validate + re-review the intact worktree) rather
+   * than leave it stuck in 'reviewing'. Called once by the main loop on boot. Async because the resolve
+   * sweep must abort a real in-progress merge before the worktree is clean (callers may fire-and-forget).
    */
   async reconcile(): Promise<void> {
     const aborts: Promise<void>[] = [];
@@ -1632,6 +1663,14 @@ class PmEngine {
         // half-merged worktree aborted regardless of run state (the resolve agent process is dead).
         if (card.executionPhase === 'resolving') {
           aborts.push(this.reconcileResolving(card, project));
+          continue;
+        }
+        // SPEC §9 — a mid-review zombie (phase 'reviewing'): the Reviewer run is launched independently
+        // of card.runId (review.ts), so the generic build/validate sweep below would wrongly treat it as
+        // a build interruption (back to Ready, losing the validated worktree). The committed worktree is
+        // intact, so re-drive it through validateAndGate, which re-validates and re-reviews from scratch.
+        if (card.executionPhase === 'reviewing' && card.column === 'InProgress') {
+          aborts.push(this.reconcileReviewing(card, project));
           continue;
         }
         if (card.column !== 'InProgress' && !(card.column === 'Review' && card.executionPhase === 'merging')) {
@@ -1682,6 +1721,25 @@ class PmEngine {
       executionPhase: 'conflicts',
       lastError: 'reconciled on boot: conflict resolution interrupted; re-approve to retry',
     });
+  }
+
+  /**
+   * SPEC §9 — reconcile a single mid-review zombie: its Reviewer run died with the process at boot,
+   * but the worker's worktree is committed and intact. Re-drive it through validateAndGate (re-validate
+   * + re-review from scratch), which routes it sanely (review pass → gate, reject → rework). On any
+   * failure park it in Review for a human so it is never left stuck in 'reviewing'. Never throws.
+   */
+  private async reconcileReviewing(card: KanbanTask, project: Project): Promise<void> {
+    try {
+      await this.validateAndGate(card.id, project);
+    } catch {
+      // validateAndGate should not throw, but never leave a card wedged in 'reviewing' on boot.
+      kanbanRepo.updateTask(card.id, {
+        column: 'Review',
+        executionPhase: 'idle',
+        lastError: 'reconciled on boot: review interrupted; re-approve to retry',
+      });
+    }
   }
 
   // ── internal ─────────────────────────────────────────────────────────────────

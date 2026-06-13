@@ -6,8 +6,18 @@ import { join } from 'node:path';
 process.env.FLEET_DATA_DIR = mkdtempSync(join(tmpdir(), 'fleet-test-cpghw-'));
 
 const calls: any[] = [];
+
+// Mutable issue list — tests can push items here to make fetchAll() return them.
+const MOCK_ISSUES: any[] = [];
+
 vi.mock('../src/gh.js', () => ({
-  ghExec: vi.fn(async () => ({ ok: false, stdout: '', stderr: '', code: 1 })),
+  ghExec: vi.fn(async (_root: string, args: string[]) => {
+    // Serve the issues endpoint so classify() can fetch current labels for stale-label stripping.
+    if (args[0] === 'api' && typeof args[1] === 'string' && args[1].startsWith('repos/')) {
+      return { ok: true, stdout: JSON.stringify(MOCK_ISSUES), stderr: '', code: 0 };
+    }
+    return { ok: false, stdout: '', stderr: 'unhandled', code: 1 };
+  }),
   resolveRemote: vi.fn(async () => ({ url: 'https://github.com/acme/widgets.git', resolves: true })),
   ghLabelAdd: vi.fn(async (_root: string, n: number, label: string) => { calls.push(['add', n, label]); return { ok: true }; }),
   ghLabelRemove: vi.fn(async (_root: string, n: number, label: string) => { calls.push(['remove', n, label]); return { ok: true }; }),
@@ -59,6 +69,65 @@ describe('github adapter writes (mocked gh verbs)', () => {
     expect(comment[2]).toContain('Which DB?');
     expect(comment[2]).toContain('Auth impact?');
     expect(calls).toContainEqual(['add', 42, 'needs:human']);
+  });
+});
+
+describe('github adapter classify — stale label stripping (re-triage)', () => {
+  // Regression for: re-triaging a GitHub issue accumulated contradictory labels
+  // (risk:low AND risk:high) because stale labels were never removed first.
+  it('re-classify replaces stale risk/type/routing labels instead of stacking them', async () => {
+    // Seed the mock issue list with an issue that already carries stale verdict labels.
+    MOCK_ISSUES.length = 0;
+    MOCK_ISSUES.push({
+      number: 55,
+      title: 'Stale issue',
+      body: 'was high risk, now low',
+      labels: [
+        { name: 'risk:high' },
+        { name: 'type:feature' },
+        { name: 'needs:human' },
+        { name: 'keep-me' }, // unrelated label — must survive
+      ],
+    });
+
+    calls.length = 0;
+    const adapter = cp.githubControlPlane(loop, project);
+    // Re-triage: risk changes high→low, type changes feature→bug, now agent-ready.
+    await adapter.classify('55', { risk: 'low', type: 'bug', agentReady: true, reason: 'safe now' });
+
+    const removedLabels = calls.filter((c) => c[0] === 'remove').map((c) => c[2]);
+    const addedLabels   = calls.filter((c) => c[0] === 'add').map((c) => c[2]);
+
+    // Stale risk/type/routing labels must be removed.
+    expect(removedLabels).toContain('risk:high');
+    expect(removedLabels).toContain('type:feature');
+    expect(removedLabels).toContain('needs:human');
+    // New labels must be added.
+    expect(addedLabels).toContain('risk:low');
+    expect(addedLabels).toContain('type:bug');
+    expect(addedLabels).toContain('agent:ready');
+    // The unrelated label 'keep-me' must NOT appear in removes.
+    expect(removedLabels).not.toContain('keep-me');
+    // Sanity: the NEW risk label must NOT be removed.
+    expect(removedLabels).not.toContain('risk:low');
+  });
+
+  it('classify with no prior labels does not emit spurious removes', async () => {
+    MOCK_ISSUES.length = 0;
+    MOCK_ISSUES.push({
+      number: 77,
+      title: 'Fresh issue',
+      body: '',
+      labels: [],
+    });
+
+    calls.length = 0;
+    const adapter = cp.githubControlPlane(loop, project);
+    await adapter.classify('77', { risk: 'low', type: 'bug', agentReady: true, reason: 'clean' });
+
+    const removedLabels = calls.filter((c) => c[0] === 'remove').map((c) => c[2]);
+    // Only needs:human should be removed (the routing flip for agentReady).
+    expect(removedLabels).toEqual(['needs:human']);
   });
 });
 

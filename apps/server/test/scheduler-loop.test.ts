@@ -4,6 +4,8 @@
  * 2. A due schedule with loop_id calls loops.fire(loopId), NOT registry.launch.
  * 3. A loop with no work (hasWork=false) is skipped but next_fire_at still advances.
  * 4. A cap-rethrowing loop fire (429 / daily-cap) does NOT advance next_fire_at (retries next tick).
+ * 5. POST with an unknown loop_id → 400 (validation).
+ * 6. run-now on a loop schedule calls loops.fire (not registry.launch).
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
@@ -18,18 +20,40 @@ let PORT: number;
 let __tickForTests: typeof import('../src/scheduler.js').__tickForTests;
 let registry: typeof import('../src/registry.js').registry;
 let loops: typeof import('../src/loops.js').loops;
+let loopsRepo: typeof import('../src/loops.js').loopsRepo;
 
 const H = () => ({ host: `127.0.0.1:${PORT}` });
+
+/** Minimal loop record insert — bypasses POST /api/loops validation for test isolation. */
+function seedLoop(db: any, id: string) {
+  db.prepare(`
+    INSERT OR IGNORE INTO loops
+      (id, name, project_id, kind, control_plane, schedule_id, contract, mode,
+       consecutive_good_runs, escalation_threshold, merge_posture, review_policy,
+       risk_rubric, routable_ceiling, enabled, last_run_id, last_eval, last_error, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, `test-loop-${id}`, 'proj-test', 'worker', 'board', null,
+    JSON.stringify({ job: 'test', inputs: '', allowed: [], forbidden: [], output: '', evaluation: '' }),
+    'dry-run', 0, 3, 'human-gate', 'always', '[]', 'low', 1, null, null, null, Date.now(),
+  );
+}
 
 beforeAll(async () => {
   const cfg = await import('../src/config.js');
   PORT = cfg.PORT;
   ({ __tickForTests } = await import('../src/scheduler.js'));
   ({ registry } = await import('../src/registry.js'));
-  ({ loops } = await import('../src/loops.js'));
+  ({ loops, loopsRepo } = await import('../src/loops.js'));
   const { buildServer } = await import('../src/server.js');
   app = buildServer();
   await app.ready();
+
+  // Seed all loop IDs used across these tests so loop_id validation passes.
+  const scheduleDb = (await import('../src/db.js')).default;
+  for (const id of ['loop-abc', 'loop-fires', 'loop-empty', 'loop-429', 'loop-daily-cap', 'loop-runnow']) {
+    seedLoop(scheduleDb, id);
+  }
 });
 
 afterAll(async () => {
@@ -40,6 +64,23 @@ afterAll(async () => {
 // never bleeds into a later test — guaranteed even if a test throws before an inline restore.
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+// ── Fix 2: unknown loop_id → 400 ──────────────────────────────────────────────
+describe('schedule POST — unknown loop_id → 400', () => {
+  it('POST with a loop_id that does not reference an existing loop returns 400', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/schedules', headers: H(),
+      payload: {
+        name: 'bad-loop-sched',
+        recurrence: 'every:15',
+        loop_id: 'does-not-exist-ever',
+        launch_request: { prompt: 'unused', cwd: '/tmp' },
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/not found/);
+  });
 });
 
 describe('schedule loop_id — CRUD round-trip', () => {
@@ -202,5 +243,48 @@ describe('tick() — loop fire cap rethrow does NOT advance next_fire_at', () =>
     const after = (scheduleDb.prepare('SELECT next_fire_at, last_fired_at FROM schedules WHERE id=?').get(id) as any);
     expect(after.next_fire_at).toBe(before.next_fire_at); // unchanged — capBlocked deferral
     expect(after.last_fired_at).toBe(before.last_fired_at); // unchanged
+  });
+});
+
+// ── Fix 1: run-now on a loop schedule calls loops.fire, not registry.launch ────
+describe('POST /api/schedules/:id/run — loop schedule fires loops.fire, not registry.launch', () => {
+  it('run-now on a loop-targeted schedule calls loops.fire (not registry.launch) and advances last_fired_at', async () => {
+    const scheduleDb = (await import('../src/db.js')).default;
+
+    // Create a loop-targeted schedule (loop-runnow was seeded in beforeAll).
+    const create = await app.inject({
+      method: 'POST', url: '/api/schedules', headers: H(),
+      payload: {
+        name: 'run-now-loop',
+        recurrence: 'every:15',
+        loop_id: 'loop-runnow',
+        launch_request: { prompt: 'unused', cwd: '/tmp' },
+        enabled: true,
+      },
+    });
+    expect(create.statusCode).toBe(201);
+    const id = create.json().id;
+
+    let firedLoopId: string | null = null;
+    const hasWorkSpy = vi.spyOn(loops, 'hasWork').mockImplementation(async (lid: string) => lid === 'loop-runnow');
+    const fireSpy = vi.spyOn(loops, 'fire').mockImplementation(async (lid: string) => { firedLoopId = lid; });
+    const launchSpy = vi.spyOn(registry, 'launch').mockImplementation((() => ({ id: 'should-not-happen' })) as any);
+
+    const before = Date.now();
+    const res = await app.inject({ method: 'POST', url: `/api/schedules/${id}/run`, headers: H() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().ok).toBe(true);
+
+    // loops.fire must be called with the correct loop id; registry.launch must NOT be called.
+    expect(firedLoopId).toBe('loop-runnow');
+    expect(hasWorkSpy).toHaveBeenCalledWith('loop-runnow');
+    expect(fireSpy).toHaveBeenCalledWith('loop-runnow');
+    expect(launchSpy).not.toHaveBeenCalled();
+
+    // last_fired_at must have been recorded and next_fire_at must have advanced.
+    const row = scheduleDb.prepare('SELECT last_fired_at, next_fire_at, last_run_id FROM schedules WHERE id=?').get(id) as any;
+    expect(row.last_fired_at).toBeGreaterThanOrEqual(before);
+    expect(row.next_fire_at).toBeGreaterThan(before);
+    expect(row.last_run_id).toBeNull(); // loop fires never set a run id
   });
 });
