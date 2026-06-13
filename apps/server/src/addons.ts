@@ -33,7 +33,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { AddonInfo, AddonStatus, AddonInstallResult, CompressionConfig, CompressionStats, SelfUpdateStep, RunEngine, WebResearchConfig } from '@fleet/shared';
-import { HOME, PORT, WEB_PORT } from './config.js';
+import { HOME, PORT, WEB_PORT, CLAUDE_REAL_BIN } from './config.js';
 import db from './db.js';
 import type { CodexEngineConfig, OpencodeEngineConfig } from './engines.js';
 
@@ -968,6 +968,40 @@ async function installHeadroom(): Promise<AddonInstallResult> {
   };
 }
 
+// ── service dependency install (web-research → SearXNG via Docker) ──────────────────
+
+async function installSearxng(): Promise<AddonInstallResult> {
+  const steps: SelfUpdateStep[] = [];
+  const trunc = (s: string) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
+  const hasDocker = await executableAvailable('docker', ['--version']);
+  steps.push({
+    step: 'detect docker',
+    ok: hasDocker,
+    output: hasDocker ? 'docker found' : 'docker not found — install Docker or run SearXNG yourself, then set the URL',
+  });
+  if (!hasDocker) {
+    return {
+      ok: false,
+      steps,
+      note: 'Docker not found. Run SearXNG yourself (docker run -d -p 8080:8080 searxng/searxng) with json enabled in settings.yml `search.formats`, then set the URL on the Web Research page.',
+    };
+  }
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      'docker',
+      ['run', '-d', '--name', 'fleet-searxng', '-p', '8080:8080',
+       '-e', 'SEARXNG_SETTINGS_PATH=', '-e', 'SEARXNG_FORMATS=json',
+       'searxng/searxng'],
+      { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024 },
+    );
+    steps.push({ step: 'docker run searxng/searxng', ok: true, output: trunc(stdout + stderr) });
+    return { ok: true, steps, note: 'SearXNG started on http://localhost:8080. If json is still disabled, set `search.formats: [html, json]` in its settings.yml and restart the container.' };
+  } catch (e: any) {
+    steps.push({ step: 'docker run searxng/searxng', ok: false, output: trunc(String(e?.stderr ?? e?.message ?? e)) });
+    return { ok: false, steps, note: 'Could not start SearXNG via Docker (a container named fleet-searxng may already exist). Check `docker ps -a`.' };
+  }
+}
+
 // ── engine dependency install (npm first; brew/curl advisory fallback) ──────────────
 
 const NPM_INSTALL_PACKAGES: Record<string, string[]> = {
@@ -1250,6 +1284,11 @@ export function registerAddonRoutes(app: FastifyInstance) {
     const def = ADDON_DEFS.find((d) => d.id === id);
     if (!def) return reply.code(404).send({ error: 'unknown add-on' });
 
+    // ── service install (web-research → SearXNG via Docker) ──
+    if (def.runtime === 'service') {
+      return reply.send(await installSearxng());
+    }
+
     // ── engine-binary install ──
     if (def.runtime === 'engine-binary') {
       const engine = id as 'codex' | 'opencode';
@@ -1276,6 +1315,26 @@ export function registerAddonRoutes(app: FastifyInstance) {
       return await installHeadroom();
     } finally {
       installInFlight = false;
+    }
+  });
+
+  // Register a SearXNG MCP server so launched agents can search mid-run (open source).
+  app.post('/api/addons/web-research/register-mcp', async () => {
+    const cfg = researchConfig();
+    const trunc = (s: string) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        CLAUDE_REAL_BIN,
+        ['mcp', 'add', 'searxng', '--', 'npx', '-y', 'mcp-searxng'],
+        { timeout: 60_000, env: { ...process.env, SEARXNG_URL: cfg.searxngUrl }, maxBuffer: 1024 * 1024 },
+      );
+      return { ok: true, output: trunc(stdout + stderr) };
+    } catch (e: any) {
+      return {
+        ok: false,
+        output: trunc(String(e?.stderr ?? e?.message ?? e)),
+        note: `Run it yourself: SEARXNG_URL=${cfg.searxngUrl} claude mcp add searxng -- npx -y mcp-searxng`,
+      };
     }
   });
 }
