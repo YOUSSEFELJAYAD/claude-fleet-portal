@@ -23,6 +23,8 @@ import type { Loop, TriageVerdict, KanbanTask, Project } from '@fleet/shared';
 import { RISK_LABELS, TYPE_LABELS, ROUTING } from '@fleet/shared';
 import db from './db.js';
 import { kanbanRepo, broadcastTask } from './kanban.js';
+import { ghExec, resolveRemote, ghLabelAdd, ghLabelRemove, ghIssueComment } from './gh.js';
+import { parseRepoSlug } from './release.js';
 
 // ── schema (idempotent, §4.4) ───────────────────────────────────────────────────
 db.exec(`
@@ -179,6 +181,108 @@ function makeBoardAdapter(projectId: string): ControlPlane {
   };
 }
 
+// ── github control-plane: issue intake (mirrors triggers.ts fetchIssuesWithLabel) ──
+
+/** Raw GitHub REST issue shape (the fields we read; labels may be objects or bare strings). */
+interface GhIssue {
+  number: number;
+  title: string;
+  body: string | null;
+  labels: Array<{ name?: string } | string>;
+}
+
+/** PURE: map a GitHub REST issue to a control-plane WorkItem; flatten labels[].name, null body → ''. */
+export function issueToWorkItem(issue: GhIssue): WorkItem {
+  const labels = (issue.labels ?? [])
+    .map((l) => (typeof l === 'string' ? l : typeof l?.name === 'string' ? l.name : ''))
+    .filter(Boolean);
+  return { id: String(issue.number), title: issue.title, body: issue.body ?? '', labels };
+}
+
+/**
+ * Resolve `owner/repo` for a project from its configured remote (scrubbed URL via resolveRemote +
+ * parseRepoSlug). Returns null when no GitHub remote is configured — the github adapter then treats
+ * the backlog/ready as empty (no work), exactly like triggers.ts treats a failed gh call.
+ */
+async function ghRepoSlug(project: Project): Promise<string | null> {
+  const remote = await resolveRemote(project.rootDir, project.remoteName);
+  if (!remote.resolves || !remote.url) return null;
+  return parseRepoSlug(remote.url);
+}
+
+/** Fetch open issues for a repo (mirrors triggers.ts fetchIssuesWithLabel; null on any gh failure). */
+async function fetchOpenIssues(root: string, ghRepo: string): Promise<GhIssue[] | null> {
+  const r = await ghExec(root, [
+    'api', `repos/${ghRepo}/issues`,
+    '--method', 'GET',
+    '-f', 'state=open',
+    '-f', 'per_page=20',
+  ]);
+  if (!r.ok) return null;
+  try {
+    const items = JSON.parse(r.stdout);
+    if (!Array.isArray(items)) return null;
+    return items as GhIssue[];
+  } catch {
+    return null;
+  }
+}
+
+/** PURE: an item is untriaged backlog when it carries NO risk:* label. */
+export function selectBacklog(items: WorkItem[]): WorkItem[] {
+  return items.filter((i) => !i.labels.some((l) => l.startsWith('risk:')));
+}
+
+/** PURE: an item is ready when it carries the agent:ready routing label. */
+export function selectReady(items: WorkItem[]): WorkItem[] {
+  return items.filter((i) => i.labels.includes(ROUTING.ready));
+}
+
+/**
+ * The github control plane: reads open issues via `gh api` and writes via the gh issue verbs.
+ * Reads return [] (treated as "no work") when no GitHub remote is configured or gh fails — the
+ * fire is then skipped by the scheduler, exactly like triggers.ts on a failed gh call.
+ */
+export function githubControlPlane(loop: Loop, project: Project): ControlPlane {
+  const root = project.rootDir;
+  async function fetchAll(): Promise<WorkItem[]> {
+    const slug = await ghRepoSlug(project);
+    if (!slug) return [];
+    const issues = await fetchOpenIssues(root, slug);
+    if (!issues) return [];
+    return issues.map(issueToWorkItem);
+  }
+  return {
+    async listBacklog() {
+      return selectBacklog(await fetchAll());
+    },
+    async listReady() {
+      return selectReady(await fetchAll());
+    },
+    async classify(itemId: string, v: TriageVerdict) {
+      const n = Number(itemId);
+      await ghLabelAdd(root, n, RISK_LABELS[v.risk]);
+      await ghLabelAdd(root, n, TYPE_LABELS[v.type]);
+      if (v.agentReady) {
+        await ghLabelAdd(root, n, ROUTING.ready);
+        await ghLabelRemove(root, n, ROUTING.needsHuman);
+      } else {
+        await ghLabelAdd(root, n, ROUTING.needsHuman);
+        await ghLabelRemove(root, n, ROUTING.ready);
+      }
+    },
+    async postAssessment(itemId: string, markdown: string) {
+      await ghIssueComment(root, Number(itemId), markdown);
+    },
+    async attachQuestions(itemId: string, questions: string[]) {
+      const n = Number(itemId);
+      const body = ['**Questions for a human before this is agent-ready:**', '', ...questions.map((q) => `- ${q}`)].join('\n');
+      await ghIssueComment(root, n, body);
+      await ghLabelAdd(root, n, ROUTING.needsHuman);
+    },
+  };
+}
+
 // ── dry-run wrapper ───────────────────────────────────────────────────────────────
 function dryRunWrap(real: ControlPlane, intended: IntendedAction[]): ControlPlane {
   return {
@@ -199,13 +303,12 @@ function dryRunWrap(real: ControlPlane, intended: IntendedAction[]): ControlPlan
 // ── adapter selection + dry-run wrapper (§5) ─────────────────────────────────────
 export function controlPlaneFor(
   loop: Loop,
-  _project: Project,
+  project: Project,
 ): { cp: ControlPlane; intended: IntendedAction[] } {
-  if (loop.controlPlane === 'github') {
-    // Slice 07 replaces this with the gh-backed adapter (ghLabelAdd/ghIssueComment).
-    throw new Error('github control plane not implemented yet (Slice 07)');
-  }
-  const real = makeBoardAdapter(loop.projectId);
+  const real =
+    loop.controlPlane === 'github'
+      ? githubControlPlane(loop, project) // Slice 07: gh issues + labels (ghLabelAdd/ghIssueComment)
+      : makeBoardAdapter(loop.projectId); // Slice 03: local kanban via kanbanRepo
   const intended: IntendedAction[] = [];
   if (loop.mode === 'dry-run') return { cp: dryRunWrap(real, intended), intended };
   return { cp: real, intended };

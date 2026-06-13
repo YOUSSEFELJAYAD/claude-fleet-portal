@@ -97,8 +97,15 @@ case "$1 $2" in
   "pr view")
     if [ "$3" = "no-pr" ]; then echo "no pull requests found" 1>&2; exit 1; fi
     if [ "$3" = "auth-fail" ]; then echo "HTTP 401: Bad credentials" 1>&2; exit 1; fi
-    echo '{"state":"OPEN","url":"https://github.com/acme/widgets/pull/42"}'; exit 0 ;;
+    echo '{"state":"OPEN","url":"https://github.com/acme/widgets/pull/42","labels":[{"name":"risk:low"}]}'; exit 0 ;;
   "pr merge")       exit 0 ;;
+  "issue edit")     exit 0 ;;
+  "issue comment")
+    if [ "$3" = "999" ]; then
+      echo "fatal: could not read Password for 'https://x-access-token:ghp_SECRETTOKEN@github.com'" 1>&2
+      exit 1
+    fi
+    exit 0 ;;
   *) echo "fake-gh: unhandled $*" 1>&2; exit 1 ;;
 esac
 `;
@@ -337,7 +344,7 @@ describe('prCreate / prView / prMerge (fake gh on PATH)', () => {
     expect(v.pr!.url).toBe('https://github.com/acme/widgets/pull/42');
 
     const viewed = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'view');
-    expect(viewed).toEqual(['pr', 'view', 'worktree-task-7', '--json', 'state,url']);
+    expect(viewed).toEqual(['pr', 'view', 'worktree-task-7', '--json', 'state,url,labels']);
   });
 
   it('prView returns {pr:null} with NO error for the genuine no-PR case', async () => {
@@ -363,5 +370,60 @@ describe('prCreate / prView / prMerge (fake gh on PATH)', () => {
     expect(r.ok).toBe(true);
     const merged = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'merge');
     expect(merged).toEqual(['pr', 'merge', 'worktree-task-7', '--merge']);
+  });
+
+  it('prView surfaces parsed label names', async () => {
+    const bare = mkBare();
+    const root = mkRootWired(bare);
+    const v = await gh.prView(root, 'worktree-task-7');
+    expect(v.pr).not.toBeNull();
+    expect(v.pr!.labels).toEqual(['risk:low']);
+  });
+});
+
+// ── gh write-back verbs: label add/remove + issue comment (fake gh on PATH) ─────
+describe('ghLabelAdd / ghLabelRemove / ghIssueComment (fake gh on PATH)', () => {
+  it('ghLabelAdd constructs `issue edit <n> --add-label <label>` and returns ok:true', async () => {
+    const bare = mkBare();
+    const root = mkRootWired(bare);
+    const r = await gh.ghLabelAdd(root, 42, 'risk:low');
+    expect(r.ok).toBe(true);
+    expect(r.error).toBeUndefined();
+    const call = ghCalls().find((a) => a[0] === 'issue' && a[1] === 'edit' && a[3] === '--add-label');
+    expect(call).toEqual(['issue', 'edit', '42', '--add-label', 'risk:low']);
+  });
+
+  it('ghLabelRemove constructs `issue edit <n> --remove-label <label>` and returns ok:true', async () => {
+    const bare = mkBare();
+    const root = mkRootWired(bare);
+    const r = await gh.ghLabelRemove(root, 42, 'needs:human');
+    expect(r.ok).toBe(true);
+    const call = ghCalls().find((a) => a[0] === 'issue' && a[1] === 'edit' && a[3] === '--remove-label');
+    expect(call).toEqual(['issue', 'edit', '42', '--remove-label', 'needs:human']);
+  });
+
+  it('ghIssueComment constructs `issue comment <n> --body <body>` and returns ok:true', async () => {
+    const bare = mkBare();
+    const root = mkRootWired(bare);
+    const r = await gh.ghIssueComment(root, 42, 'Risk: low\nType: bug\nAgent-ready: yes');
+    expect(r.ok).toBe(true);
+    const call = ghCalls().find((a) => a[0] === 'issue' && a[1] === 'comment');
+    expect(call).toEqual(['issue', 'comment', '42', '--body', 'Risk: low\nType: bug\nAgent-ready: yes']);
+  });
+
+  it('returns {ok:false,error} (never throws) when gh exits nonzero — scrubbed', async () => {
+    // GENUINE failure-path (no spy): the verbs call the module-local `ghExec`, which resolves `gh`
+    // off PATH — so we drive a real nonzero exit through the fake-gh harness rather than stubbing.
+    // The fake-gh `issue comment` arm exits 1 with a TOKENIZED stderr for the sentinel issue number 999.
+    // ghExec salvages `{ ok:false, code:1, stderr:'…token…' }`, the verb maps it to
+    // `{ ok:false, error: ghErr(r) }`, and ghErr runs scrubCredentials. We assert:
+    // (a) never throws, (b) ok:false, (c) error is a string, (d) the token is scrubbed.
+    const bare = mkBare();
+    const root = mkRootWired(bare);
+    const r = await gh.ghIssueComment(root, 999, 'body'); // 999 → fake-gh failing arm
+    expect(r.ok).toBe(false);
+    expect(typeof r.error).toBe('string');
+    expect(r.error).not.toContain('ghp_SECRETTOKEN'); // scrubbed by ghErr → scrubCredentials
+    expect(r.error).toContain('***'); // tokenized URL collapsed to ***@github.com
   });
 });
