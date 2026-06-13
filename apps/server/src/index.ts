@@ -1,3 +1,4 @@
+import './envboot.js'; // §31 — load managed .env BEFORE config.ts freezes env at import
 import { buildServer } from './server.js';
 import { HOST, PORT, CLAUDE_BIN, DB_PATH } from './config.js';
 import { registry } from './registry.js';
