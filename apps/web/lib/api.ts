@@ -39,6 +39,8 @@ import type {
   ChatTurnResponse,
   AddChatMessageRequest,
   ChatCommandResult,
+  SettingsResponse,
+  SettingValue,
 } from '@fleet/shared';
 // F10 — config-as-code export/import types (defined locally to avoid cross-package imports)
 export interface ExportedSetup {
@@ -451,4 +453,9 @@ export const api = {
   chatTurn: (id: string, message: string) => j<ChatTurnResponse>(`/api/chat/sessions/${id}/turn`, { method: 'POST', body: JSON.stringify({ message }) }),
   addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
+
+  // ── §31 settings ──
+  settings: () => j<SettingsResponse>('/api/settings'),
+  updateSetting: (key: string, value: string | null) =>
+    j<SettingValue>(`/api/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
 };
