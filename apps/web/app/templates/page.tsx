@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import type { AgentTemplate, EffortLevel, PermissionMode } from '@fleet/shared';
-import { Panel, Kicker, Field, Input, Textarea, Select, Btn, Empty } from '@/components/ui';
+import { Panel, Kicker, Field, Input, Textarea, Select, Btn, Empty, ErrorBanner } from '@/components/ui';
 
 const ROLE_COLOR: Record<string, string> = {
   orchestrator: '#b08cff',
@@ -171,19 +171,17 @@ export default function TemplatesPage() {
           </div>
           <div className="mt-4 flex items-center gap-3">
             <Btn variant="solid" onClick={create}>Create Template</Btn>
-            {err && <span className="font-mono text-[11px] text-sig-failed" style={{ color: '#ff5d5d' }}>{err}</span>}
+            {err && <span className="font-mono text-[11px] text-sig-failed">{err}</span>}
           </div>
         </Panel>
       )}
 
       {listErr && (
-        <div className="font-mono text-[11px] mb-3 px-3 py-2 border border-sig-failed/30" style={{ color: '#ff5d5d' }}>
-          {listErr}
-        </div>
+        <ErrorBanner className="mb-3">{listErr}</ErrorBanner>
       )}
 
       {importMsg && (
-        <div className="font-mono text-[11px] mb-3 px-3 py-2 border border-amber/30" style={{ color: '#ffb000' }}>
+        <div className="text-amber border border-amber/30 bg-amber/5 font-mono text-[12px] px-3 py-2 mb-3">
           {importMsg}
         </div>
       )}

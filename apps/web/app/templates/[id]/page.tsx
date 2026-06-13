@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, type McpServerInfo } from '@/lib/api';
 import type { AgentTemplate, EffortLevel, PermissionMode, SkillInfo, ToolPack, ModelInfo, RunEngine } from '@fleet/shared';
 import { CLAUDE_TOOLS } from '@fleet/shared';
-import { Panel, Kicker, Field, Input, Textarea, Select, Btn } from '@/components/ui';
+import { Panel, Kicker, Field, Input, Textarea, Select, Btn, ErrorBanner } from '@/components/ui';
 import { MultiPicker } from '@/components/MultiPicker';
 import { PackBar } from '@/components/PackBar';
 import { ModelSelect, modelEngine } from '@/components/ModelSelect';
@@ -163,9 +163,9 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
 
   if (loadErr) {
     return (
-      <div className="font-mono text-[12px] text-sig-failed">
+      <div className="font-mono text-[12px]">
         <Link href="/templates" className="text-amber">← templates</Link>
-        <div className="mt-6">{loadErr}</div>
+        <ErrorBanner className="mt-6">{loadErr}</ErrorBanner>
       </div>
     );
   }
@@ -257,7 +257,7 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
               <Btn variant="solid" onClick={quickLaunch} disabled={launchBusy}>
                 {launchBusy ? 'Launching…' : '▶ Launch'}
               </Btn>
-              {launchErr && <span className="font-mono text-[11px]" style={{ color: '#ff5d5d' }}>{launchErr}</span>}
+              {launchErr && <span className="font-mono text-[11px] text-sig-failed">{launchErr}</span>}
             </div>
           </Panel>
 
@@ -322,8 +322,8 @@ export default function TemplateDetail({ params }: { params: { id: string } }) {
                 ✕ Delete
               </Btn>
             )}
-            {saved && <span className="font-mono text-[11px]" style={{ color: '#54e08a' }}>✓ saved</span>}
-            {err && <span className="font-mono text-[11px]" style={{ color: '#ff5d5d' }}>{err}</span>}
+            {saved && <span className="font-mono text-[11px] text-sig-completed">✓ saved</span>}
+            {err && <span className="font-mono text-[11px] text-sig-failed">{err}</span>}
           </div>
         </div>
       </div>

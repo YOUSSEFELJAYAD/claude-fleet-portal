@@ -27,7 +27,7 @@ function CampaignRow({ c }: { c: Campaign }) {
           </div>
           <span className="font-mono text-[10px] text-faint">{ago(c.startedAt)}</span>
         </div>
-        <div className="text-ink text-[13px] mt-2 leading-snug line-clamp-2 group-hover:text-white">{c.objective}</div>
+        <div className="text-ink text-[13px] mt-2 leading-snug line-clamp-2 group-hover:text-ink">{c.objective}</div>
         <div className="mt-3 flex items-center justify-between font-mono text-[11px]">
           <span className="text-dim">{done}/{total} tasks{c.liveWorkers ? <span className="text-amber"> · {c.liveWorkers} live</span> : null}</span>
           <span className="text-amber tnum">{usd(c.costUsd)}</span>

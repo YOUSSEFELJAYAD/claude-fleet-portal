@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, type ApiError } from '@/lib/api';
 import type { AddonInfo } from '@fleet/shared';
-import { Panel, Kicker, Btn, Dot } from '@/components/ui';
+import { Panel, Kicker, Btn, Dot, ErrorBanner } from '@/components/ui';
 
 /** §22 — Add-on Marketplace: optional capabilities toggled at runtime. Enabling an
  *  add-on unlocks its dedicated page (it appears in the nav rail under Add-ons). */
@@ -93,17 +93,13 @@ export default function AddonsPage() {
     <div>
       <div className="mb-5">
         <Kicker>settings</Kicker>
-        <h1 className="font-display text-[22px] text-ink tracking-wide mt-1">Add-on Marketplace</h1>
+        <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">Add-on Marketplace</h1>
         <div className="font-mono text-[11.5px] text-faint mt-1.5">
           optional capabilities for the whole fleet — enable one and its page appears in the rail
         </div>
       </div>
 
-      {err && (
-        <div className="font-mono text-[12px] mb-4 border px-3 py-2" style={{ color: '#ff5d5d', borderColor: '#ff5d5d40', background: 'rgba(255,93,93,0.05)' }}>
-          {err}
-        </div>
-      )}
+      {err && <ErrorBanner className="mb-4">{err}</ErrorBanner>}
 
       {!addons ? (
         <div className="font-mono text-faint text-[12px]">loading add-ons…</div>

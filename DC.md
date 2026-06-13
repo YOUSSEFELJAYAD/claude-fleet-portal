@@ -1110,3 +1110,37 @@ panel (enabled toggle + the four thresholds + max-per-day, live/off indicator), 
 the existing `@/components/ui` design system; nav entry added to `Shell.tsx` after Templates
 (glyph `✦`). `pnpm -r typecheck` clean across shared/server/web and `next build` lists
 `/learning` as a prerendered route. The "Web UI" item above is now done.
+
+## 30. UI-consistency pass + shared `ErrorBanner` primitive (2026-06-13)
+
+Goal: every page on one design system. Audited all 30 `page.tsx` files against the `ui.tsx`
+primitives + `globals.css` HUD canon (3 parallel read-only audit agents). The divergences were
+concentrated, not pervasive — every page already imported the system; the real gaps were:
+hand-rolled error banners built from inline `sig-failed` hex (~15 pages); `research/page.tsx` (a
+stock Tailwind `text-lg font-semibold` heading, `rounded` corners that broke the square HUD
+language, off-palette hex `#3ad29f`/`#ff8a5d`, custom page padding); `releases` + `addons` headers
+at `text-[22px]` instead of the canon `text-[26px]`; `projects/[id]/page.tsx` raw `<button>`s
+reimplementing `Btn` plus a GitHub-trigger form built on an **undefined `bg-surface` class**
+(invisible-background bug) and raw `<input>`/`<select>`; and scattered inline-hex-for-token +
+stock Tailwind (`text-red-400`, `group-hover:text-white`).
+
+Changes:
+- **New `ErrorBanner` primitive** in `components/ui.tsx` — the one canonical error box
+  (`border-sig-failed/40 bg-sig-failed/8 text-sig-failed font-mono text-[12px]`, optional
+  `onRetry`). Adopted on 15 pages, replacing every hand-rolled inline-hex banner.
+- **Reworked `research/page.tsx`** to canon: Kicker + `text-[26px]` header, `<Panel>` (no
+  `rounded`), token colors, palette `accent-amber` checkbox, mono links, standard layout.
+- **Fixed `projects/[id]/page.tsx`**: the `bg-surface` bug → `<Input>`/`<Select>`; "✦ Plan board"
+  and "+ add" raw buttons → `<Btn variant="amber">`; error blocks → `<ErrorBanner>`; status badges,
+  the on/off toggle, and validation-command color → tokens.
+- **Unified `releases` + `addons` headers** to `text-[26px]` (addon SUB-pages keep `[22px]` as the
+  established detail-page scale).
+- **Swept inline-hex-for-token → `sig-*`/`amber`/`dim`/`faint` classes** and stock Tailwind
+  (`text-red-400`→`sig-failed`, `text-white`→`ink`) across ~20 pages — leaving intentional
+  status-helper / `<Dot color>` / `<Stat accent>` hex untouched.
+
+Method: 3 parallel read-only audits → 3 parallel edit agents over disjoint page groups (exact fix
+lists) + hand-done `research` and `projects/[id]` + a final grep sweep. Verified: `pnpm -r
+typecheck` clean (shared/server/web); `next build` compiles all 30 routes; grep sweep shows 0
+hand-rolled banners, 0 `bg-surface`, 0 stray `text-[22px]`/`text-white`. 23 files changed (22
+pages + `ui.tsx`).

@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Project, CreateProjectRequest, MergeMode, GitHealth } from '@fleet/shared';
-import { Panel, Kicker, Field, Input, Select, Toggle, Btn, Empty } from '@/components/ui';
+import { Panel, Kicker, Field, Input, Select, Toggle, Btn, Empty, ErrorBanner } from '@/components/ui';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
@@ -133,7 +133,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
           {busy ? 'Creating…' : '＋ Create Project'}
         </Btn>
         {err && (
-          <span className="font-mono text-[11px]" style={{ color: '#ff5d5d' }}>
+          <span className="font-mono text-[11px] text-sig-failed">
             {err}
           </span>
         )}
@@ -245,12 +245,12 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
               {p.name}
             </Link>
             {p.paused && (
-              <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border" style={{ color: '#ff7a45', borderColor: '#ff7a4550' }}>
+              <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border text-sig-killed border-sig-killed/50">
                 paused
               </span>
             )}
             {p.autoMerge && (
-              <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border" style={{ color: '#ff5d5d', borderColor: '#ff5d5d50' }}>
+              <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border text-sig-failed border-sig-failed/50">
                 full-auto
               </span>
             )}
@@ -292,10 +292,7 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
                 <Toggle on={autoMerge} onChange={setAutoMerge} label={autoMerge ? 'full-auto' : 'human approve'} />
               </div>
               {autoMerge && (
-                <div
-                  className="mt-2 font-mono text-[10px] leading-snug border px-2 py-1.5"
-                  style={{ color: '#ff5d5d', borderColor: '#ff5d5d40', background: 'rgba(255,93,93,0.06)' }}
-                >
+                <div className="mt-2 font-mono text-[10px] leading-snug border px-2 py-1.5 text-sig-failed border-sig-failed/40 bg-sig-failed/[0.06]">
                   ⚠ trusted full-auto: the PM merges into <span className="text-ink">{p.defaultBranch}</span> with no human
                   review. Checks still run, but no one approves the diff. Default off.
                 </div>
@@ -424,12 +421,12 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
               ✕ Delete Project
             </Btn>
             {saved && (
-              <span className="font-mono text-[11px]" style={{ color: '#54e08a' }}>
+              <span className="font-mono text-[11px] text-sig-completed">
                 saved
               </span>
             )}
             {err && (
-              <span className="font-mono text-[11px]" style={{ color: '#ff5d5d' }}>
+              <span className="font-mono text-[11px] text-sig-failed">
                 {err}
               </span>
             )}
@@ -473,12 +470,7 @@ export default function ProjectsPage() {
       <CreateForm onCreated={reload} />
 
       {error ? (
-        <div className="font-mono text-[12px] border px-3 py-2" style={{ color: '#ff5d5d', borderColor: '#ff5d5d30', background: 'rgba(255,93,93,0.05)' }}>
-          {error} ·{' '}
-          <button onClick={reload} className="underline">
-            retry
-          </button>
-        </div>
+        <ErrorBanner onRetry={reload}>{error}</ErrorBanner>
       ) : loading ? (
         <div className="font-mono text-faint text-[12px]">loading projects…</div>
       ) : projects.length === 0 ? (

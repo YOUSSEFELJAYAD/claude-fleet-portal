@@ -2,7 +2,7 @@
 import React, { useDeferredValue, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import { Panel, Kicker, Btn, Input, Textarea, Dot } from '@/components/ui';
+import { Panel, Kicker, Btn, Input, Textarea, Dot, ErrorBanner } from '@/components/ui';
 import { usd, ago } from '@/lib/format';
 
 const POLL_MS = 4000;
@@ -173,7 +173,7 @@ function PermissionCard({ item, onAction }: { item: InboxItem; onAction: () => v
           No pending request captured. Open the run timeline before deciding.
         </div>
       )}
-      {err && <div className="font-mono text-[11px] mt-3" style={{ color: '#ff5d5d' }}>{err}</div>}
+      {err && <div className="font-mono text-[11px] mt-3 text-sig-failed">{err}</div>}
     </CardShell>
   );
 }
@@ -233,7 +233,7 @@ function InputCard({ item, onAction }: { item: InboxItem; onAction: () => void }
           </div>
         </div>
       </div>
-      {err && <div className="font-mono text-[11px] mt-3" style={{ color: '#ff5d5d' }}>{err}</div>}
+      {err && <div className="font-mono text-[11px] mt-3 text-sig-failed">{err}</div>}
     </CardShell>
   );
 }
@@ -389,9 +389,7 @@ export default function InboxPage() {
           </Panel>
 
           {err && (
-            <div className="border hairline p-3 font-mono text-[11px]" style={{ color: '#ff5d5d', borderColor: 'rgba(255,93,93,0.3)' }}>
-              {err}
-            </div>
+            <ErrorBanner>{err}</ErrorBanner>
           )}
 
           {loading && !err && (

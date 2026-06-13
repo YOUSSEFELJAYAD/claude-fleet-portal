@@ -5,7 +5,7 @@ import { api, API } from '@/lib/api';
 import type { Run } from '@fleet/shared';
 import { statusMeta } from '@/lib/status';
 import { usd, tokens, dur, clock } from '@/lib/format';
-import { Kicker, Empty, Dot, Panel, Toggle, Field, Input, Btn } from '@/components/ui';
+import { Kicker, Empty, Dot, Panel, Toggle, Field, Input, Select, Btn, ErrorBanner } from '@/components/ui';
 
 interface SavedSearch {
   id: string;
@@ -195,11 +195,11 @@ export default function HistoryPage() {
           <span className="text-faint font-mono text-[10px] ml-1">· full transcripts</span>
         </div>
         <div className="p-4">
-          <input
+          <Input
             value={deepQ}
             onChange={(e) => setDeepQ(e.target.value)}
             placeholder="search full transcript text, tool calls, results…"
-            className="w-full bg-black/40 border border-line2 text-ink font-mono text-[12px] px-3 py-2 focus:border-amber/60 outline-none placeholder:text-faint"
+            className="w-full"
           />
           {deepAvailable === false && (
             <p className="font-mono text-[10px] text-faint mt-2">
@@ -259,22 +259,21 @@ export default function HistoryPage() {
       </div>
 
       <div className="flex gap-2 mb-4">
-        <input
+        <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="search task, cwd, result…"
-          className="flex-1 bg-black/40 border border-line2 text-ink font-mono text-[12px] px-3 py-2 focus:border-amber/60 outline-none placeholder:text-faint"
+          className="flex-1"
         />
-        <select
+        <Select
           value={status}
           onChange={(e) => setStatus(e.target.value)}
-          className="bg-black/40 border border-line2 text-ink font-mono text-[12px] px-3 py-2 focus:border-amber/60 outline-none cursor-pointer"
         >
           <option value="">all statuses</option>
           {['completed', 'failed', 'killed', 'running', 'orchestrating'].map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
-        </select>
+        </Select>
         <a
           href={csvHref}
           className="font-display uppercase tracking-wider text-[10px] px-3 py-2 border border-line2 text-faint hover:text-amber hover:border-amber/60 inline-flex items-center"
@@ -309,9 +308,7 @@ export default function HistoryPage() {
 
       {/* Hide the regular runs list while a deep search query is active (PRD F7: swap). */}
       {!showDeepResults && (error ? (
-        <div className="font-mono text-sig-failed text-[12px] border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">
-          {error} · <button onClick={() => setReload((n) => n + 1)} className="underline">retry</button>
-        </div>
+        <ErrorBanner onRetry={() => setReload((n) => n + 1)}>{error}</ErrorBanner>
       ) : loading ? (
         <div className="font-mono text-faint text-[12px]">querying…</div>
       ) : runs.length === 0 ? (

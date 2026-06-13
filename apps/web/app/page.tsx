@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useFleet } from '@/lib/live';
 import { api } from '@/lib/api';
 import { RunCard } from '@/components/RunCard';
-import { Kicker, Empty } from '@/components/ui';
+import { Kicker, Empty, ErrorBanner } from '@/components/ui';
 import { RUN_STATUSES, LIVE_STATUSES } from '@fleet/shared';
 
 type FilterKey = 'all' | 'live' | 'completed' | 'failed' | 'killed' | 'archived';
@@ -96,7 +96,7 @@ export default function FleetDashboard() {
       </div>
 
       {archivedErr && (
-        <div className="font-mono text-[11px] mb-4" style={{ color: '#ff5d5d' }}>{archivedErr}</div>
+        <ErrorBanner className="mb-4">{archivedErr}</ErrorBanner>
       )}
 
       {filtered.length === 0 ? (

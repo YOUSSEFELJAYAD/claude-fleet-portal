@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import type { PortalConfig, SpendSummary } from '@fleet/shared';
-import { Panel, Kicker, Field, Input, Select, Btn, Stat, Gauge } from '@/components/ui';
+import { Panel, Kicker, Field, Input, Select, Btn, Stat, Gauge, ErrorBanner } from '@/components/ui';
 import { usd } from '@/lib/format';
 
 const POLL_MS = 5000;
@@ -176,13 +176,10 @@ export default function GuardrailsPage() {
         </div>
 
         {capReached && (
-          <div
-            className="font-mono text-[11px] mx-4 mt-4 px-4 py-3 border leading-relaxed"
-            style={{ color: '#ff5d5d', borderColor: '#ff5d5d55', background: '#ff5d5d12' }}
-          >
+          <ErrorBanner className="!text-[11px] mx-4 mt-4 px-4 py-3 leading-relaxed">
             <span className="font-display tracking-wide">DAILY CAP REACHED</span> — new launches are
             refused until tomorrow (or raise the cap below)
-          </div>
+          </ErrorBanner>
         )}
 
         <div className="p-4 grid grid-cols-2 gap-5">
@@ -321,19 +318,16 @@ export default function GuardrailsPage() {
 
           <div className="mt-6 flex items-center gap-3">
             <Btn variant="solid" onClick={save} disabled={busy}>{busy ? 'saving…' : 'Save Guardrails'}</Btn>
-            {saved && <span className="font-mono text-[11px]" style={{ color: '#54e08a' }}>✓ saved</span>}
-            {cfgErr && <span className="font-mono text-[11px]" style={{ color: '#ff5d5d' }}>{cfgErr}</span>}
+            {saved && <span className="font-mono text-[11px] text-sig-completed">✓ saved</span>}
+            {cfgErr && <span className="font-mono text-[11px] text-sig-failed">{cfgErr}</span>}
           </div>
         </div>
       </Panel>
 
       {/* ── 3. Danger zone ─────────────────────────────────────────────────── */}
       <Panel className="p-0 overflow-hidden">
-        <div
-          className="px-4 py-3 border-b"
-          style={{ borderColor: '#ff5d5d40', background: 'rgba(255,93,93,0.06)' }}
-        >
-          <span className="kicker" style={{ color: '#ff5d5d' }}>danger zone</span>
+        <div className="px-4 py-3 border-b border-sig-failed/40 bg-sig-failed/[0.06]">
+          <span className="kicker text-sig-failed">danger zone</span>
         </div>
         <div className="p-4">
           <p className="font-mono text-[11px] text-dim leading-relaxed mb-4">

@@ -76,7 +76,7 @@ function BenchmarkCard({ b }: { b: Benchmark }) {
         </div>
         <span className="font-mono text-[10px] text-faint">{ago(b.createdAt)}</span>
       </div>
-      <div className="text-ink text-[13px] mt-2 leading-snug line-clamp-2 group-hover:text-white">{b.prompt}</div>
+      <div className="text-ink text-[13px] mt-2 leading-snug line-clamp-2 group-hover:text-ink">{b.prompt}</div>
       <div className="mt-3 flex items-center justify-between font-mono text-[11px]">
         <span className="text-dim">{b.mode} · {b.variants.length} variants</span>
         {b.winnerRunId && <span className="text-amber">winner decided</span>}
@@ -131,7 +131,7 @@ function VariantRow({
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-[11px] text-dim">variant {index + 1}</span>
         {canRemove && (
-          <button onClick={onRemove} className="font-mono text-[11px] text-faint hover:text-red-400">✕</button>
+          <button onClick={onRemove} className="font-mono text-[11px] text-faint hover:text-sig-failed">✕</button>
         )}
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
@@ -405,7 +405,7 @@ export default function BenchmarksPage() {
               <div className="flex items-center justify-between mb-2">
                 <Kicker>variants ({variants.length}/4)</Kicker>
                 {variants.length < 4 && (
-                  <button onClick={addVariant} className="font-mono text-[11px] text-amber hover:text-white">+ add variant</button>
+                  <Btn variant="ghost" onClick={addVariant}>+ add variant</Btn>
                 )}
               </div>
               <div className="space-y-2">
@@ -426,7 +426,7 @@ export default function BenchmarksPage() {
 
             <div className="flex items-center gap-3 pt-1">
               <Btn variant="solid" onClick={launch} disabled={busy}>{busy ? 'Launching…' : '⚗ Run Benchmark'}</Btn>
-              {err && <span className="font-mono text-[11px]" style={{ color: '#ff5d5d' }}>{err}</span>}
+              {err && <span className="font-mono text-[11px] text-sig-failed">{err}</span>}
             </div>
           </div>
         </Panel>
@@ -465,9 +465,9 @@ export default function BenchmarksPage() {
               </div>
               <div className="flex items-center gap-3">
                 {(selected.status === 'running' || selected.status === 'judging') && (
-                  <button onClick={() => killBenchmark(selected.id)} className="font-mono text-[11px] text-faint hover:text-red-400">✕ kill</button>
+                  <Btn variant="danger" onClick={() => killBenchmark(selected.id)}>✕ kill</Btn>
                 )}
-                <button onClick={() => setSelected(null)} className="font-mono text-[11px] text-faint hover:text-ink">dismiss</button>
+                <Btn variant="ghost" onClick={() => setSelected(null)}>dismiss</Btn>
               </div>
             </div>
             <div className="p-4 space-y-3">

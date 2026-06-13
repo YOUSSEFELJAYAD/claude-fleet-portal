@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import type { ReleaseInfo, ReleaseStatus, SelfUpdateResult } from '@fleet/shared';
-import { Panel, Kicker, Btn, Stat } from '@/components/ui';
+import { Panel, Kicker, Btn, Stat, ErrorBanner } from '@/components/ui';
 import { MarkdownView } from '@/components/MarkdownView';
 
 function fmtDate(iso: string | null): string {
@@ -62,10 +62,8 @@ export default function ReleasesPage() {
     return (
       <div>
         <Kicker>release</Kicker>
-        <h1 className="font-display text-[22px] text-ink tracking-wide mt-1 mb-4">Releases & Updates</h1>
-        <div className="font-mono text-[12px] text-sig-failed border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">
-          {loadErr} · <button onClick={() => load()} className="underline">retry</button>
-        </div>
+        <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-4">Releases & Updates</h1>
+        <ErrorBanner onRetry={() => load()}>{loadErr}</ErrorBanner>
       </div>
     );
   }
@@ -78,7 +76,7 @@ export default function ReleasesPage() {
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
           <Kicker>release</Kicker>
-          <h1 className="font-display text-[22px] text-ink tracking-wide mt-1">Releases & Updates</h1>
+          <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">Releases & Updates</h1>
         </div>
         <div className="flex items-center gap-2">
           <Btn onClick={() => load(true)} disabled={checking}>
@@ -122,9 +120,9 @@ export default function ReleasesPage() {
             github.com/{s.repo}
           </a>
           {s.checkedAt && <> · last checked {new Date(s.checkedAt).toLocaleTimeString()}</>}
-          {s.error && <span style={{ color: '#ff5d5d' }}> · check failed: {s.error}</span>}
+          {s.error && <span className="text-sig-failed"> · check failed: {s.error}</span>}
           {s.updateAvailable && !s.canSelfUpdate && (
-            <span style={{ color: '#ffb000' }}> · update available, but no git origin remote — pull manually</span>
+            <span className="text-amber"> · update available, but no git origin remote — pull manually</span>
           )}
         </div>
       )}
@@ -149,7 +147,7 @@ export default function ReleasesPage() {
       {updateErr && (
         <Panel className="p-4 mb-5">
           <Kicker>update failed</Kicker>
-          <div className="font-mono text-[11.5px] mt-2" style={{ color: '#ff5d5d' }}>{updateErr}</div>
+          <div className="font-mono text-[11.5px] mt-2 text-sig-failed">{updateErr}</div>
         </Panel>
       )}
       {updateResult && (
@@ -158,7 +156,7 @@ export default function ReleasesPage() {
           <div className="mt-2 space-y-2">
             {updateResult.steps.map((st, i) => (
               <div key={i}>
-                <div className="font-mono text-[11px]" style={{ color: st.ok ? '#54e08a' : '#ff5d5d' }}>
+                <div className={`font-mono text-[11px] ${st.ok ? 'text-sig-completed' : 'text-sig-failed'}`}>
                   {st.ok ? '✓' : '✕'} {st.step}
                 </div>
                 {st.output && (
@@ -192,12 +190,12 @@ export default function ReleasesPage() {
                     <span className="font-display text-[14px] text-ink tracking-wide">{r.name || r.tag}</span>
                     <span className="font-mono text-[9.5px] uppercase tracking-wider px-1.5 py-0.5 border text-dim border-line">{r.tag}</span>
                     {r.prerelease && (
-                      <span className="font-mono text-[9.5px] uppercase tracking-wider px-1.5 py-0.5 border" style={{ color: '#ffb000', borderColor: '#ffb00040' }}>
+                      <span className="font-mono text-[9.5px] uppercase tracking-wider px-1.5 py-0.5 border text-amber border-amber/25">
                         pre-release
                       </span>
                     )}
                     {isCurrent && (
-                      <span className="font-mono text-[9.5px] uppercase tracking-wider px-1.5 py-0.5 border" style={{ color: '#54e08a', borderColor: '#54e08a40' }}>
+                      <span className="font-mono text-[9.5px] uppercase tracking-wider px-1.5 py-0.5 border text-sig-completed border-sig-completed/25">
                         installed
                       </span>
                     )}

@@ -24,7 +24,7 @@ function TaskCard({ task }: { task: TeamTask }) {
       {(task.blockedBy.length > 0 || task.blocks.length > 0) && (
         <div className="mt-2 flex flex-wrap gap-1.5 font-mono text-[9.5px]">
           {task.blockedBy.map((b) => (
-            <span key={'bb' + b} className="text-sig-failed border border-sig-failed/30 px-1" style={{ color: '#ff5d5d' }}>⊣ blocked by #{b}</span>
+            <span key={'bb' + b} className="text-sig-failed border border-sig-failed/30 px-1">⊣ blocked by #{b}</span>
           ))}
           {task.blocks.map((b) => (
             <span key={'bl' + b} className="text-dim border border-line2 px-1">⊢ blocks #{b}</span>
@@ -58,10 +58,11 @@ export default function TeamDetail({ params }: { params: { id: string } }) {
   return (
     <div>
       <Link href="/teams" className="font-display text-[11px] uppercase tracking-wider text-faint hover:text-amber">← teams</Link>
-      <div className="flex items-center gap-3 mt-3 mb-1">
-        <span style={{ color: '#ffb000' }}>⧉</span>
+      <Kicker>team</Kicker>
+      <div className="flex items-center gap-3 mt-1 mb-1">
+        <span className="text-amber">⧉</span>
         <h1 className="font-display text-[22px] tracking-wide text-ink">{view?.name ?? id.slice(0, 8)}</h1>
-        {connected && <span className="font-mono text-[9px] text-sig-completed animate-pulseGlow" style={{ color: '#54e08a' }}>● watching</span>}
+        {connected && <span className="font-mono text-[9px] text-sig-completed animate-pulseGlow">● watching</span>}
       </div>
       <div className="font-mono text-[10px] text-faint mb-5 truncate">{view?.taskDir ?? id}</div>
 

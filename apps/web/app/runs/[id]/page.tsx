@@ -7,7 +7,7 @@ import { api, API } from '@/lib/api';
 import { statusMeta } from '@/lib/status';
 import { LIVE_STATUSES } from '@fleet/shared';
 import { usd, tokens, dur } from '@/lib/format';
-import { Panel, Kicker, StatusBadge, Gauge, Btn, Stat, Input } from '@/components/ui';
+import { Panel, Kicker, StatusBadge, Gauge, Btn, Stat, Input, ErrorBanner } from '@/components/ui';
 import { Tree } from '@/components/Tree';
 import { Timeline } from '@/components/Timeline';
 import { Waterfall } from '@/components/Waterfall'; // A1
@@ -92,20 +92,19 @@ export default function RunDetail({ params }: { params: { id: string } }) {
           <div className="flex items-center gap-3">
             <StatusBadge status={run.status} big />
             {isEngineRun && (
-              <span className="font-display text-[10px] border px-2 py-0.5 uppercase tracking-wider" style={{ color: '#39d4cf', borderColor: '#39d4cf55' }}>
+              <span className="font-display text-[10px] border px-2 py-0.5 uppercase tracking-wider text-sig-running border-sig-running/[0.33]">
                 ◍ {run.engine} engine
               </span>
             )}
             {run.killReason && (
               <span
-                className="font-display text-[10px] border px-2 py-0.5 uppercase tracking-wider"
+                className="font-display text-[10px] border px-2 py-0.5 uppercase tracking-wider text-sig-failed border-sig-failed/[0.33]"
                 title={run.error ?? undefined}
-                style={{ color: '#ff5d5d', borderColor: '#ff5d5d55' }}
               >
                 {run.killReason === 'timeout' ? '⏱ timed out (maxRunMinutes)' : run.killReason === 'budget' ? '$ budget kill' : '■ stopped by operator'}
               </span>
             )}
-            {run.ultracode && <span className="font-display text-[10px] text-sig-failed border border-sig-failed/40 px-2 py-0.5 uppercase tracking-wider" style={{ color: '#ff5d5d' }}>⚡ ultracode</span>}
+            {run.ultracode && <span className="font-display text-[10px] text-sig-failed border border-sig-failed/40 px-2 py-0.5 uppercase tracking-wider">⚡ ultracode</span>}
             <span className="font-mono text-[10px] text-faint">{id.slice(0, 13)}</span>
           </div>
           <h1 className="text-ink text-[17px] mt-2 leading-snug max-w-3xl">{run.task}</h1>
@@ -136,9 +135,7 @@ export default function RunDetail({ params }: { params: { id: string } }) {
             </div>
           )}
           {run.error && (run.status === 'failed' || run.status === 'killed') && (
-            <div className="font-mono text-[11px] mt-2 px-3 py-2 border max-w-3xl" style={{ color: '#ff5d5d', borderColor: '#ff5d5d40', background: 'rgba(255,93,93,0.05)' }}>
-              {run.error.slice(0, 400)}
-            </div>
+            <ErrorBanner className="mt-2 max-w-3xl">{run.error.slice(0, 400)}</ErrorBanner>
           )}
         </div>
 
@@ -251,8 +248,8 @@ export default function RunDetail({ params }: { params: { id: string } }) {
               </span>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {live && <span className="font-mono text-[9px] text-sig-running animate-pulseGlow" style={{ color: '#39d4cf' }}>● LIVE</span>}
-              <button onClick={() => setRaw((r) => !r)} className="font-mono text-[10px] px-2 py-1 border border-line2 hover:border-amber/50" style={{ color: raw ? '#ffb000' : '#9aa1ab' }}>
+              {live && <span className="font-mono text-[9px] text-sig-running animate-pulseGlow">● LIVE</span>}
+              <button onClick={() => setRaw((r) => !r)} className={`font-mono text-[10px] px-2 py-1 border border-line2 hover:border-amber/50 ${raw ? 'text-amber' : 'text-dim'}`}>
                 raw
               </button>
             </div>

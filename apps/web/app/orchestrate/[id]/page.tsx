@@ -97,7 +97,7 @@ export default function CampaignDetail({ params }: { params: { id: string } }) {
             <span className="font-display text-[11px] uppercase tracking-wider px-2 py-0.5 border" style={{ color, borderColor: color + '50', background: color + '12' }}>
               <Dot color={color} live={live} size={6} /> {c.status}
             </span>
-            {connected && live && <span className="font-mono text-[9px] text-sig-running animate-pulseGlow" style={{ color: '#39d4cf' }}>● LIVE</span>}
+            {connected && live && <span className="font-mono text-[9px] text-sig-running animate-pulseGlow">● LIVE</span>}
           </div>
           <h1 className="text-ink text-[17px] mt-2 leading-snug max-w-3xl">{c.objective}</h1>
           <div className="font-mono text-[11px] text-faint mt-1">{c.cwd} · maxParallel {c.maxParallel}</div>
@@ -116,7 +116,7 @@ export default function CampaignDetail({ params }: { params: { id: string } }) {
             >
               ■ Kill Campaign
             </Btn>
-            {killErr && <span className="font-mono text-[10px]" style={{ color: '#ff5d5d' }}>{killErr}</span>}
+            {killErr && <span className="font-mono text-[10px] text-sig-failed">{killErr}</span>}
           </div>
         )}
       </div>

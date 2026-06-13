@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import type { WebResult, ResearchStatusResponse } from '@fleet/shared';
-import { Btn, Input } from '@/components/ui';
+import { Kicker, Panel, Btn, Input, ErrorBanner, Dot } from '@/components/ui';
 
 /** Only http(s) links are safe in an href — a `javascript:`/`data:` result URL is an XSS
  *  vector. Results are already scheme-filtered server-side; this is defense-in-depth. */
@@ -52,51 +52,86 @@ export default function ResearchPage() {
   }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-4">
-      <h1 className="text-lg font-semibold">Web Research</h1>
-
-      {/* settings / status strip */}
-      <div className="text-[12px] rounded border hairline p-3 space-y-2">
+    <div>
+      <div className="flex items-end justify-between mb-5">
         <div>
-          SearXNG: <span className="font-mono">{status?.searxngUrl ?? '…'}</span>{' '}
-          <span style={{ color: status?.ok ? '#3ad29f' : '#ff5d5d' }}>
-            {status ? (status.ok ? '● reachable' : `● ${status.state}`) : ''}
-          </span>
+          <Kicker>web research</Kicker>
+          <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">Web Research</h1>
         </div>
-        {status && !status.ok && <div style={{ color: '#ff8a5d' }}>{status.detail}</div>}
-        <div className="flex gap-2">
-          <Btn onClick={() => api.installAddon('web-research').then((r) => alert(r.note))}>Install SearXNG (Docker)</Btn>
-          <Btn onClick={() => api.registerSearxngMcp().then((r) => alert(r.note ?? (r.ok ? 'Registered mcp__searxng' : r.output)))}>Register agent MCP tool</Btn>
+        <div className="text-right font-mono text-[11px]">
+          {status ? (
+            <span className="inline-flex items-center gap-1.5" style={{ color: status.ok ? '#54e08a' : '#ff5d5d' }}>
+              <Dot color={status.ok ? '#54e08a' : '#ff5d5d'} live={status.ok} size={6} />
+              {status.ok ? 'searxng reachable' : `searxng ${status.state}`}
+            </span>
+          ) : (
+            <span className="text-faint">checking…</span>
+          )}
         </div>
       </div>
+
+      {/* settings / status strip */}
+      <Panel className="p-3 mb-4">
+        <div className="space-y-2">
+          <div className="font-mono text-[12px] text-dim">
+            SearXNG: <span className="text-ink">{status?.searxngUrl ?? '…'}</span>
+          </div>
+          {status && !status.ok && status.detail && (
+            <div className="font-mono text-[11px] text-sig-killed">{status.detail}</div>
+          )}
+          <div className="flex gap-2 pt-1">
+            <Btn onClick={() => api.installAddon('web-research').then((r) => alert(r.note))}>Install SearXNG (Docker)</Btn>
+            <Btn onClick={() => api.registerSearxngMcp().then((r) => alert(r.note ?? (r.ok ? 'Registered mcp__searxng' : r.output)))}>Register agent MCP tool</Btn>
+          </div>
+        </div>
+      </Panel>
 
       {/* search box */}
       <div className="flex gap-2">
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search the web…"
-          onKeyDown={(e) => e.key === 'Enter' && query.trim() && runSearch()} />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search the web…"
+          onKeyDown={(e) => e.key === 'Enter' && query.trim() && runSearch()}
+        />
         <Btn variant="solid" onClick={runSearch} disabled={busy || !query.trim()}>Search</Btn>
       </div>
-      {err && <div className="text-[12px]" style={{ color: '#ff5d5d' }}>{err}</div>}
+      {err && <ErrorBanner className="mt-3">{err}</ErrorBanner>}
 
       {/* results */}
       {results.length > 0 && (
-        <>
+        <div className="mt-4 space-y-3">
+          <Kicker>results · {results.length}</Kicker>
           <div className="space-y-2">
-            {results.map((r) => (
-              <label key={r.url} className="flex gap-2 items-start text-[13px] rounded border hairline p-2 cursor-pointer">
-                <input type="checkbox" checked={selected.has(r.url)} onChange={() => toggle(r.url)} className="mt-1" />
-                <span>
-                  <a href={safeHref(r.url)} target="_blank" rel="noreferrer" className="font-medium underline">{r.title || r.url}</a>
-                  <span className="opacity-50"> · {r.engine}</span>
-                  <div className="opacity-70">{r.snippet}</div>
-                </span>
-              </label>
-            ))}
+            {results.map((r) => {
+              const on = selected.has(r.url);
+              return (
+                <label
+                  key={r.url}
+                  className="flex gap-2.5 items-start text-[13px] border border-line2 p-2.5 cursor-pointer transition-colors hover:border-amber/40"
+                  style={{ opacity: on ? 1 : 0.6 }}
+                >
+                  <input type="checkbox" checked={on} onChange={() => toggle(r.url)} className="mt-1 accent-amber" />
+                  <span className="min-w-0">
+                    <a
+                      href={safeHref(r.url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-mono text-dim hover:text-amber transition-colors break-words"
+                    >
+                      {r.title || r.url}
+                    </a>
+                    <span className="font-mono text-faint text-[11px]"> · {r.engine}</span>
+                    <div className="text-faint text-[12px] mt-0.5">{r.snippet}</div>
+                  </span>
+                </label>
+              );
+            })}
           </div>
           <Btn variant="solid" onClick={synthesize} disabled={busy || selected.size === 0}>
             {busy ? 'Launching…' : `Synthesize with agent (${selected.size})`}
           </Btn>
-        </>
+        </div>
       )}
     </div>
   );

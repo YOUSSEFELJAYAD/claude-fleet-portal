@@ -101,20 +101,17 @@ export default function FleetSchedulerPage() {
       </Panel>
 
       {status?.deadlocked && (
-        <div
-          className="font-mono text-[11px] mb-5 px-4 py-3 rounded border leading-relaxed"
-          style={{ color: '#ff5d5d', borderColor: '#ff5d5d55', background: '#ff5d5d12' }}
-        >
+        <div className="font-mono text-[11px] mb-5 px-4 py-3 border leading-relaxed border-sig-failed/40 bg-sig-failed/8 text-sig-failed">
           <span className="font-display tracking-wide">PM POOL DEADLOCKED.</span> The pool is 0
           (reserve {status.config.reserveSlotsForNonPm} ≥ maxConcurrentRuns {status.maxConcurrentRuns})
           while projects have Ready cards — nothing will launch. Lower the reserve in{' '}
-          <button onClick={openConfig} className="underline" style={{ color: '#ff5d5d' }}>⚙ Fleet Config</button>, or raise
+          <button onClick={openConfig} className="underline text-sig-failed">⚙ Fleet Config</button>, or raise
           global maxConcurrentRuns in settings.
         </div>
       )}
 
       {statusErr && (
-        <div className="font-mono text-[11px] text-sig-failed mb-4" style={{ color: '#ff5d5d' }}>
+        <div className="font-mono text-[11px] text-sig-failed mb-4">
           {statusErr}
         </div>
       )}
@@ -229,7 +226,7 @@ export default function FleetSchedulerPage() {
                       workers draw from the reserved slots. A null ceiling means no fleet-wide daily spend gate.
                     </p>
                     {cfgErr && (
-                      <div className="font-mono text-[11px] mt-3" style={{ color: '#ff5d5d' }}>{cfgErr}</div>
+                      <div className="font-mono text-[11px] mt-3 text-sig-failed">{cfgErr}</div>
                     )}
                   </>
                 )}

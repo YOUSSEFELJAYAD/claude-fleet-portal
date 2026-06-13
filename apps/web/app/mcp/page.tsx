@@ -64,7 +64,7 @@ export default function McpHealthPage() {
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right font-mono text-[11px] text-faint">
-            <span className="tnum" style={{ color: '#54e08a' }}>
+            <span className="tnum text-sig-completed">
               {connected}
             </span>{' '}
             connected ·{' '}
@@ -78,7 +78,7 @@ export default function McpHealthPage() {
 
       {fetchError && (
         <Panel className="mb-4 !border-sig-failed/40">
-          <div className="px-4 py-3 font-mono text-[12px]" style={{ color: '#ff5d5d' }}>
+          <div className="px-4 py-3 font-mono text-[12px] text-sig-failed">
             control plane unreachable — {fetchError}
           </div>
         </Panel>
@@ -86,7 +86,7 @@ export default function McpHealthPage() {
 
       {error && (
         <Panel className="mb-4 !border-amber/40">
-          <div className="px-4 py-3 font-mono text-[12px]" style={{ color: '#ffb000' }}>
+          <div className="px-4 py-3 font-mono text-[12px] text-amber">
             <span className="uppercase tracking-wider text-[10px] mr-2">claude mcp list</span>
             {error}
           </div>

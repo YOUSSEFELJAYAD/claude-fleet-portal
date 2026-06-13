@@ -27,10 +27,10 @@ export default function TeamsPage() {
             <Link key={t.id} href={`/teams/${t.id}`} className="block animate-riseIn" style={{ animationDelay: `${i * 40}ms` }}>
               <Panel ticked className="p-4 hover:border-amber/40 transition-colors group">
                 <div className="flex items-center justify-between">
-                  <span className="text-[13px]" style={{ color: '#ffb000' }}>⧉</span>
+                  <span className="text-[13px] text-amber">⧉</span>
                   <span className="font-mono text-[10px] text-faint">{ago(t.updatedAt)}</span>
                 </div>
-                <div className="font-mono text-[13px] text-ink mt-2 group-hover:text-white">{t.name}</div>
+                <div className="font-mono text-[13px] text-ink mt-2 group-hover:text-ink">{t.name}</div>
                 <div className="font-mono text-[10px] text-faint mt-0.5 truncate">{t.id}</div>
                 <div className="mt-3 font-mono text-[11px] text-dim">
                   <span className="text-amber tnum">{t.taskCount}</span> task{t.taskCount === 1 ? '' : 's'}

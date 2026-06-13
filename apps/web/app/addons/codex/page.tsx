@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import type { AddonInfo, AddonInstallResult } from '@fleet/shared';
-import { Panel, Kicker, Btn, Dot, Stat, Field, Input, Select } from '@/components/ui';
+import { Panel, Kicker, Btn, Dot, Stat, Field, Input, Select, ErrorBanner } from '@/components/ui';
 
 /** §24 — Codex Engine add-on page. Header: enable/disable, status strip (status dot, version, binary),
  *  install helper when missing, auth panel, config (default model + sandbox), how-it-works. */
@@ -146,11 +146,7 @@ export default function CodexPage() {
         </div>
       </div>
 
-      {err && (
-        <div className="font-mono text-[12px] mb-4 border px-3 py-2" style={{ color: '#ff5d5d', borderColor: '#ff5d5d40', background: 'rgba(255,93,93,0.05)' }}>
-          {err}
-        </div>
-      )}
+      {err && <ErrorBanner className="mb-4">{err}</ErrorBanner>}
 
       {/* ── status strip ── */}
       <Panel ticked className="p-4 mb-5">
@@ -169,7 +165,7 @@ export default function CodexPage() {
           <Stat label="version" value={a.version ?? '—'} />
         </div>
         {a.statusDetail && (
-          <div className="font-mono text-[10.5px] mt-3 pt-3 border-t hairline" style={{ color: '#9aa1ab' }}>
+          <div className="font-mono text-[10.5px] mt-3 pt-3 border-t hairline text-dim">
             {a.statusDetail}
           </div>
         )}
@@ -204,7 +200,7 @@ export default function CodexPage() {
             <div className="mt-4 space-y-2">
               {installResult.steps.map((st, i) => (
                 <div key={i}>
-                  <div className="font-mono text-[11px]" style={{ color: st.ok ? '#54e08a' : '#ff5d5d' }}>
+                  <div className={`font-mono text-[11px] ${st.ok ? 'text-sig-completed' : 'text-sig-failed'}`}>
                     {st.ok ? '✓' : '✕'} {st.step}
                   </div>
                   {st.output && (

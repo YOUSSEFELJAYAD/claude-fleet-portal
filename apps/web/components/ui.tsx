@@ -214,3 +214,26 @@ export function Empty({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+/** The one canonical error/alert box — square HUD, sig-failed palette. Replaces the
+ *  hand-rolled inline-hex banners that drifted across pages. Optional inline retry. */
+export function ErrorBanner({
+  children,
+  className = '',
+  onRetry,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <div className={`border border-sig-failed/40 bg-sig-failed/8 text-sig-failed font-mono text-[12px] px-3 py-2 ${className}`}>
+      {children}
+      {onRetry && (
+        <button type="button" onClick={onRetry} className="ml-2 underline hover:text-ink transition-colors">
+          retry
+        </button>
+      )}
+    </div>
+  );
+}

@@ -6,7 +6,7 @@ import type { TriggerView, CreateTriggerRequest } from '@/lib/api';
 import type { Project, Run, AgentTemplate } from '@fleet/shared';
 import { statusMeta } from '@/lib/status';
 import { usd, clock } from '@/lib/format';
-import { Panel, Kicker, Stat, Gauge, Empty, Dot } from '@/components/ui';
+import { Panel, Kicker, Stat, Gauge, Empty, Dot, Btn, Input, Select, ErrorBanner } from '@/components/ui';
 import { PlanModal } from '@/components/PlanModal';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
@@ -153,10 +153,10 @@ function TriggersPanel({ projectId }: TriggersPanelProps) {
       </div>
       <div className="p-4">
         {tErr && (
-          <div className="mb-3 font-mono text-[11px] px-2 py-1 border" style={{ color: '#ff5d5d', borderColor: '#ff5d5d30', background: 'rgba(255,93,93,0.05)' }}>
+          <ErrorBanner className="mb-3">
             {tErr}{' '}
-            <button onClick={() => setTErr(null)} className="underline">dismiss</button>
-          </div>
+            <button onClick={() => setTErr(null)} className="underline ml-1 hover:text-ink">dismiss</button>
+          </ErrorBanner>
         )}
 
         {/* trigger list */}
@@ -175,33 +175,27 @@ function TriggersPanel({ projectId }: TriggersPanelProps) {
                   &rarr; <span className="text-ink">{t.action}</span>
                 </span>
                 {t.lastError && (
-                  <span className="font-mono shrink-0 max-w-[200px] truncate" style={{ color: '#ff5d5d' }} title={t.lastError}>
+                  <span className="font-mono text-sig-failed shrink-0 max-w-[200px] truncate" title={t.lastError}>
                     ! {t.lastError}
                   </span>
                 )}
                 {/* enabled toggle */}
                 <button
                   onClick={() => handleToggle(t)}
-                  className="shrink-0 font-mono text-[10px] px-1.5 py-0.5 border transition-colors"
-                  style={
-                    t.enabled
-                      ? { color: '#54e08a', borderColor: '#54e08a40' }
-                      : { color: '#5b626d', borderColor: '#5b626d40' }
-                  }
+                  className={`shrink-0 font-mono text-[10px] px-1.5 py-0.5 border transition-colors ${
+                    t.enabled ? 'text-sig-completed border-sig-completed/25' : 'text-faint border-faint/25'
+                  }`}
                 >
                   {t.enabled ? 'on' : 'off'}
                 </button>
                 {/* poll now */}
-                <button
-                  onClick={() => handlePoll(t)}
-                  className="shrink-0 font-display uppercase tracking-wider text-[10px] px-2 py-0.5 border border-line2 text-dim hover:text-ink hover:border-amber/60 transition-colors"
-                >
+                <Btn variant="ghost" onClick={() => handlePoll(t)} className="shrink-0 !px-2 !py-0.5 !text-[10px]">
                   poll
-                </button>
+                </Btn>
                 {/* delete */}
                 <button
                   onClick={() => handleDelete(t)}
-                  className="shrink-0 font-mono text-[12px] text-faint hover:text-red-400 transition-colors"
+                  className="shrink-0 font-mono text-[12px] text-faint hover:text-sig-failed transition-colors"
                   title="remove trigger"
                 >
                   &times;
@@ -218,83 +212,79 @@ function TriggersPanel({ projectId }: TriggersPanelProps) {
         {/* add form */}
         <div className="flex flex-wrap gap-2 items-end">
           {/* kind */}
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 w-[120px]">
             <span className="font-mono text-[10px] text-faint uppercase tracking-wider">kind</span>
-            <select
+            <Select
               value={addKind}
               onChange={(e) => setAddKind(e.target.value as 'issue-label' | 'pr-opened')}
-              className="font-mono text-[11px] bg-surface border border-line2 px-2 py-1 text-ink"
+              className="!text-[11px] !py-1"
             >
               <option value="issue-label">issue-label</option>
               <option value="pr-opened">pr-opened</option>
-            </select>
+            </Select>
           </div>
 
           {/* repo */}
           <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
             <span className="font-mono text-[10px] text-faint uppercase tracking-wider">repo (owner/name)</span>
-            <input
+            <Input
               value={addRepo}
               onChange={(e) => setAddRepo(e.target.value)}
               placeholder="owner/name"
-              className="font-mono text-[11px] bg-surface border border-line2 px-2 py-1 text-ink placeholder:text-faint"
+              className="!text-[11px] !py-1"
             />
           </div>
 
           {/* label (only for issue-label) */}
           {addKind === 'issue-label' && (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 w-[120px]">
               <span className="font-mono text-[10px] text-faint uppercase tracking-wider">label</span>
-              <input
+              <Input
                 value={addLabel}
                 onChange={(e) => setAddLabel(e.target.value)}
                 placeholder="e.g. agent"
-                className="font-mono text-[11px] bg-surface border border-line2 px-2 py-1 text-ink placeholder:text-faint w-[120px]"
+                className="!text-[11px] !py-1"
               />
             </div>
           )}
 
           {/* action */}
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 w-[100px]">
             <span className="font-mono text-[10px] text-faint uppercase tracking-wider">action</span>
-            <select
+            <Select
               value={addAction}
               onChange={(e) => setAddAction(e.target.value as 'card' | 'run')}
-              className="font-mono text-[11px] bg-surface border border-line2 px-2 py-1 text-ink"
+              className="!text-[11px] !py-1"
             >
               <option value="card">card</option>
               <option value="run">run</option>
-            </select>
+            </Select>
           </div>
 
           {/* template (only for run) */}
           {addAction === 'run' && (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 w-[140px]">
               <span className="font-mono text-[10px] text-faint uppercase tracking-wider">template</span>
-              <select
+              <Select
                 value={addTemplate}
                 onChange={(e) => setAddTemplate(e.target.value)}
-                className="font-mono text-[11px] bg-surface border border-line2 px-2 py-1 text-ink"
+                className="!text-[11px] !py-1"
               >
                 <option value="">none</option>
                 {templates.map((tpl) => (
                   <option key={tpl.id} value={tpl.name}>{tpl.name}</option>
                 ))}
-              </select>
+              </Select>
             </div>
           )}
 
-          <button
-            onClick={handleAdd}
-            disabled={adding}
-            className="font-display uppercase tracking-wider text-[11px] px-3 py-1 border border-amber/50 text-amber hover:bg-amber/10 transition-colors disabled:opacity-50 self-end"
-          >
+          <Btn variant="amber" onClick={handleAdd} disabled={adding} className="self-end">
             {adding ? 'adding…' : '+ add'}
-          </button>
+          </Btn>
         </div>
 
         {addErr && (
-          <div className="mt-2 font-mono text-[11px]" style={{ color: '#ff5d5d' }}>
+          <div className="mt-2 font-mono text-[11px] text-sig-failed">
             {addErr}
           </div>
         )}
@@ -350,15 +340,9 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
         <Link href="/projects" className="text-amber">
           ← projects
         </Link>
-        <div
-          className="mt-8 border px-3 py-2"
-          style={{ color: '#ff5d5d', borderColor: '#ff5d5d30', background: 'rgba(255,93,93,0.05)' }}
-        >
-          {error || 'project not found'} ·{' '}
-          <button onClick={reload} className="underline">
-            retry
-          </button>
-        </div>
+        <ErrorBanner className="mt-8" onRetry={reload}>
+          {error || 'project not found'}
+        </ErrorBanner>
       </div>
     );
   }
@@ -378,12 +362,12 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
             <Dot color={p.paused ? '#ff7a45' : '#54e08a'} live={!p.paused && liveRuns.length > 0} size={7} />
             <h1 className="font-display text-[22px] tracking-wide text-ink">{p.name}</h1>
             {p.paused && (
-              <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border" style={{ color: '#ff7a45', borderColor: '#ff7a4550' }}>
+              <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border text-sig-killed border-sig-killed/50">
                 paused
               </span>
             )}
             {p.autoMerge && (
-              <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border" style={{ color: '#ff5d5d', borderColor: '#ff5d5d50' }}>
+              <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border text-sig-failed border-sig-failed/50">
                 full-auto merge
               </span>
             )}
@@ -391,12 +375,9 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
           <div className="font-mono text-[11px] text-faint mt-1.5 truncate">{p.rootDir}</div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setPlanning(true)}
-            className="font-display uppercase tracking-wider text-[11px] px-4 py-2 border border-amber/50 text-amber hover:bg-amber/10 inline-flex items-center transition-all"
-          >
+          <Btn variant="amber" onClick={() => setPlanning(true)} className="!px-4 !py-2">
             ✦ Plan board
-          </button>
+          </Btn>
           <Tab href={`/projects/${p.id}/board`} label="Board" />
           <Tab href={`/projects/${p.id}/files`} label="Files" />
           <Tab href={`/projects/${p.id}/history`} label="History" />
@@ -434,7 +415,7 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
         </div>
         <div className="mt-4 pt-4 border-t hairline">
           <Kicker>default validation command</Kicker>
-          <div className="font-mono text-[12px] mt-1.5" style={{ color: p.defaultValidationCommand ? '#e9e7df' : '#5b626d' }}>
+          <div className={`font-mono text-[12px] mt-1.5 ${p.defaultValidationCommand ? 'text-ink' : 'text-faint'}`}>
             {p.defaultValidationCommand || 'none — cards must set their own validation command'}
           </div>
         </div>
