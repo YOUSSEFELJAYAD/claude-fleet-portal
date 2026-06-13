@@ -367,6 +367,9 @@ export interface PortalConfig {
   /** §24 — wall-clock ceiling per run in minutes: longer-running runs are auto-killed
    *  (killReason 'timeout'). null = no limit. */
   maxRunMinutes: number | null;
+  /** Loop — fleet-wide auto-merge risk ceiling: a worker diff at or below this RiskLevel
+   *  may auto-merge; anything riskier stays human-gated. null = never auto-merge (gate all). */
+  loopAutoMergeCeiling: RiskLevel | null;
 }
 
 export interface SpendSummary {

@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { PortalConfig, PermissionMode } from '@fleet/shared';
+import type { PortalConfig, PermissionMode, RiskLevel } from '@fleet/shared';
 import { PERMISSION_MODES } from '@fleet/shared';
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // apps/server/src
@@ -70,6 +70,7 @@ export const DEFAULT_CONFIG: PortalConfig = {
   subagentTotalCeiling: 1000,
   dailySpendCeilingUsd: null, // §24 — fleet-wide hard daily cap (null = off)
   maxRunMinutes: null, // §24 — per-run wall-clock auto-kill (null = off)
+  loopAutoMergeCeiling: null, // Loop — null = never auto-merge (human-gate every diff)
 };
 
 /**
@@ -112,6 +113,15 @@ export function validateConfig(input: unknown): PortalConfig {
     if (v < opts.min) throw bad(`${key} must be >= ${opts.min}`);
     return v;
   };
+  // Loop — nullable RiskLevel ceiling: absent → default; an unrecognized value falls
+  // back to the default rather than throwing (a stale/garbage UI value must not 400 the
+  // whole config save), null → null. Accepts only 'low' | 'medium' | 'high'.
+  const nullableRisk = (key: 'loopAutoMergeCeiling'): RiskLevel | null => {
+    const v = i[key];
+    if (v === undefined) return DEFAULT_CONFIG[key];
+    if (v === 'low' || v === 'medium' || v === 'high') return v;
+    return DEFAULT_CONFIG[key]; // null/invalid → fall back
+  };
   return {
     maxConcurrentRuns: num('maxConcurrentRuns', { min: 1, max: 100, int: true }),
     defaultBudgetUsd: num('defaultBudgetUsd', { min: 0.0001 }),
@@ -121,5 +131,6 @@ export function validateConfig(input: unknown): PortalConfig {
     subagentTotalCeiling: num('subagentTotalCeiling', { min: 1, max: 1000, int: true }),
     dailySpendCeilingUsd: nullableNum('dailySpendCeilingUsd', { min: 0.01 }),
     maxRunMinutes: nullableNum('maxRunMinutes', { min: 1, int: true }),
+    loopAutoMergeCeiling: nullableRisk('loopAutoMergeCeiling'),
   };
 }
