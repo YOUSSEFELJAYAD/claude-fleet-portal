@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chatRepo } from '../src/chat.js';
+import { chatRepo, buildEnginePrompt } from '../src/chat.js';
 
 describe('chatRepo', () => {
   it('creates, lists, gets, renames, and deletes a session', () => {
@@ -29,5 +29,27 @@ describe('chatRepo', () => {
     const msgs = chatRepo.listMessages(s.id);
     expect(msgs.map((m) => m.content)).toEqual(['hi', 'hello']);
     expect(msgs[1].runId).toBe('r1');
+  });
+});
+
+describe('buildEnginePrompt', () => {
+  it('reconstructs prior turns + the new message', () => {
+    const history = [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' },
+    ] as any[];
+    const p = buildEnginePrompt(history, 'next question');
+    expect(p).toContain('hi');
+    expect(p).toContain('hello');
+    expect(p).toContain('next question');
+    expect(p.indexOf('next question')).toBeGreaterThan(p.indexOf('hello'));
+  });
+
+  it('caps total length, keeping the most recent turns', () => {
+    const history = Array.from({ length: 500 }, (_, i) => ({ role: 'user', content: `OLD${i}` })) as any[];
+    const p = buildEnginePrompt(history, 'fresh');
+    expect(p.length).toBeLessThanOrEqual(12_200);
+    expect(p).toContain('fresh');
+    expect(p).not.toContain('OLD0'); // oldest dropped
   });
 });

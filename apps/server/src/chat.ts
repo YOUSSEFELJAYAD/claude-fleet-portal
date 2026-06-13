@@ -96,3 +96,19 @@ export const chatRepo = {
   },
   listMessages(sessionId: string): ChatMessage[] { return (listMessagesStmt.all(sessionId) as any[]).map(rowToMessage); },
 };
+
+const ENGINE_PROMPT_CAP = 6_000;
+
+/** Engines (codex/opencode) cannot resume, so reconstruct a capped transcript prefix into each
+ *  turn's prompt (DC §D-030). Keeps the most recent turns when over the cap. */
+export function buildEnginePrompt(history: Array<{ role: string; content: string }>, message: string): string {
+  const tail = `\nUser: ${message}\nAssistant:`;
+  const turns = history.map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`);
+  let body = '';
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const next = turns[i] + '\n' + body;
+    if (next.length + tail.length > ENGINE_PROMPT_CAP) break;
+    body = next;
+  }
+  return (body + tail).trimStart();
+}
