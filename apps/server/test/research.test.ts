@@ -72,3 +72,45 @@ describe('buildResearchPrompt', () => {
     expect(p).not.toContain('https://e20.example');
   });
 });
+
+import Fastify from 'fastify';
+import { vi } from 'vitest';
+
+vi.mock('../src/registry.js', () => ({
+  registry: { launch: vi.fn(async () => ({ id: 'run-123' })) },
+}));
+vi.mock('../src/addons.js', () => ({
+  researchConfig: () => ({ searxngUrl: baseUrl, engines: '', maxResults: 10, safeSearch: 1, language: 'en' }),
+}));
+
+describe('research routes', () => {
+  it('POST /api/research/synthesize launches a run with web tools allowed', async () => {
+    const { registry } = await import('../src/registry.js');
+    const { registerResearchRoutes } = await import('../src/research.js');
+    const app = Fastify();
+    registerResearchRoutes(app);
+    await app.ready();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/research/synthesize',
+      payload: { topic: 'widgets', results: [{ title: 'A', url: 'https://a.example', snippet: 's', score: 1, engine: 'g' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ runId: 'run-123' });
+    const arg = (registry.launch as any).mock.calls[0][0];
+    expect(arg.allowedTools).toEqual(expect.arrayContaining(['WebSearch', 'WebFetch']));
+    expect(arg.prompt).toContain('widgets');
+    await app.close();
+  });
+
+  it('POST /api/research/synthesize 400s on an empty topic', async () => {
+    const { registerResearchRoutes } = await import('../src/research.js');
+    const app = Fastify();
+    registerResearchRoutes(app);
+    await app.ready();
+    const res = await app.inject({ method: 'POST', url: '/api/research/synthesize', payload: { topic: '', results: [] } });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+});
