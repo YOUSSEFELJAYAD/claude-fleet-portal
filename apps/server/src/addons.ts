@@ -32,7 +32,7 @@ import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { AddonInfo, AddonStatus, AddonInstallResult, CompressionConfig, CompressionStats, SelfUpdateStep, RunEngine } from '@fleet/shared';
+import type { AddonInfo, AddonStatus, AddonInstallResult, CompressionConfig, CompressionStats, SelfUpdateStep, RunEngine, WebResearchConfig } from '@fleet/shared';
 import { HOME, PORT, WEB_PORT } from './config.js';
 import db from './db.js';
 import type { CodexEngineConfig, OpencodeEngineConfig } from './engines.js';
@@ -54,10 +54,13 @@ CREATE TABLE IF NOT EXISTS addons (
 const COMPRESSION_ID = 'compression';
 const CODEX_ID = 'codex';
 const OPENCODE_ID = 'opencode';
+const RESEARCH_ID = 'web-research';
 
 /** Discriminator: 'proxy' add-ons manage a child process; 'engine-binary' add-ons
- *  are CLI shims — no backing process, status is derived from installed + enabled. */
-type AddonRuntime = 'proxy' | 'engine-binary';
+ *  are CLI shims — no backing process, status is derived from installed + enabled;
+ *  'service' add-ons (web-research → SearXNG) back onto an external service whose
+ *  status comes from a reachability probe. */
+type AddonRuntime = 'proxy' | 'engine-binary' | 'service';
 
 interface AddonDef {
   id: string;
@@ -114,6 +117,20 @@ const ADDON_DEFS: AddonDef[] = [
     page: '/addons/opencode',
     runtime: 'engine-binary',
   },
+  {
+    id: RESEARCH_ID,
+    name: 'Web Research',
+    tagline: 'Open-source web search (SearXNG) + synthesize-with-agent',
+    description:
+      'Adds a Research page: search the web through your self-hosted SearXNG instance (open source, ' +
+      'AGPL, no API key) and hand the results to a research agent that synthesizes a cited answer. ' +
+      'Optionally registers a SearXNG MCP server so launched agents can search mid-run. ' +
+      'Requires a running SearXNG (the Install button starts the official Docker image if Docker is present).',
+    kind: 'builtin' as const,
+    docsUrl: 'https://docs.searxng.org/',
+    page: '/research',
+    runtime: 'service',
+  },
 ];
 
 export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
@@ -124,6 +141,18 @@ export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
   rateLimit: true,
   dailyBudgetUsd: null,
 };
+
+export const DEFAULT_RESEARCH_CONFIG: WebResearchConfig = {
+  searxngUrl: 'http://localhost:8080',
+  engines: '',
+  maxResults: 10,
+  safeSearch: 1,
+  language: 'en',
+};
+
+export function researchConfig(): WebResearchConfig {
+  return { ...DEFAULT_RESEARCH_CONFIG, ...(loadRow(RESEARCH_ID).config as Partial<WebResearchConfig>) };
+}
 
 // ── persistence ──────────────────────────────────────────────────────────────────
 
@@ -191,6 +220,40 @@ export function validateCompressionConfig(input: unknown): CompressionConfig {
     rateLimit: bool('rateLimit'),
     dailyBudgetUsd,
   };
+}
+
+/**
+ * Validate + merge the web-research (SearXNG) config from a PUT body. The URL governs
+ * outbound fetches from the server, so it must be an http(s) URL; maxResults is clamped
+ * to SearXNG's sensible 1–20 band; safesearch is restricted to SearXNG's 0/1/2 levels.
+ * Missing keys fall back to the stored-then-default value (partial PUTs are fine).
+ */
+export function validateResearchConfig(input: unknown): WebResearchConfig {
+  if (!input || typeof input !== 'object') {
+    throw Object.assign(new Error('config must be an object'), { statusCode: 400 });
+  }
+  const i = input as Record<string, unknown>;
+  const base = researchConfig();
+  const bad = (msg: string) => Object.assign(new Error(msg), { statusCode: 400 });
+
+  let searxngUrl = base.searxngUrl;
+  if (i.searxngUrl !== undefined) {
+    if (typeof i.searxngUrl !== 'string' || !/^https?:\/\//.test(i.searxngUrl)) throw bad('searxngUrl must be an http(s) URL');
+    searxngUrl = i.searxngUrl.replace(/\/+$/, '');
+  }
+  let maxResults = base.maxResults;
+  if (i.maxResults !== undefined) {
+    if (typeof i.maxResults !== 'number' || !Number.isInteger(i.maxResults)) throw bad('maxResults must be an integer');
+    maxResults = Math.max(1, Math.min(i.maxResults, 20));
+  }
+  let safeSearch = base.safeSearch;
+  if (i.safeSearch !== undefined) {
+    if (i.safeSearch !== 0 && i.safeSearch !== 1 && i.safeSearch !== 2) throw bad('safeSearch must be 0, 1, or 2');
+    safeSearch = i.safeSearch;
+  }
+  const engines = i.engines === undefined ? base.engines : String(i.engines);
+  const language = i.language === undefined ? base.language : String(i.language || 'en');
+  return { searxngUrl, engines, maxResults, safeSearch, language };
 }
 
 // ── headroom binary detection ────────────────────────────────────────────────────
