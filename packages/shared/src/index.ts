@@ -824,6 +824,67 @@ export interface AddonInstallResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Web Research (open-source, SearXNG-backed) — §28
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One normalized web result (from SearXNG's JSON API). */
+export interface WebResult {
+  title: string;
+  url: string;
+  /** Snippet / summary text (SearXNG `content`). */
+  snippet: string;
+  /** Relevance score from the metasearch engine (0 when absent). */
+  score: number;
+  /** Originating engine(s), e.g. "google", "duckduckgo". */
+  engine: string;
+}
+
+/** Persisted config for the `web-research` add-on. */
+export interface WebResearchConfig {
+  /** Base URL of the self-hosted SearXNG instance. */
+  searxngUrl: string;
+  /** Comma-separated SearXNG engine list, or '' for the instance default. */
+  engines: string;
+  /** Default number of results to request (1–20). */
+  maxResults: number;
+  /** SearXNG safesearch level: 0 off, 1 moderate, 2 strict. */
+  safeSearch: 0 | 1 | 2;
+  /** Language code passed to SearXNG (e.g. 'en', 'all'). */
+  language: string;
+}
+
+export interface ResearchSearchRequest {
+  query: string;
+  maxResults?: number;
+}
+export interface ResearchSearchResponse {
+  query: string;
+  results: WebResult[];
+}
+
+export interface ResearchSynthesizeRequest {
+  topic: string;
+  results: WebResult[];
+  /** Catalog model id; null/omitted → 'claude-opus-4-8'. */
+  model?: string | null;
+  /** Working dir for the run; omitted → server default. */
+  cwd?: string;
+}
+export interface ResearchSynthesizeResponse {
+  runId: string;
+}
+
+/** GET /api/research/status — SearXNG reachability for the /research page. */
+export interface ResearchStatusResponse {
+  /** SearXNG reachable AND JSON format enabled. */
+  ok: boolean;
+  searxngUrl: string;
+  /** 'ok' | 'unreachable' | 'json-disabled' */
+  state: 'ok' | 'unreachable' | 'json-disabled';
+  detail: string | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool/skill packs (§23) — operator-defined presets of allowed-tools entries +
 // skills, applied with one click in the launch modal / template editor.
 // ─────────────────────────────────────────────────────────────────────────────
