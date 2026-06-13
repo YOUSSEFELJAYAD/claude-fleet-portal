@@ -27,6 +27,7 @@ const NAV = [
   { href: '/mcp', label: 'MCP', glyph: '⊕' },
   { href: '/notifications', label: 'Notifications', glyph: '◬' },
   { href: '/guardrails', label: 'Guardrails', glyph: '⊘' },
+  { href: '/settings', label: 'Settings', glyph: '⚙' },
   { href: '/addons', label: 'Add-ons', glyph: '⌬' },
   { href: '/releases', label: 'Releases', glyph: '⇪' },
 ];
