@@ -26,6 +26,11 @@ import type {
   CompressionStats,
   ToolPack,
   CreateToolPackRequest,
+  ResearchSearchRequest,
+  ResearchSearchResponse,
+  ResearchSynthesizeRequest,
+  ResearchSynthesizeResponse,
+  ResearchStatusResponse,
 } from '@fleet/shared';
 // F10 — config-as-code export/import types (defined locally to avoid cross-package imports)
 export interface ExportedSetup {
@@ -302,6 +307,15 @@ export const api = {
     j<AddonInfo>(`/api/addons/${id}/config`, { method: 'PUT', body: JSON.stringify(cfg) }),
   installAddon: (id: string) => j<AddonInstallResult>(`/api/addons/${id}/install`, { method: 'POST', body: JSON.stringify({}) }),
   compressionStats: () => j<CompressionStats>('/api/addons/compression/stats'),
+
+  // ── §28 web research (SearXNG) ──
+  researchSearch: (body: ResearchSearchRequest) =>
+    j<ResearchSearchResponse>('/api/research/search', { method: 'POST', body: JSON.stringify(body) }),
+  researchSynthesize: (body: ResearchSynthesizeRequest) =>
+    j<ResearchSynthesizeResponse>('/api/research/synthesize', { method: 'POST', body: JSON.stringify(body) }),
+  researchStatus: () => j<ResearchStatusResponse>('/api/research/status'),
+  registerSearxngMcp: () =>
+    j<{ ok: boolean; output: string; note?: string }>('/api/addons/web-research/register-mcp', { method: 'POST', body: JSON.stringify({}) }),
 
   // ── tool/skill packs (§23) — launch presets ──
   packs: () => j<ToolPack[]>('/api/packs'),
