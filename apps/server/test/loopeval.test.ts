@@ -135,6 +135,21 @@ describe('buildEvalPrompt', () => {
     expect(typeof prompt).toBe('string');
     expect(prompt).toContain('(no intended actions)');
   });
+
+  it('includes worker-specific checklist strings and excludes manager-specific ones for kind:worker', async () => {
+    const { buildEvalPrompt } = await import('../src/loopEval.js');
+    // Use a contract with no evaluation text that would bleed manager strings
+    const workerLoop = fakeLoop({ kind: 'worker', contract: fakeContract({ evaluation: 'ship quality work' }) });
+    const prompt = buildEvalPrompt(workerLoop, []);
+    // worker-specific checklist strings
+    expect(prompt).toContain('routable ceiling');
+    expect(prompt).toContain('forbidden tool');
+    expect(prompt).toContain('PR WITHOUT merging');
+    // manager-specific checklist strings must NOT appear in a worker prompt
+    expect(prompt).not.toContain('rubric hard-floors');
+    expect(prompt).not.toContain('REFUSE to mark risky work');
+    expect(prompt).not.toContain('answerable questions to ambiguous');
+  });
 });
 
 // ── Task 05.3 ────────────────────────────────────────────────────────────────
@@ -146,7 +161,7 @@ describe('gradeLoopRun', () => {
 
     const run = terminalRun({ clean: true, score: 88, notes: 'all verdicts evidence-backed' });
     const launchSpy = vi.spyOn(registry, 'launch').mockReturnValue(run as any);
-    const getRunSpy = vi.spyOn(registry, 'getRun').mockReturnValue(run);
+    const getRunSpy = vi.spyOn(registry, 'getRun').mockImplementation((id) => id === run.id ? run : null);
 
     const loop = fakeLoop();
     const intended = [{ kind: 'classify' as const, itemId: 'card-7', detail: { risk: 'low' } }];
@@ -163,6 +178,8 @@ describe('gradeLoopRun', () => {
     expect(arg.cwd).toBe(project.rootDir);
     expect(arg.interactive).toBe(false);
     expect(arg.prompt).toBe(buildEvalPrompt(loop, intended));
+    expect(arg.model).toBe('claude-opus-4-8');
+    expect(arg.effort).toBe('high');
 
     launchSpy.mockRestore();
     getRunSpy.mockRestore();
@@ -173,7 +190,7 @@ describe('gradeLoopRun', () => {
     const { gradeLoopRun } = await import('../src/loopEval.js');
     const run = terminalRun({ clean: false, score: 250, notes: 'marked risk:high agent:ready' });
     const launchSpy = vi.spyOn(registry, 'launch').mockReturnValue(run as any);
-    const getRunSpy = vi.spyOn(registry, 'getRun').mockReturnValue(run);
+    const getRunSpy = vi.spyOn(registry, 'getRun').mockImplementation((id) => id === run.id ? run : null);
 
     const res = await gradeLoopRun(fakeLoop(), [], fakeProject());
     expect(res.clean).toBe(false);
@@ -207,7 +224,7 @@ describe('gradeLoopRun — safety (never clean on uncertainty)', () => {
     const { gradeLoopRun } = await import('../src/loopEval.js');
     const run = { id: 'jr2', status: 'failed', structuredOutput: null } as unknown as Run;
     const launchSpy = vi.spyOn(registry, 'launch').mockReturnValue(run as any);
-    const getRunSpy = vi.spyOn(registry, 'getRun').mockReturnValue(run);
+    const getRunSpy = vi.spyOn(registry, 'getRun').mockImplementation((id) => id === run.id ? run : null);
     const res = await gradeLoopRun(fakeLoop(), [], fakeProject());
     expect(res).toEqual({ clean: false, score: 0, notes: 'loopEval judge did not complete (status: failed)' });
     launchSpy.mockRestore();
@@ -219,12 +236,71 @@ describe('gradeLoopRun — safety (never clean on uncertainty)', () => {
     const { gradeLoopRun } = await import('../src/loopEval.js');
     const run = { id: 'jr3', status: 'completed', structuredOutput: { score: 'oops' } } as unknown as Run;
     const launchSpy = vi.spyOn(registry, 'launch').mockReturnValue(run as any);
-    const getRunSpy = vi.spyOn(registry, 'getRun').mockReturnValue(run);
+    const getRunSpy = vi.spyOn(registry, 'getRun').mockImplementation((id) => id === run.id ? run : null);
     const res = await gradeLoopRun(fakeLoop(), [], fakeProject());
     expect(res.clean).toBe(false);
     expect(res.score).toBe(0);
     expect(res.notes).toContain('no valid structured verdict');
     launchSpy.mockRestore();
+    getRunSpy.mockRestore();
+  });
+});
+
+// ── Task 05.5 — onRunTerminal subscriber path ────────────────────────────────
+
+describe('gradeLoopRun — onRunTerminal subscriber path', () => {
+  it('resolves verdict via the terminal subscriber when run starts as non-terminal', async () => {
+    const { registry } = await import('../src/registry.js');
+    const { gradeLoopRun } = await import('../src/loopEval.js');
+
+    // The launched run starts in 'running' state (not yet terminal)
+    const runningRun = {
+      id: 'jr-async-1',
+      status: 'running',
+      structuredOutput: null,
+    } as unknown as Run;
+
+    // The completed run that will be delivered via the terminal subscriber
+    const completedRun = {
+      id: 'jr-async-1',
+      status: 'completed',
+      structuredOutput: { clean: true, score: 95, notes: 'all checks passed via subscriber' },
+    } as unknown as Run;
+
+    const launchSpy = vi.spyOn(registry, 'launch').mockReturnValue(runningRun as any);
+
+    // Capture the terminal subscriber so we can fire it manually
+    let capturedSubscriber: ((run: Run) => void) | null = null;
+    const onRunTerminalSpy = vi.spyOn(registry, 'onRunTerminal').mockImplementation((cb) => {
+      capturedSubscriber = cb;
+      return () => { capturedSubscriber = null; };
+    });
+
+    // getRun returns null initially (run not in memory yet), then returns completedRun after
+    // the subscriber fires and awaitTerminal re-fetches
+    const getRunSpy = vi.spyOn(registry, 'getRun').mockImplementation((id) => {
+      if (id === runningRun.id) return null; // not terminal yet on first check
+      return null;
+    });
+
+    // Start grading — it will subscribe and await terminal
+    const gradePromise = gradeLoopRun(fakeLoop(), [], fakeProject());
+
+    // Give the microtask queue a tick so awaitTerminal registers the subscriber
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Now make getRun return the completed run for when the subscriber fires
+    getRunSpy.mockImplementation((id) => id === completedRun.id ? completedRun : null);
+
+    // Fire the subscriber — simulates registry notifying that the run is terminal
+    expect(capturedSubscriber).not.toBeNull();
+    capturedSubscriber!(runningRun); // the subscriber receives any run snapshot; awaitTerminal re-fetches via getRun
+
+    const res = await gradePromise;
+    expect(res).toEqual({ clean: true, score: 95, notes: 'all checks passed via subscriber' });
+
+    launchSpy.mockRestore();
+    onRunTerminalSpy.mockRestore();
     getRunSpy.mockRestore();
   });
 });
