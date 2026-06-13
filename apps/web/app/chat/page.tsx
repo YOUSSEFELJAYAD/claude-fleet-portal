@@ -49,6 +49,15 @@ export default function ChatPage() {
     await api.chatCommand(activeId, line);
     await loadSession(activeId); // re-pull persisted command + result messages
   }
+  // Persist the assistant reply when the live run finishes, so it survives a reload (plan note 1).
+  const onTurnComplete = useCallback(async (runId: string, finalText: string) => {
+    setLiveRunId(null);
+    if (!activeId) return;
+    const msg = await api.addChatMessage(activeId, {
+      role: 'assistant', kind: 'text', content: finalText.trim() || '(no output)', runId,
+    });
+    setMessages((m) => [...m, msg]);
+  }, [activeId]);
 
   return (
     <div className="flex h-[calc(100vh-0px)]">
@@ -61,7 +70,7 @@ export default function ChatPage() {
               {session.title} · {session.engine} · {session.model} · {session.cwd}
               {session.engine !== 'claude' && <span className="ml-2 opacity-60">(one-shot per turn · limited memory)</span>}
             </div>
-            <ChatThread messages={messages} liveRunId={liveRunId} />
+            <ChatThread messages={messages} liveRunId={liveRunId} onTurnComplete={onTurnComplete} />
             <ChatComposer disabled={busy} onSend={send} onCommand={command} />
           </>
         ) : (
