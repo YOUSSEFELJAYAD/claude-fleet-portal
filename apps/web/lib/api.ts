@@ -31,6 +31,8 @@ import type {
   ResearchSynthesizeRequest,
   ResearchSynthesizeResponse,
   ResearchStatusResponse,
+  SettingsResponse,
+  SettingValue,
 } from '@fleet/shared';
 // F10 — config-as-code export/import types (defined locally to avoid cross-package imports)
 export interface ExportedSetup {
@@ -429,4 +431,9 @@ export const api = {
     j<FileEditResult>(`/api/projects/${pid}/files/edit?path=${encodeURIComponent(path)}`),
   commitFile: (pid: string, body: CommitFileBody) =>
     j<CommitFileResult>(`/api/projects/${pid}/files/commit`, { method: 'POST', body: JSON.stringify(body) }),
+
+  // ── §31 settings ──
+  settings: () => j<SettingsResponse>('/api/settings'),
+  updateSetting: (key: string, value: string | null) =>
+    j<SettingValue>(`/api/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
 };
