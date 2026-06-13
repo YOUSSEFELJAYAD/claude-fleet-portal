@@ -43,7 +43,8 @@ describe('built-in agent library — seeding', () => {
   });
 
   it('every seed passes the same constraints the template routes enforce', () => {
-    const roles = new Set(['orchestrator', 'worker', 'reviewer', 'synthesizer']);
+    // role is free-text/extensible (no route enum enforces it); 'manager' is the Loops triage role.
+    const roles = new Set(['orchestrator', 'worker', 'reviewer', 'synthesizer', 'manager']);
     for (const s of templatesMod.BUILTIN_TEMPLATES) {
       expect(roles.has(s.role)).toBe(true);
       expect(Array.isArray(s.allowedTools)).toBe(true);
