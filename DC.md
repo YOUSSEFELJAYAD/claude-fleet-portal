@@ -1110,37 +1110,96 @@ panel (enabled toggle + the four thresholds + max-per-day, live/off indicator), 
 the existing `@/components/ui` design system; nav entry added to `Shell.tsx` after Templates
 (glyph `✦`). `pnpm -r typecheck` clean across shared/server/web and `next build` lists
 `/learning` as a prerendered route. The "Web UI" item above is now done.
+## 30. Chat Dashboard — multi-session agent control-plane (2026-06-13) — spec docs/superpowers/specs/2026-06-13-chat-dashboard-design.md
 
-## 30. UI-consistency pass + shared `ErrorBanner` primitive (2026-06-13)
+A conversational dashboard that doubles as a fleet control-plane: multi-session live chat with
+Claude (and engine add-ons), a running-agents panel, and a slash-command surface that drives the
+app's existing functions. Brainstormed as the "Both (superset)" mental model; the user chose to
+build the full superset in one v1 — chat core + running-agents panel + slash-commands + engine chat.
 
-Goal: every page on one design system. Audited all 30 `page.tsx` files against the `ui.tsx`
-primitives + `globals.css` HUD canon (3 parallel read-only audit agents). The divergences were
+### D-029 — Transport: one run id per session, resume-per-turn (NOT a long-lived interactive process)
+A chat session maps to a single run id. Turn 1 = `POST /api/agents` (message as prompt); turn N =
+`POST /api/agents/:id/resume`; assistant output streams over the run's existing SSE (`/api/agents/:id/stream`);
+the reply is persisted on completion. Rationale: the fleet caps concurrent runs at 8
+(`config.maxConcurrentRuns`) — holding a live interactive process per open chat would starve the
+fleet. Resume-per-turn only holds a slot during a turn, survives server restarts, and unifies
+Claude + engine sessions. Rejected alternative: long-lived `interactive:true` + `/api/agents/:id/input`
+(snappier but resource-heavy and Claude-only).
+
+### D-030 — Engine add-on chat is one-shot-per-turn with reconstructed context
+Engines (codex/opencode) cannot resume or take stdin, so an engine chat session reconstructs a
+capped transcript prefix into each turn's prompt and is labelled "one-shot per turn · limited
+memory" in the UI. Claude sessions get native context via `--resume`.
+
+### D-031 — Slash-command control-plane reuses existing routes/registry
+v1 command set: `/launch`, `/agents` (running), `/kill`, `/addons`, `/addon enable|disable`,
+`/campaign`, `/schedule`, `/help`. Each dispatches to an existing API route / registry call;
+results render as command/system messages in the thread. No new privileged surface — commands
+inherit the auth and permission posture of the routes they call.
+
+### D-032 — Layout & persistence
+3-pane `/chat` page (sessions · conversation+composer · running-agents). Per-session launch
+options (model/engine/effort/tools/skills/permission-mode/cwd) live in the composer's options
+popover, reusing `ModelSelect` and the existing tool/skill pickers. Sessions + messages persist
+in sqlite (`chat_sessions`, `chat_messages`); the live run is ephemeral and re-derived on reopen.
+
+### DEFERRED — features to be added in a later iteration (explicit out-of-scope for this build)
+These are recorded so the boundary is intentional, not forgotten — they "need to be installed"
+in a future cycle:
+- **Voice** (speech in / out).
+- **File uploads / attachments** into a chat turn.
+- **Multi-user** — the portal is single-operator; no per-user sessions or auth in scope.
+- **In-chat transcript search** — the FTS5 transcript index already exists (`search.ts`, F7) and
+  can be layered onto chat history later; it is NOT wired into the chat UI in this build.
+
+## 31. Environment & Settings panel (2026-06-13) — spec docs/superpowers/specs/2026-06-13-settings-env-design.md
+
+An operator panel that surfaces the app's env/config honestly by apply-timing. A server-side
+registry of field descriptors delegates writes to the right backend: derived/live values (proxy
+URL when compression is up, host/ports) are read-only; live config (guardrail caps) applies
+immediately via `/api/config`; env values (`CLAUDE_BIN`, base URLs, `FLEET_*`) write to a managed
+`data/.env` (0600, git-ignored) loaded at boot before `config.ts` freezes, flagged "applies next
+launch"; secrets (`GITHUB_TOKEN`, `CODEX_API_KEY`) are masked write-only. Fields gate on whether
+their feature is enabled.
+
+### D-033 — Hybrid registry, writes delegated by source
+Each field declares source (derived|env|portal-config|addon), editable, secret, applyTiming
+(read-only|next-launch|live), and gatedBy. No logic duplicated — live fields reuse the existing
+`/api/config` setter; env fields go to the managed `.env`. The full guardrail editor stays on
+`/guardrails`.
+
+### D-034 — env loads before config; secrets write-only; no auto-restart in v1
+`envboot.ts` loads the managed `.env` into `process.env` (never overriding shell-set vars) before
+`config.ts` evaluates. Secrets are masked in GET (value:null, set:true), set/clear only. v1 shows
+a "pending · applies next launch" badge + a manual restart note rather than self-restarting.
+
+## 32. UI-consistency pass + shared `ErrorBanner` primitive (2026-06-13)
+
+Goal (operator): every page on one design system. Audited all `page.tsx` files against the `ui.tsx`
+primitives + `globals.css` HUD canon (3 parallel read-only audit agents). Divergences were
 concentrated, not pervasive — every page already imported the system; the real gaps were:
-hand-rolled error banners built from inline `sig-failed` hex (~15 pages); `research/page.tsx` (a
-stock Tailwind `text-lg font-semibold` heading, `rounded` corners that broke the square HUD
-language, off-palette hex `#3ad29f`/`#ff8a5d`, custom page padding); `releases` + `addons` headers
-at `text-[22px]` instead of the canon `text-[26px]`; `projects/[id]/page.tsx` raw `<button>`s
-reimplementing `Btn` plus a GitHub-trigger form built on an **undefined `bg-surface` class**
-(invisible-background bug) and raw `<input>`/`<select>`; and scattered inline-hex-for-token +
-stock Tailwind (`text-red-400`, `group-hover:text-white`).
+hand-rolled error banners built from inline `sig-failed` hex (~15 pages); `research/page.tsx` and
+`settings/page.tsx` (stock Tailwind `text-lg font-semibold` headings, no Kicker, `rounded` / `p-6
+mx-auto` layout, `opacity-*` instead of tokens, off-palette hex); `releases` + `addons` headers at
+`text-[22px]` not the canon `text-[26px]`; `projects/[id]/page.tsx` raw `<button>`s reimplementing
+`Btn` + a GitHub-trigger form on an **undefined `bg-surface` class** (invisible-background bug);
+scattered inline-hex-for-token + stock Tailwind (`text-red-400`, `group-hover:text-white`).
 
 Changes:
 - **New `ErrorBanner` primitive** in `components/ui.tsx` — the one canonical error box
-  (`border-sig-failed/40 bg-sig-failed/8 text-sig-failed font-mono text-[12px]`, optional
-  `onRetry`). Adopted on 15 pages, replacing every hand-rolled inline-hex banner.
-- **Reworked `research/page.tsx`** to canon: Kicker + `text-[26px]` header, `<Panel>` (no
-  `rounded`), token colors, palette `accent-amber` checkbox, mono links, standard layout.
-- **Fixed `projects/[id]/page.tsx`**: the `bg-surface` bug → `<Input>`/`<Select>`; "✦ Plan board"
-  and "+ add" raw buttons → `<Btn variant="amber">`; error blocks → `<ErrorBanner>`; status badges,
-  the on/off toggle, and validation-command color → tokens.
-- **Unified `releases` + `addons` headers** to `text-[26px]` (addon SUB-pages keep `[22px]` as the
-  established detail-page scale).
-- **Swept inline-hex-for-token → `sig-*`/`amber`/`dim`/`faint` classes** and stock Tailwind
-  (`text-red-400`→`sig-failed`, `text-white`→`ink`) across ~20 pages — leaving intentional
-  status-helper / `<Dot color>` / `<Stat accent>` hex untouched.
+  (`border-sig-failed/40 bg-sig-failed/8 text-sig-failed font-mono text-[12px]`, optional `onRetry`);
+  adopted on ~16 pages, replacing every hand-rolled inline-hex banner.
+- **Reworked `research/page.tsx` and `settings/page.tsx`** to canon: Kicker + `text-[26px]` header,
+  `<Panel>` (no `rounded`), standard layout (no `p-6 mx-auto`), token colors, `<ErrorBanner>`.
+- **Fixed `projects/[id]/page.tsx`**: `bg-surface` bug → `<Input>`/`<Select>`; raw amber buttons →
+  `<Btn variant="amber">`; error blocks → `<ErrorBanner>`; badges / toggle / colors → tokens.
+- **Unified `releases` + `addons` headers** to `text-[26px]` (addon sub-pages keep `[22px]`).
+- **Swept inline-hex → tokens** (`sig-*` / `amber` / `dim` / `faint`) and stock Tailwind across ~22
+  pages, leaving intentional status-helper / `<Dot color>` / `<Stat accent>` hex.
+- **Resolved a duplicate nav glyph** surfaced when chat (§30) and learning landed together: `/chat`
+  keeps `✦`, `/learning` → `✸`.
 
-Method: 3 parallel read-only audits → 3 parallel edit agents over disjoint page groups (exact fix
-lists) + hand-done `research` and `projects/[id]` + a final grep sweep. Verified: `pnpm -r
-typecheck` clean (shared/server/web); `next build` compiles all 30 routes; grep sweep shows 0
-hand-rolled banners, 0 `bg-surface`, 0 stray `text-[22px]`/`text-white`. 23 files changed (22
-pages + `ui.tsx`).
+This pass merged `main` (chat §30 + settings §31) into the branch first, so the newly-added
+`/settings` and `/chat` pages were brought onto the canon too. Verified: `pnpm -r typecheck` clean
+(shared/server/web); `next build` compiles every route; grep sweep shows 0 hand-rolled banners, 0
+`bg-surface`, 0 stray `text-[22px]` / `text-white` / duplicate glyphs.

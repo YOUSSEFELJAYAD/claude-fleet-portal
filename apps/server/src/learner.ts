@@ -134,6 +134,22 @@ function validateConfigBody(body: any): LearnerConfig {
   return out;
 }
 
+// ── §31 settings panel — live read/update of the learner config (reuses the validation
+//    + persistence the PUT /api/learner route uses, so /settings and /learning stay in sync). ──
+export function getLearnerConfig(): LearnerConfig {
+  return getConfig();
+}
+export function updateLearnerConfig(patch: Partial<LearnerConfig>): LearnerConfig {
+  let next: LearnerConfig;
+  try {
+    next = validateConfigBody(patch);
+  } catch (e: any) {
+    throw Object.assign(new Error(e?.message ?? 'invalid learner config'), { statusCode: 400 });
+  }
+  setConfig(next);
+  return next;
+}
+
 // ── paths (env-overridable so tests never touch the real ~/.claude/skills) ──────
 
 function skillsDir(): string {
