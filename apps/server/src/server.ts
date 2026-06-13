@@ -30,6 +30,7 @@ import { registerBenchmarkRoutes } from './benchmarks.js'; // F4+F5 — benchmar
 import { registerAddonRoutes, resetAddonRuntimeForDataWipe } from './addons.js'; // §22 — add-on marketplace (compression/headroom)
 import { registerResearchRoutes } from './research.js'; // §28 — web research (SearXNG)
 import { registerPackRoutes } from './packs.js'; // §23 — tool/skill packs (launch presets)
+import { registerSettingsRoutes } from './settings.js'; // §31 — environment & settings panel
 import { registerPortabilityRoutes } from './portability.js'; // F10 — config as code (export/import)
 // Agent-PM / Kanban feature (spec docs/superpowers/specs/2026-06-09-agent-pm-kanban-design.md).
 // Import order matters: projects BEFORE kanban (kanban_tasks references a project; tables created on import).
@@ -216,6 +217,7 @@ export function buildServer() {
   registerReleaseRoutes(app); // §15 — release page + GitHub update check / self-update
   registerBenchmarkRoutes(app); // F4+F5 — benchmark mode + best-of-N
   registerAddonRoutes(app); // §22 — add-on marketplace + headroom compression-proxy lifecycle
+  registerSettingsRoutes(app); // §31 — environment & settings panel
   registerResearchRoutes(app); // §28 — web research (SearXNG)
   registerPackRoutes(app); // §23 — tool/skill packs (launch presets)
   registerPortabilityRoutes(app); // F10 — config as code (export/import)
