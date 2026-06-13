@@ -1048,7 +1048,9 @@ class Registry {
 
   /** Stop live children, clear all persisted portal data, and reset in-memory run/config state. */
   resetAllData(): { clearedRuns: number } {
-    const runs = repo.listRuns({ archived: 'include' });
+    // Uncapped: repo.listRuns caps at 500, but resetAllData deletes EVERY run, so the capped
+    // list would under-report clearedRuns (and skip run-removed broadcasts) once history > 500.
+    const runs = repo.listRunsForExport({ archived: 'include' });
     for (const lr of this.live.values()) {
       lr.deleted = true;
       try {

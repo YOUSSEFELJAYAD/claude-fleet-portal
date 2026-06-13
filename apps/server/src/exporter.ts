@@ -195,7 +195,10 @@ export function registerExportRoutes(app: FastifyInstance) {
   app.get('/api/agents/export.csv', async (req, reply) => {
     const q = req.query as any;
     // Uncapped — the UI list's 500-row cap would silently drop older runs from the export.
-    const runs = repo.listRunsForExport({ status: q?.status, effort: q?.effort, q: q?.q });
+    // Include archived runs: a spend/usage reconciliation must span EVERY run, and the
+    // accounting queries (spendSince, projectSpendStmt, …) count archived runs too, so the
+    // CSV must as well or its SUM(cost_usd) diverges from the spend totals the UI shows.
+    const runs = repo.listRunsForExport({ status: q?.status, effort: q?.effort, q: q?.q, archived: 'include' });
     attach(reply, 'text/csv; charset=utf-8', 'fleet-history.csv');
     return reply.send(buildCsv(runs));
   });

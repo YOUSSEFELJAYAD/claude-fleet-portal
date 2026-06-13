@@ -56,10 +56,23 @@ export function ModelSelect({
   const selectedCustom = customModelEngine(value);
   const byEngine = (engine: RunEngine) => models.filter((m) => (m.engine ?? 'claude') === engine);
 
+  // A controlled <select> whose value matches no rendered <option> silently shows the first
+  // option while state keeps the real value — desyncing the dropdown from what gets saved/sent.
+  // This happens when `value` is an engine model (e.g. a saved template's gpt-5-codex) but that
+  // engine's add-on is disabled, so its optgroup is not rendered. Keep the value selectable.
+  const selectedHidden = models.find(
+    (m) => m.id === value && (m.engine ?? 'claude') !== 'claude' && !enabled.has(m.engine ?? 'claude'),
+  );
+
   return (
     <>
       <Select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
         {defaultOption && <option value={defaultOption.value}>{defaultOption.label}</option>}
+        {selectedHidden && (
+          <option value={selectedHidden.id}>
+            {selectedHidden.label} ({ENGINE_LABELS[selectedHidden.engine ?? 'claude']} add-on disabled)
+          </option>
+        )}
         <optgroup label={ENGINE_LABELS.claude}>
           {byEngine('claude').map((m) => (
             <option key={m.id} value={m.id}>{m.label}{price(m)}</option>
