@@ -37,11 +37,13 @@ import { registerPortabilityRoutes } from './portability.js'; // F10 — config 
 // Import order matters: projects BEFORE kanban (kanban_tasks references a project; tables created on import).
 import { registerProjectsRoutes } from './projects.js';
 import { registerKanbanRoutes, subscribeBoard } from './kanban.js';
+import { registerControlPlaneRoutes } from './controlplane.js'; // Loops — card assessment thread (controlplane §16)
 import { registerFileviewRoutes } from './fileview.js';
 import { registerFileeditRoutes } from './fileedit.js'; // v2 #1 — file CRUD + commit (opt-in per project)
 import { registerPlanboardRoutes, planboard } from './planboard.js'; // v2 #3 — objective → Ready cards
 import { registerFleetRoutes, assertCapAboveReserve } from './fleet.js'; // v2 #7 — cross-project fleet scheduler (admission)
 import { registerTriggersRoutes, startTriggerPoller } from './triggers.js'; // F1 — GitHub triggers
+import { registerLoopRoutes, loops } from './loops.js'; // Loops (loop-engineering)
 import { pm } from './pm.js';
 
 /** H21 — a cwd query must be an absolute path with no traversal/null byte (or absent). */
@@ -227,14 +229,17 @@ export function buildServer() {
   // Agent-PM / Kanban — projects BEFORE kanban (FK), then the viewer; then start the PM engine.
   registerProjectsRoutes(app);
   registerKanbanRoutes(app);
+  registerControlPlaneRoutes(app); // Loops — card assessment thread (controlplane §16)
   registerFileviewRoutes(app);
   registerFileeditRoutes(app); // v2 #1 — opt-in file CRUD + commit (per-project editing_enabled gate)
   registerPlanboardRoutes(app); // v2 #3 — plan-board (objective → Ready cards)
   registerFleetRoutes(app); // v2 #7 — fleet config + status (admission gate is in pm.launchBuild)
   registerTriggersRoutes(app); // F1 — GitHub triggers
+  registerLoopRoutes(app); // Loops — CRUD + fire/promote/demote (spec §16)
   startTriggerPoller(); // F1 — 120s poll interval (unref'd)
   planboard.init(); // subscribe onRunTerminal — partitioned (§3.7): acts only on its own planning runs
   pm.init(); // subscribe onRunTerminal + safety tick
+  loops.init(); // Loops — boot reconcile (clears mid-fire last_error; mode/counter persist in SQLite)
   void pm.reconcile().catch(() => {}); // boot guardrail: reset cards whose run died (async: aborts mid-resolve worktrees)
   // Kanban board live stream (sse() is module-private here; subscribeBoard never returns null).
   app.get('/api/projects/:pid/board/stream', (req, reply) => {

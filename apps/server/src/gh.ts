@@ -283,10 +283,12 @@ export interface PrView {
   state: 'open' | 'merged' | 'closed';
   /** The PR's URL. */
   url: string;
+  /** Label names on the PR (gh emits `[{name}]`; we flatten to a string[]). Empty when none. */
+  labels: string[];
 }
 
 /**
- * View the PR for `branch` via `gh pr view <branch> --json state,url`. Discriminates the
+ * View the PR for `branch` via `gh pr view <branch> --json state,url,labels`. Discriminates the
  * GENUINE no-PR case (`{ pr: null }` — gh exits 1 printing "no pull requests found") from real
  * failures (`{ error }` — auth expiry, network, missing gh binary), so a stale badge isn't
  * silently mistaken for "no PR yet".
@@ -296,7 +298,7 @@ export interface PrView {
  * `'open'`. Never throws.
  */
 export async function prView(root: string, branch: string): Promise<{ pr: PrView | null; error?: string }> {
-  const r = await ghExec(root, ['pr', 'view', branch, '--json', 'state,url']);
+  const r = await ghExec(root, ['pr', 'view', branch, '--json', 'state,url,labels']);
   if (!r.ok) {
     if (r.code === 1 && /no pull requests found/i.test(r.stderr + r.stdout)) return { pr: null };
     return { pr: null, error: ghErr(r) };
@@ -310,7 +312,10 @@ export async function prView(root: string, branch: string): Promise<{ pr: PrView
   if (!parsed || typeof parsed !== 'object') return { pr: null, error: 'gh pr view returned an unexpected shape' };
   const url = typeof parsed.url === 'string' ? parsed.url : '';
   const state = normalizePrState(parsed.state);
-  return { pr: { state, url } };
+  const labels = Array.isArray(parsed.labels)
+    ? parsed.labels.map((l: any) => (typeof l?.name === 'string' ? l.name : '')).filter(Boolean)
+    : [];
+  return { pr: { state, url, labels } };
 }
 
 export interface PrMergeResult {
@@ -328,6 +333,53 @@ export interface PrMergeResult {
  */
 export async function prMerge(root: string, branch: string): Promise<PrMergeResult> {
   const r = await ghExec(root, ['pr', 'merge', branch, '--merge']);
+  if (!r.ok) return { ok: false, error: ghErr(r) };
+  return { ok: true };
+}
+
+// ── GitHub issue write-back: labels + comments (control-plane adapter verbs) ──────
+
+/**
+ * Add a label to an issue via `gh issue edit <n> --add-label <label>`. Idempotent on GitHub's side
+ * (re-adding an existing label is a no-op). Mirrors the {@link prCreate} never-throw + scrubbed-error
+ * contract: returns `{ ok:false, error }` on any failure (missing gh, auth, no such issue). Never throws.
+ */
+export async function ghLabelAdd(
+  root: string,
+  issueNumber: number,
+  label: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const r = await ghExec(root, ['issue', 'edit', String(issueNumber), '--add-label', label]);
+  if (!r.ok) return { ok: false, error: ghErr(r) };
+  return { ok: true };
+}
+
+/**
+ * Remove a label from an issue via `gh issue edit <n> --remove-label <label>`. Idempotent on GitHub's
+ * side (removing an absent label is a no-op). Same never-throw + scrubbed-error contract as {@link ghLabelAdd}.
+ */
+export async function ghLabelRemove(
+  root: string,
+  issueNumber: number,
+  label: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const r = await ghExec(root, ['issue', 'edit', String(issueNumber), '--remove-label', label]);
+  if (!r.ok) return { ok: false, error: ghErr(r) };
+  return { ok: true };
+}
+
+/**
+ * Post a comment to an issue via `gh issue comment <n> --body <body>`. The body is passed as an
+ * argument ARRAY element (no shell interpolation — multi-line markdown is safe). This is the github
+ * adapter's `postAssessment` / `attachQuestions` write path. Same never-throw + scrubbed-error
+ * contract as {@link ghLabelAdd}.
+ */
+export async function ghIssueComment(
+  root: string,
+  issueNumber: number,
+  body: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const r = await ghExec(root, ['issue', 'comment', String(issueNumber), '--body', body]);
   if (!r.ok) return { ok: false, error: ghErr(r) };
   return { ok: true };
 }
