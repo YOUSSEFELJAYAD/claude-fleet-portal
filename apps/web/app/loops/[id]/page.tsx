@@ -1,43 +1,32 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Kicker, Panel, Empty, Btn, Stat, Dot } from '@/components/ui';
 import { ago, clock } from '@/lib/format';
-import { loopsApi, type Loop, type TaskComment } from '@/lib/loops';
-
-const AUTHOR_COLOR: Record<TaskComment['author'], string> = {
-  manager: '#7aa2ff',
-  reviewer: '#c792ea',
-  worker: '#54e08a',
-  human: '#ffb000',
-};
+import { loopsApi, type Loop } from '@/lib/loops';
 
 export default function LoopDetailPage({ params }: { params: { id: string } }) {
   const { id } = params;
   const [loop, setLoop] = useState<Loop | null>(null);
-  const [comments, setComments] = useState<TaskComment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
+
   async function load() {
-    setError(null);
+    if (aliveRef.current) setError(null);
     try {
       const l = await loopsApi.get(id);
-      setLoop(l);
-      // board adapter assessment thread keys off the loop's last run target; the comments route
-      // is task-scoped, so we surface the thread for the loop's most-recent run when present.
-      if (l.lastRunId) {
-        try {
-          setComments(await loopsApi.comments(l.lastRunId));
-        } catch {
-          setComments([]);
-        }
-      }
+      if (aliveRef.current) setLoop(l);
     } catch (e: any) {
-      setError(e?.message ?? 'failed to load loop');
+      if (aliveRef.current) setError(e?.message ?? 'failed to load loop');
     } finally {
-      setLoading(false);
+      if (aliveRef.current) setLoading(false);
     }
   }
 
@@ -48,15 +37,36 @@ export default function LoopDetailPage({ params }: { params: { id: string } }) {
 
   async function promote() {
     setBusy(true);
-    try { setLoop(await loopsApi.promote(id)); } catch (e: any) { setError(e?.message ?? 'promote failed'); } finally { setBusy(false); }
+    try {
+      const l = await loopsApi.promote(id);
+      if (aliveRef.current) setLoop(l);
+    } catch (e: any) {
+      if (aliveRef.current) setError(e?.message ?? 'promote failed');
+    } finally {
+      if (aliveRef.current) setBusy(false);
+    }
   }
   async function demote() {
     setBusy(true);
-    try { setLoop(await loopsApi.demote(id)); } catch (e: any) { setError(e?.message ?? 'demote failed'); } finally { setBusy(false); }
+    try {
+      const l = await loopsApi.demote(id);
+      if (aliveRef.current) setLoop(l);
+    } catch (e: any) {
+      if (aliveRef.current) setError(e?.message ?? 'demote failed');
+    } finally {
+      if (aliveRef.current) setBusy(false);
+    }
   }
   async function fire() {
     setBusy(true);
-    try { await loopsApi.fire(id); await load(); } catch (e: any) { setError(e?.message ?? 'fire failed'); } finally { setBusy(false); }
+    try {
+      await loopsApi.fire(id);
+      await load();
+    } catch (e: any) {
+      if (aliveRef.current) setError(e?.message ?? 'fire failed');
+    } finally {
+      if (aliveRef.current) setBusy(false);
+    }
   }
 
   if (loading) return <div className="font-mono text-faint text-[12px]">loading loop…</div>;
@@ -89,6 +99,25 @@ export default function LoopDetailPage({ params }: { params: { id: string } }) {
 
       <div className="grid gap-5" style={{ gridTemplateColumns: 'minmax(0,1fr) 340px' }}>
         <div className="grid gap-4">
+          {/* judge assessment — loop's own lastEval */}
+          <Panel className="p-4">
+            <Kicker>judge assessment</Kicker>
+            {loop.lastEval ? (
+              <div className="mt-2">
+                <div className="flex items-center gap-2 font-mono text-[11px]">
+                  <Dot color={loop.lastEval.clean ? '#54e08a' : '#ff7a45'} live={false} size={6} />
+                  <span style={{ color: loop.lastEval.clean ? '#54e08a' : '#ff7a45' }} className="font-semibold">
+                    {loop.lastEval.clean ? 'clean' : 'flagged'}
+                  </span>
+                  <span className="text-faint">· score {loop.lastEval.score.toFixed(2)}</span>
+                </div>
+                <div className="mt-2 font-mono text-[11px] text-dim whitespace-pre-wrap leading-snug">{loop.lastEval.notes}</div>
+              </div>
+            ) : (
+              <Empty>no eval yet — graded after each dry-run fire</Empty>
+            )}
+          </Panel>
+
           {/* recent fires + intended-action log */}
           <Panel className="p-4">
             <Kicker>most recent fire</Kicker>
@@ -103,43 +132,6 @@ export default function LoopDetailPage({ params }: { params: { id: string } }) {
               </div>
             ) : (
               <Empty>never fired</Empty>
-            )}
-          </Panel>
-
-          {/* loopEval notes */}
-          <Panel className="p-4">
-            <Kicker>last eval</Kicker>
-            {loop.lastEval ? (
-              <div className="mt-2">
-                <div className="flex items-center gap-2 font-mono text-[11px]">
-                  <Dot color={loop.lastEval.clean ? '#54e08a' : '#ff7a45'} live={false} size={6} />
-                  <span style={{ color: loop.lastEval.clean ? '#54e08a' : '#ff7a45' }}>{loop.lastEval.clean ? 'clean' : 'flagged'}</span>
-                  <span className="text-faint">· score {loop.lastEval.score.toFixed(2)}</span>
-                </div>
-                <div className="mt-2 font-mono text-[11px] text-dim whitespace-pre-wrap leading-snug">{loop.lastEval.notes}</div>
-              </div>
-            ) : (
-              <Empty>no eval yet — graded after each dry-run fire</Empty>
-            )}
-          </Panel>
-
-          {/* assessment thread (board adapter) */}
-          <Panel className="p-4">
-            <Kicker>agent assessment thread</Kicker>
-            {comments.length === 0 ? (
-              <Empty>no assessments yet</Empty>
-            ) : (
-              <div className="mt-2 grid gap-3">
-                {comments.map((cm) => (
-                  <div key={cm.id} className="border-l-2 pl-3" style={{ borderColor: AUTHOR_COLOR[cm.author] }}>
-                    <div className="flex items-center gap-2 font-mono text-[10px]">
-                      <span style={{ color: AUTHOR_COLOR[cm.author] }} className="uppercase tracking-wider">{cm.author}</span>
-                      <span className="text-faint">{clock(cm.createdAt)}</span>
-                    </div>
-                    <div className="mt-1 font-mono text-[11px] text-dim whitespace-pre-wrap leading-snug">{cm.body}</div>
-                  </div>
-                ))}
-              </div>
             )}
           </Panel>
         </div>

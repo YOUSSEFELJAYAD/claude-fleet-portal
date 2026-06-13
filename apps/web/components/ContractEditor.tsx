@@ -1,5 +1,5 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Kicker, Field, Input, Textarea, Select, Btn } from '@/components/ui';
 import type {
   LoopContract,
@@ -54,6 +54,10 @@ export function ContractEditor({
   // local raw text for the two pattern lists so typing commas/newlines is smooth
   const [allowedRaw, setAllowedRaw] = useState(fromList(c.allowed));
   const [forbiddenRaw, setForbiddenRaw] = useState(fromList(c.forbidden));
+
+  // resync raw text when the parent resets the draft (e.g. after a create, parent sets DEFAULT_DRAFT)
+  useEffect(() => { setAllowedRaw(fromList(draft.contract.allowed)); }, [draft.contract.allowed]);
+  useEffect(() => { setForbiddenRaw(fromList(draft.contract.forbidden)); }, [draft.contract.forbidden]);
 
   function addRule() {
     onChange({ ...draft, riskRubric: [...draft.riskRubric, { glob: '', forceRisk: 'high' }] });
