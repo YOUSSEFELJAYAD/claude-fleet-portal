@@ -884,7 +884,7 @@ class Registry {
     });
   }
 
-  private onExit(lr: LiveRun, code: number | null, signal: NodeJS.Signals | null) {
+  private onExit(lr: LiveRun, code: number | null, _signal: NodeJS.Signals | null) {
     // The run was deleted (or replaced by a resume) while the child was still dying —
     // upserting now would re-INSERT the deleted rows, re-broadcast a ghost run, and
     // fire a second terminal notification. Drop everything from this stale closure.
@@ -908,13 +908,6 @@ class Registry {
     if (status !== 'completed') {
       const err = lr.lastStderr.trim();
       if (err) lr.run.error = err.slice(-2000);
-      // A signal-terminated child reports code===null (vs the spawn-error path's -1). With no
-      // stderr it leaves no clue, so surface the signal: SIGKILL/SIGTERM usually means an external
-      // kill (server restart / OOM), SIGSEGV/SIGABRT a CLI crash. Without this a signal kill that
-      // slips past lr.killed shows a bare 'failed' with null exit code and no error.
-      else if (status === 'failed' && code === null && signal) {
-        lr.run.error = `process terminated by signal ${signal} (no output captured — likely an external kill, server restart, or OOM)`;
-      }
     }
     if (status === 'killed') lr.tree.killAll(now);
     const roll = lr.tree.rollups();
