@@ -5,7 +5,11 @@
  * (DC §D-031); destructive verbs are flagged danger:true and route through the Inbox queue.
  */
 import { registry } from './registry.js';
-import { listAddonInfos, setAddonEnabledById } from './addons.js';
+import { listAddonInfos, setAddonEnabledById, researchConfig } from './addons.js';
+import { searchWeb } from './research.js';
+import { planboardRepo } from './planboard.js';
+import { kanbanRepo } from './kanban.js';
+import { repo } from './db.js';
 import { campaigns } from './campaigns.js';
 import { enqueueApproval } from './inbox.js';
 import { statusPorcelain, gitLog } from './git.js';
@@ -191,6 +195,100 @@ const COMMANDS: CommandEntry[] = [
       const n = registry.stopAll();
       return { ok: true, kind: 'text', text: `stopped ${n} run(s)` };
     },
+  },
+  // ── knowledge / read verbs ─────────────────────────────────────────────────────────────────
+  {
+    name: 'research',
+    group: 'knowledge',
+    description: 'Web search via the Web Research add-on (SearXNG)',
+    usage: '/research <topic>',
+    args: [{ name: 'topic', required: true, type: 'string' }],
+    resultKind: 'table',
+    async run({ arg }) {
+      if (!arg) return err('usage: /research <topic>');
+      try {
+        const cfg = researchConfig();
+        const results = await searchWeb({ searxngUrl: cfg.searxngUrl, query: arg, maxResults: cfg.maxResults, engines: cfg.engines, safeSearch: cfg.safeSearch, language: cfg.language });
+        return { ok: true, kind: 'table', columns: ['title', 'url'], rows: results.map((w: any) => [String(w.title ?? '').slice(0, 80), String(w.url ?? '')]) };
+      } catch (e: any) { return err(e?.message ?? 'research failed'); }
+    },
+  },
+  {
+    name: 'search',
+    group: 'knowledge',
+    description: 'Full-text search across run events',
+    usage: '/search <query>',
+    args: [{ name: 'query', required: true, type: 'string' }],
+    resultKind: 'text',
+    async run({ arg }) {
+      if (!arg) return err('usage: /search <query>');
+      return ok(`Open the Search page to query "${arg}" across run history: /search?q=${encodeURIComponent(arg)}`);
+    },
+  },
+  {
+    name: 'files',
+    group: 'project',
+    description: 'Browse the chat workspace files',
+    usage: '/files',
+    args: [],
+    resultKind: 'text',
+    async run({ cwd }) { return ok(`Use @ to mention files, or open the file browser for ${cwd}.`); },
+  },
+  {
+    name: 'board',
+    group: 'project',
+    description: 'List plan drafts for a project',
+    usage: '/board <projectId>',
+    args: [{ name: 'projectId', required: true, type: 'project' }],
+    resultKind: 'table',
+    async run({ arg }) {
+      if (!arg) return err('usage: /board <projectId>');
+      const drafts = planboardRepo.list(arg) as any[];
+      return { ok: true, kind: 'table', columns: ['id', 'status', 'tasks'], rows: drafts.map((d) => [d.id, String(d.status ?? ''), String(d.tasks?.length ?? 0)]) };
+    },
+  },
+  {
+    name: 'task',
+    group: 'project',
+    description: 'List kanban tasks for a project',
+    usage: '/task <projectId>',
+    args: [{ name: 'projectId', required: true, type: 'project' }],
+    resultKind: 'table',
+    async run({ arg }) {
+      if (!arg) return err('usage: /task <projectId>');
+      const tasks = kanbanRepo.listTasks(arg) as any[];
+      return { ok: true, kind: 'table', columns: ['id', 'column', 'title'], rows: tasks.map((t) => [t.id, t.column, String(t.title ?? '').slice(0, 60)]) };
+    },
+  },
+  {
+    name: 'template',
+    group: 'config',
+    description: 'List agent templates',
+    usage: '/template',
+    args: [],
+    resultKind: 'table',
+    async run() {
+      const tpls = repo.listTemplates() as any[];
+      return { ok: true, kind: 'table', columns: ['id', 'name', 'role'], rows: tpls.map((t) => [t.id, t.name, t.role]) };
+    },
+  },
+  {
+    name: 'memory',
+    group: 'knowledge',
+    description: 'Fleet memory status + config',
+    usage: '/memory',
+    args: [],
+    resultKind: 'text',
+    async run() { return ok('Open the Memory page to view stats or configure the fleet-memory dir: /memory'); },
+  },
+  {
+    name: 'releases',
+    group: 'meta',
+    description: 'Portal version + available updates',
+    usage: '/releases',
+    args: [],
+    resultKind: 'text',
+    async run() { return ok('Open the Releases page for the current version and available updates: /releases'); },
   },
 ];
 

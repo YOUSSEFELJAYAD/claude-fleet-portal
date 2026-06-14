@@ -25,7 +25,12 @@ vi.mock('../src/registry.js', () => ({
 vi.mock('../src/addons.js', () => ({
   listAddonInfos: vi.fn(async () => [{ id: 'compression', enabled: true, status: 'running' }]),
   setAddonEnabledById: vi.fn(async (id: string, en: boolean) => ({ id, enabled: en, status: en ? 'running' : 'disabled' })),
+  researchConfig: vi.fn(() => ({ searxngUrl: 'http://s', maxResults: 5, engines: '', safeSearch: 1, language: 'en' })),
 }));
+vi.mock('../src/research.js', () => ({ searchWeb: vi.fn(async () => [{ title: 'T', url: 'https://x', content: 'c' }]) }));
+vi.mock('../src/planboard.js', () => ({ planboardRepo: { list: vi.fn(() => [{ id: 'd1', status: 'ready', tasks: [1, 2] }]) } }));
+vi.mock('../src/kanban.js', () => ({ kanbanRepo: { listTasks: vi.fn(() => [{ id: 'k1', column: 'Backlog', title: 'do x' }]) } }));
+vi.mock('../src/db.js', () => ({ repo: { listTemplates: vi.fn(() => [{ id: 't1', name: 'orchestrator', role: 'orchestrator' }]) } }));
 vi.mock('../src/campaigns.js', () => ({ campaigns: { create: vi.fn(async () => ({ id: 'camp-1' })) } }));
 vi.mock('../src/git.js', () => ({
   statusPorcelain: vi.fn(async () => ({ entries: [
@@ -123,5 +128,58 @@ describe('/git', () => {
   it('/git with no subcommand errors', async () => {
     const r = await dispatchCommand('/git', '/repo');
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('read + project verbs', () => {
+  it('/research <topic> returns a results table', async () => {
+    const r = await dispatchCommand('/research vector dbs', '/repo');
+    expect(r.kind).toBe('table');
+    expect(r.columns).toEqual(['title', 'url']);
+  });
+  it('/research with no topic errors', async () => {
+    expect((await dispatchCommand('/research', '/repo')).ok).toBe(false);
+  });
+  it('/addons lists add-ons', async () => {
+    const r = await dispatchCommand('/addons', '/repo');
+    expect(r.kind).toBe('table');
+    expect(r.columns).toEqual(['id', 'enabled', 'status']);
+  });
+  it('/board <projectId> lists plan drafts', async () => {
+    const r = await dispatchCommand('/board p1', '/repo');
+    expect(r.kind).toBe('table');
+  });
+  it('/board with no project errors', async () => {
+    expect((await dispatchCommand('/board', '/repo')).ok).toBe(false);
+  });
+  it('/task <projectId> lists kanban tasks', async () => {
+    const r = await dispatchCommand('/task p1', '/repo');
+    expect(r.kind).toBe('table');
+  });
+  it('/template lists templates', async () => {
+    const r = await dispatchCommand('/template', '/repo');
+    expect(r.kind).toBe('table');
+    expect(r.columns).toEqual(['id', 'name', 'role']);
+  });
+  it('/files points at the workspace picker (text)', async () => {
+    expect((await dispatchCommand('/files', '/repo')).kind).toBe('text');
+  });
+  it('/search points at the search page (text)', async () => {
+    expect((await dispatchCommand('/search foo', '/repo')).kind).toBe('text');
+  });
+  it('/memory points at the memory page (text)', async () => {
+    expect((await dispatchCommand('/memory', '/repo')).kind).toBe('text');
+  });
+  it('/schedule points at the schedules page (text)', async () => {
+    expect((await dispatchCommand('/schedule', '/repo')).kind).toBe('text');
+  });
+  it('/releases points at the releases page (text)', async () => {
+    expect((await dispatchCommand('/releases', '/repo')).kind).toBe('text');
+  });
+  it('/help lists the registry verbs', async () => {
+    const r = await dispatchCommand('/help', '/repo');
+    expect(r.kind).toBe('text');
+    expect(String(r.text)).toMatch(/\/launch/);
+    expect(String(r.text)).toMatch(/\/git/);
   });
 });
