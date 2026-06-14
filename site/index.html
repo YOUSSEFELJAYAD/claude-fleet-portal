@@ -24,9 +24,28 @@
     --display: "Chakra Petch", system-ui, sans-serif;
     --sans: "Archivo", system-ui, sans-serif;
     --monoF: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    /* ── spacing scale (rem-based; scales with the adaptive root) ── */
+    --space-1: .375rem;  --space-2: .625rem; --space-3: .875rem;
+    --space-4: 1.125rem; --space-5: 1.5rem;  --space-6: 2rem;
+    --space-7: 2.75rem;  --space-8: 3.75rem; --space-section: clamp(4rem, 7vw, 6.5rem);
+    --space-gap: 1.125rem;
+    /* ── type scale (rem-based) ── */
+    --text-display: clamp(2.5rem, 7vw, 4.5rem);
+    --text-h2: clamp(1.6rem, 4vw, 2.5rem);
+    --text-h3: 1.125rem;
+    --text-lead: clamp(1rem, 2.4vw, 1.3rem);
+    --text-body: .95rem;
+    --text-small: .8rem;
+    /* ── motion tokens (motion-design: Precise/Confident) ── */
+    --dur-fast: 180ms; --dur-base: 260ms; --dur-slow: 360ms;
+    --ease-out: cubic-bezier(.22, 1, .36, 1);     /* snappy ease-out, no overshoot */
+    --ease-inout: cubic-bezier(.65, 0, .35, 1);
+    --reveal-travel: 14px;
+    /* ── radii ── */
+    --radius-card: 14px; --radius-pill: 999px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; font-size: clamp(13px, 0.45vw + 10.7px, 17px); }
   body {
     color: var(--ink); font: 16px/1.6 var(--sans); overflow-x: hidden;
     /* the portal's mission-control atmosphere: vignettes + blueprint grid + scanlines */
@@ -61,12 +80,12 @@
   .hero-foot { position: absolute; bottom: 26px; left: 0; right: 0; color: var(--faint); font-size: 12.5px; z-index: 1; }
 
   /* ── sections ── */
-  section { max-width: 1120px; margin: 0 auto; padding: 96px 24px; }
+  section { max-width: 1120px; margin: 0 auto; padding: var(--space-section) 24px; }
   .kicker { color: var(--amber); font-size: 12px; letter-spacing: .28em; text-transform: uppercase; font-weight: 600; }
-  h2 { font-size: clamp(26px, 4vw, 40px); margin: 10px 0 18px; }
+  h2 { font-size: var(--text-h2); margin: var(--space-3) 0 var(--space-4); letter-spacing: .01em; }
   .lead { color: var(--dim); max-width: 760px; }
 
-  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 42px; }
+  .grid { display: grid; gap: var(--space-gap); grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: var(--space-7); }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 26px; transition: border-color .2s, transform .2s; }
   .card:hover { border-color: rgba(255,176,0,.45); transform: translateY(-3px); }
   .card .ico { font-size: 26px; }
@@ -167,8 +186,9 @@
   .doc-sidebar a:hover, .doc-sidebar a.active { color: var(--amber); border-left-color: var(--amber); background: rgba(255,176,0,.04); }
   .doc-content { padding: 32px 36px; }
   @media (max-width: 860px) { .doc-content { padding: 24px 20px; } }
-  .doc-content .doc-section { display: none; }
-  .doc-content .doc-section.active { display: block; }
+  .doc-content .doc-section { display: none; opacity: 0; transform: translateY(6px); transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
+  .doc-content .doc-section.active { display: block; opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .doc-content .doc-section { transition: none; } }
   .doc-content h3 { font-size: 22px; margin-bottom: 14px; letter-spacing: .03em; }
   .doc-content h4 { font-size: 15px; color: var(--amber); margin: 22px 0 8px; letter-spacing: .06em; text-transform: uppercase; }
   .doc-content p { color: var(--dim); font-size: 14.5px; line-height: 1.7; margin-bottom: 12px; }
@@ -429,7 +449,64 @@
   .span-l { font-size: 10px; color: var(--dim); margin-bottom: 3px; }
   .span-track { position: relative; height: 5px; background: rgba(255,255,255,.04); border-radius: 3px; }
   .span-bar { position: absolute; top: 0; height: 100%; width: 0; border-radius: 3px; transition: width .55s ease; box-shadow: 0 0 8px -2px currentColor; }
+
+  /* ── motion engine: reveal + stagger + parallax (Precise/Confident) ── */
+  [data-reveal] { opacity: 0; transform: translateY(var(--reveal-travel)); will-change: opacity, transform; transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out), border-color var(--dur-fast) var(--ease-out); }
+  [data-reveal="left"]  { transform: translateX(calc(-1 * var(--reveal-travel))); }
+  [data-reveal="right"] { transform: translateX(var(--reveal-travel)); }
+  [data-reveal="scale"] { transform: scale(.985); }
+  [data-reveal].in { opacity: 1; transform: none; transition-delay: var(--rv-delay, 0ms); will-change: auto; }
+  [data-parallax] { will-change: transform; }
+  @media (max-width: 860px) { [data-parallax] { transform: none !important; } }
+  @media (prefers-reduced-motion: reduce) {
+    [data-reveal] { opacity: 1 !important; transform: none !important; transition: none !important; }
+    [data-parallax] { transform: none !important; }
+  }
+  /* hero headline words + HUD fade (HUD keeps its translateY(-50%) centering) */
+  .h1-words span { display: inline-block; }
+  .hud[data-reveal] { opacity: 0; transform: translateY(-50%); transition: opacity var(--dur-slow) var(--ease-out); }
+  .hud[data-reveal].in { opacity: 1; transform: translateY(-50%); }
+  @media (prefers-reduced-motion: reduce) { .hud[data-reveal] { opacity: 1 !important; transform: translateY(-50%) !important; transition: none !important; } }
+  /* how-it-works connecting line (drawn by scroll progress) */
+  .steps-line { position: absolute; left: 0; top: 50%; height: 2px; width: 0%; background: linear-gradient(90deg, var(--amber), var(--teal)); opacity: .55; transform: translateY(-50%); pointer-events: none; z-index: 0; }
+  @media (max-width: 980px) { .steps-line { left: 50%; top: 0; width: 2px; height: 0%; transform: translateX(-50%); background: linear-gradient(180deg, var(--amber), var(--teal)); } }
+  #steps .step { z-index: 1; }
+
+  /* ── fx: global event toasts (bottom-left, app-style) ── */
+  #fx-toasts { position: fixed; left: 20px; bottom: 20px; width: 250px; height: 64px; z-index: 55; pointer-events: none; opacity: 0; transition: opacity .5s var(--ease-out); }
+  #fx-toasts.live { opacity: 1; }
+  #fx-toasts .fx-pop { position: absolute; left: 0; bottom: 0; width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 13px; border-radius: 10px; background: linear-gradient(180deg, rgba(255,255,255,.03), transparent), rgba(12,14,19,.94); border: 1px solid var(--line2); box-shadow: 0 18px 50px -22px rgba(0,0,0,.9); opacity: 0; transform: translateY(14px) scale(.96); will-change: opacity, transform; transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
+  #fx-toasts .fx-pop.show { opacity: 1; transform: none; }
+  .fx-pop-ic { font-size: 16px; color: var(--amber); flex: none; }
+  .fx-pop.ok .fx-pop-ic { color: var(--green); }
+  .fx-pop.warn .fx-pop-ic { color: var(--red); }
+  .fx-pop-tx { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
+  .fx-pop-tx b { font-family: var(--display); font-size: 13px; letter-spacing: .02em; color: var(--ink); }
+  .fx-pop-tx em { font-family: var(--monoF); font-size: 10.5px; font-style: normal; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 600px) { #fx-toasts { left: 12px; right: 12px; width: auto; bottom: 12px; } }
+  @media (prefers-reduced-motion: reduce) { #fx-toasts { display: none !important; } }
+
+  /* ── fx: agent-robot scroll guide + status ── */
+  #fx-robot { position: fixed; top: 0; left: 0; width: 88px; height: 88px; z-index: 60; pointer-events: none;
+    opacity: 0; transition: opacity .45s var(--ease-out); transform: translate3d(-200px,-200px,0); }
+  #fx-robot.on { opacity: 1; }
+  #fx-robot-lottie { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px rgba(255,176,0,.28)); transition: filter .35s var(--ease-out); }
+  #fx-robot-chip { position: absolute; top: 90px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-family: var(--monoF); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: rgba(12,14,19,.92); border: 1px solid var(--line2); color: var(--dim); opacity: 0; transition: opacity .3s var(--ease-out), color .3s, border-color .3s; }
+  #fx-robot.on #fx-robot-chip { opacity: 1; }
+  #fx-robot[data-status="busy"] #fx-robot-lottie { filter: drop-shadow(0 8px 22px rgba(255,176,0,.45)); }
+  #fx-robot[data-status="busy"] #fx-robot-chip { color: var(--amber); border-color: rgba(255,176,0,.5); }
+  #fx-robot[data-status="ok"] #fx-robot-lottie { filter: drop-shadow(0 8px 24px rgba(84,224,138,.5)); }
+  #fx-robot[data-status="ok"] #fx-robot-chip { color: var(--green); border-color: rgba(84,224,138,.55); }
+  #fx-robot[data-status="warn"] #fx-robot-lottie { filter: drop-shadow(0 8px 24px rgba(255,93,93,.55)); }
+  #fx-robot[data-status="warn"] #fx-robot-chip { color: var(--red); border-color: rgba(255,93,93,.55); }
+  #fx-robot[data-status="teal"] #fx-robot-lottie { filter: drop-shadow(0 8px 24px rgba(57,212,207,.5)); }
+  #fx-robot[data-status="teal"] #fx-robot-chip { color: var(--teal); border-color: rgba(57,212,207,.55); }
+  #fx-robot[data-status="violet"] #fx-robot-lottie { filter: drop-shadow(0 8px 24px rgba(176,140,255,.5)); }
+  #fx-robot[data-status="violet"] #fx-robot-chip { color: var(--violet); border-color: rgba(176,140,255,.55); }
+  @media (prefers-reduced-motion: reduce) { #fx-robot { display: none !important; } }
 </style>
+<script defer src="https://cdn.jsdelivr.net/npm/lottie-web@5.12.2/build/player/lottie_light.min.js" integrity="sha384-Vtbz3QbtSBqleuQry6kQy5smig1gPZCXUoTFN7RmN9QW47xpEDsV/J1w0Pw0rDJu" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script defer src="assets/lottie/robot.js"></script>
 </head>
 <body>
 
@@ -449,29 +526,44 @@
   </div>
 </nav>
 
+<div id="fx-robot" aria-hidden="true" data-status="idle"><div id="fx-robot-lottie"></div><div id="fx-robot-chip">online</div></div>
+
+<!-- ── fx: global portal-event toasts ── -->
+<div id="fx-toasts" aria-hidden="true">
+  <div class="fx-pop" id="fx-pop-run"><span class="fx-pop-ic">◉</span><div class="fx-pop-tx"><b>run a3f9</b><em>opus-4.8 · high · running</em></div></div>
+  <div class="fx-pop" id="fx-pop-cost"><span class="fx-pop-ic">◌</span><div class="fx-pop-tx"><b>−74% tokens</b><em>Headroom · $0.38 saved</em></div></div>
+  <div class="fx-pop ok" id="fx-pop-merge"><span class="fx-pop-ic">✓</span><div class="fx-pop-tx"><b>PM merged #128</b><em>into main</em></div></div>
+  <div class="fx-pop warn" id="fx-pop-budget"><span class="fx-pop-ic">⊘</span><div class="fx-pop-tx"><b>auto-killed</b><em>ceiling $5.00 reached</em></div></div>
+  <div class="fx-pop" id="fx-pop-campaign"><span class="fx-pop-ic">⛓</span><div class="fx-pop-tx"><b>campaign planned</b><em>6 subagents spawned</em></div></div>
+  <div class="fx-pop" id="fx-pop-notify"><span class="fx-pop-ic">🔔</span><div class="fx-pop-tx"><b>3 awaiting approval</b><em>review &amp; merge</em></div></div>
+</div>
+
 <!-- ── HERO with three.js fleet ─────────────────────────────────────────── -->
 <header id="hero">
-  <div id="scene"></div>
+  <div id="scene" data-parallax="36"></div>
 
   <!-- left HUD: live tasks in progress -->
-  <aside class="hud hud-left" aria-hidden="true">
+  <aside class="hud hud-left" aria-hidden="true" data-reveal>
     <div class="hud-head"><span class="hud-dot"></span> tasks · in progress</div>
     <ul class="hud-tasks" id="hudTasks"></ul>
   </aside>
   <!-- right HUD: an agent spawns subagents, which spawn their own subagents -->
-  <aside class="hud hud-right" aria-hidden="true">
+  <aside class="hud hud-right" aria-hidden="true" data-reveal>
     <div class="hud-head"><span class="hud-dot"></span> orchestration · subagents</div>
     <div class="hud-tree" id="hudTree"></div>
   </aside>
 
-  <div class="hero-inner">
-    <div class="hero-badge">⚖ <b>100% open source</b> · MIT licensed</div>
-    <h1>What can your <span class="amber">fleet</span> build?</h1>
-    <p class="tagline">Mission control for Claude&nbsp;Code, Codex &amp; OpenCode agents — launch, watch and
+  <div class="hero-inner" data-stagger="70">
+    <div class="hero-badge" data-reveal>⚖ <b>100% open source</b> · MIT licensed</div>
+    <h1 class="h1-words" data-stagger="60">
+      <span data-reveal>What</span> <span data-reveal>can</span> <span data-reveal>your</span>
+      <span class="amber" data-reveal>fleet</span> <span data-reveal>build?</span>
+    </h1>
+    <p class="tagline" data-reveal>Mission control for Claude&nbsp;Code, Codex &amp; OpenCode agents — launch, watch and
       orchestrate a whole fleet from one cockpit, with live cost guardrails and an autonomous PM.</p>
 
     <!-- the command console: an animated, evocative launch box (not a live input) -->
-    <div class="console" id="console" aria-hidden="true">
+    <div class="console" id="console" aria-hidden="true" data-reveal>
       <div class="console-top">
         <span class="console-glyph">＋</span>
         <span class="console-label">Launch&nbsp;Agent</span>
@@ -486,12 +578,12 @@
       </div>
     </div>
 
-    <div class="hero-cta">
+    <div class="hero-cta" data-reveal>
       <a class="btn btn-amber" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest">⇩ Download for macOS · Windows · Linux</a>
       <a class="btn btn-ghost" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal">★ Star on GitHub</a>
     </div>
 
-    <div class="cred-row"><b>MIT licensed</b> · <b>660+ tests</b> · <b>3 OS installers</b> · <b>100% local</b></div>
+    <div class="cred-row" data-reveal><b>MIT licensed</b> · <b>660+ tests</b> · <b>3 OS installers</b> · <b>100% local</b></div>
   </div>
   <a class="hero-foot mono" href="#how" style="display:block">🐙 one octopus, many arms — see how it works ↓</a>
 </header>
@@ -499,10 +591,10 @@
 <!-- ── ENGINE TRUST STRIP ───────────────────────────────────────────────── -->
 <section id="engines">
   <div class="lbl">runs your local agents</div>
-  <div class="row">
-    <span class="eng"><span class="dot" style="background:var(--amber);color:var(--amber)"></span><b>Claude&nbsp;Code</b>&nbsp;— native engine</span>
-    <span class="eng"><span class="dot" style="background:var(--teal);color:var(--teal)"></span><b>Codex</b>&nbsp;— engine add-on</span>
-    <span class="eng"><span class="dot" style="background:var(--violet);color:var(--violet)"></span><b>OpenCode</b>&nbsp;— engine add-on</span>
+  <div class="row" data-stagger="80">
+    <span class="eng" data-reveal><span class="dot" style="background:var(--amber);color:var(--amber)"></span><b>Claude&nbsp;Code</b>&nbsp;— native engine</span>
+    <span class="eng" data-reveal><span class="dot" style="background:var(--teal);color:var(--teal)"></span><b>Codex</b>&nbsp;— engine add-on</span>
+    <span class="eng" data-reveal><span class="dot" style="background:var(--violet);color:var(--violet)"></span><b>OpenCode</b>&nbsp;— engine add-on</span>
   </div>
 </section>
 
@@ -514,32 +606,33 @@
   <div class="kicker">how it works</div>
   <h2>🐙 <span class="oct">one octopus, many arms</span> — your agents under mission control</h2>
   <p class="lead">Five moves from idea to merged code. The portal drives the whole loop — watch it light up.</p>
-  <div class="steps" id="steps">
-    <div class="step" style="--accent: var(--amber)">
+  <div class="steps" id="steps" data-stagger="90">
+    <span class="steps-line" aria-hidden="true"></span>
+    <div class="step" data-reveal style="--accent: var(--amber)">
       <div class="n">STEP 01</div><div class="ico">＋</div>
       <h3>Launch</h3>
       <p>Describe the task — or start straight on any <span class="mono">/command</span>. Pick Claude, Codex or OpenCode models from one dropdown.</p>
       <div class="bar"></div>
     </div>
-    <div class="step" style="--accent: var(--coral)">
+    <div class="step" data-reveal style="--accent: var(--coral)">
       <div class="n">STEP 02</div><div class="ico">⛓</div>
       <h3>Orchestrate</h3>
       <p>The agent fans out into subagents; campaigns plan whole dependency DAGs with a worker per subtask.</p>
       <div class="bar"></div>
     </div>
-    <div class="step" style="--accent: var(--teal)">
+    <div class="step" data-reveal style="--accent: var(--teal)">
       <div class="n">STEP 03</div><div class="ico">◉</div>
       <h3>Watch live</h3>
       <p>The workflow tree, token burn and cost stream to your cockpit in real time. Steer, stop or approve at any moment.</p>
       <div class="bar"></div>
     </div>
-    <div class="step" style="--accent: var(--violet)">
+    <div class="step" data-reveal style="--accent: var(--violet)">
       <div class="n">STEP 04</div><div class="ico">⊘</div>
       <h3>Guardrails</h3>
       <p>Budgets auto-kill runaway runs; validation must pass; merge gates wait for your approve — or run full auto.</p>
       <div class="bar"></div>
     </div>
-    <div class="step" style="--accent: var(--green)">
+    <div class="step" data-reveal style="--accent: var(--green)">
       <div class="n">STEP 05</div><div class="ico">✓</div>
       <h3>Ship</h3>
       <p>The PM merges clean work into your branch (or opens the PR) — and the portal keeps itself up to date too.</p>
@@ -550,34 +643,34 @@
 
 <!-- ── FEATURES ─────────────────────────────────────────────────────────── -->
 <section id="features">
-  <div class="kicker">capabilities</div>
-  <h2>Everything your fleet needs</h2>
-  <p class="lead">The portal owns local agent sessions end to end: native Claude runs plus Codex and OpenCode engine add-ons.
+  <div class="kicker" data-reveal>capabilities</div>
+  <h2 data-reveal>Everything your fleet needs</h2>
+  <p class="lead" data-reveal>The portal owns local agent sessions end to end: native Claude runs plus Codex and OpenCode engine add-ons.
     It spawns them headless, parses live events, rebuilds orchestrator → subagent hierarchy and streams it to your browser —
     with full control over every run.</p>
-  <div class="grid">
-    <div class="card"><div class="ico">◉</div><h3>Fleet dashboard</h3><p>Every run live: status, engine, model and effort, cost gauge heating toward the budget ceiling, token burn, subagent count &amp; depth.</p></div>
-    <div class="card"><div class="ico">▣</div><h3>Unified model routing</h3><p>One model picker everywhere: Claude catalog entries, Codex models and OpenCode provider/model IDs. Engine-tagged models route automatically.</p></div>
-    <div class="card"><div class="ico">⧉</div><h3>Live workflow trees</h3><p>Root → subagents at any depth with per-node streaming timelines, span waterfalls and OTLP telemetry. Stop, steer, resume, approve.</p></div>
-    <div class="card"><div class="ico">◫</div><h3>Autonomous PM</h3><p>Attach a git repo, drop cards on the Kanban board — delegate each card to Claude, Codex or OpenCode, with isolated worktrees, validation, gates and merges.</p></div>
-    <div class="card"><div class="ico">⛓</div><h3>Campaigns</h3><p>One objective in, a planned dependency DAG out — a real worker agent per subtask, run in parallel, merged by a synthesizer.</p></div>
-    <div class="card"><div class="ico">◌</div><h3>Compression proxy</h3><p>Headroom can compress Claude traffic and compatible engine traffic too: Codex through OpenAI base URL, OpenCode for Anthropic/OpenAI models.</p></div>
-    <div class="card"><div class="ico">⊞</div><h3>Agent library</h3><p>12 tuned profiles — Debugger, Test Writer, Security Auditor, Frontend Builder… — fully editable, with skills that genuinely shape the spawned agent.</p></div>
-    <div class="card"><div class="ico">⊕</div><h3>Your whole Claude setup</h3><p>Every skill and slash-command from your installed plugins, surfaced and attachable. Launch a run directly on any /command.</p></div>
-    <div class="card"><div class="ico">⊘</div><h3>Hard guardrails</h3><p>Budget ceilings enforced twice (CLI flag + server auto-kill), concurrency caps, per-project spend ceilings, daily tracking.</p></div>
-    <div class="card"><div class="ico">⇪</div><h3>Self-updating</h3><p>Checks GitHub releases in the background, updates itself, and asks for a simple restart. Desktop builds point you at the new installer.</p></div>
-    <div class="card"><div class="ico">🖥</div><h3>Desktop or source</h3><p>Prebuilt apps for macOS, Windows and Linux — or clone and <span class="mono">./install.sh</span>. No Claude installed? A free deterministic mock lets you explore everything.</p></div>
+  <div class="grid" data-stagger="50">
+    <div class="card" data-reveal="scale"><div class="ico">◉</div><h3>Fleet dashboard</h3><p>Every run live: status, engine, model and effort, cost gauge heating toward the budget ceiling, token burn, subagent count &amp; depth.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">▣</div><h3>Unified model routing</h3><p>One model picker everywhere: Claude catalog entries, Codex models and OpenCode provider/model IDs. Engine-tagged models route automatically.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⧉</div><h3>Live workflow trees</h3><p>Root → subagents at any depth with per-node streaming timelines, span waterfalls and OTLP telemetry. Stop, steer, resume, approve.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">◫</div><h3>Autonomous PM</h3><p>Attach a git repo, drop cards on the Kanban board — delegate each card to Claude, Codex or OpenCode, with isolated worktrees, validation, gates and merges.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⛓</div><h3>Campaigns</h3><p>One objective in, a planned dependency DAG out — a real worker agent per subtask, run in parallel, merged by a synthesizer.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">◌</div><h3>Compression proxy</h3><p>Headroom can compress Claude traffic and compatible engine traffic too: Codex through OpenAI base URL, OpenCode for Anthropic/OpenAI models.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⊞</div><h3>Agent library</h3><p>12 tuned profiles — Debugger, Test Writer, Security Auditor, Frontend Builder… — fully editable, with skills that genuinely shape the spawned agent.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⊕</div><h3>Your whole Claude setup</h3><p>Every skill and slash-command from your installed plugins, surfaced and attachable. Launch a run directly on any /command.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⊘</div><h3>Hard guardrails</h3><p>Budget ceilings enforced twice (CLI flag + server auto-kill), concurrency caps, per-project spend ceilings, daily tracking.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⇪</div><h3>Self-updating</h3><p>Checks GitHub releases in the background, updates itself, and asks for a simple restart. Desktop builds point you at the new installer.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">🖥</div><h3>Desktop or source</h3><p>Prebuilt apps for macOS, Windows and Linux — or clone and <span class="mono">./install.sh</span>. No Claude installed? A free deterministic mock lets you explore everything.</p></div>
   </div>
 </section>
 
 <!-- ── LIVE FEATURE DEMOS ───────────────────────────────────────────────── -->
 <section id="showcase">
-  <div class="kicker">live</div>
-  <h2>Watch the fleet work</h2>
-  <p class="lead">Real capabilities, shown live — not screenshots. Each tile loops a tiny simulation of what the portal actually does.</p>
-  <div class="show-grid">
+  <div class="kicker" data-reveal>live</div>
+  <h2 data-reveal>Watch the fleet work</h2>
+  <p class="lead" data-reveal>Real capabilities, shown live — not screenshots. Each tile loops a tiny simulation of what the portal actually does.</p>
+  <div class="show-grid" data-stagger="60">
 
-    <div class="show-card" id="demo-compress">
+    <div class="show-card" data-reveal id="demo-compress">
       <div class="sc-head"><span class="sc-ico">◌</span> Compression · Headroom <span class="sc-live"></span></div>
       <div class="sc-body">
         <div class="cmp-row"><span class="cmp-lbl">context in</span><span class="cmp-tok" data-in>48,210 tok</span></div>
@@ -588,7 +681,7 @@
       <div class="sc-cap">Headroom proxies Claude, Codex &amp; OpenCode traffic and compresses context on the fly.</div>
     </div>
 
-    <div class="show-card" id="demo-search">
+    <div class="show-card" data-reveal id="demo-search">
       <div class="sc-head"><span class="sc-ico">⌕</span> Web research · SearXNG <span class="sc-live"></span></div>
       <div class="sc-body">
         <div class="srch-q"><span class="srch-qtxt" data-q></span><span class="srch-caret"></span></div>
@@ -603,7 +696,7 @@
       <div class="sc-cap">Open-source meta-search across engines → pick sources → an agent synthesizes a cited answer.</div>
     </div>
 
-    <div class="show-card" id="demo-budget">
+    <div class="show-card" data-reveal id="demo-budget">
       <div class="sc-head"><span class="sc-ico">⊘</span> Guardrails · budget ceiling <span class="sc-live"></span></div>
       <div class="sc-body">
         <div class="bud-top"><span data-spend>$0.00</span><span class="bud-cap">ceiling $5.00</span></div>
@@ -613,7 +706,7 @@
       <div class="sc-cap">Per-run &amp; per-project ceilings, enforced twice — the server auto-kills overspend.</div>
     </div>
 
-    <div class="show-card" id="demo-route">
+    <div class="show-card" data-reveal id="demo-route">
       <div class="sc-head"><span class="sc-ico">▣</span> Unified model routing <span class="sc-live"></span></div>
       <div class="sc-body">
         <div class="rt-model" data-model>opus-4.8 · high</div>
@@ -626,7 +719,7 @@
       <div class="sc-cap">One picker for Claude, Codex &amp; OpenCode — engine-tagged models route automatically.</div>
     </div>
 
-    <div class="show-card" id="demo-spans">
+    <div class="show-card" data-reveal id="demo-spans">
       <div class="sc-head"><span class="sc-ico">▦</span> Live workflow · spans <span class="sc-live"></span></div>
       <div class="sc-body"><div class="spans" data-spans></div></div>
       <div class="sc-cap">Per-node timelines, a span waterfall and OTLP telemetry stream as the agent runs.</div>
@@ -639,24 +732,24 @@
 <div class="topo"></div>
 
 <section id="tour">
-  <div class="kicker">the cockpit</div>
-  <h2>Built like mission control</h2>
-  <p class="lead">Amber-on-charcoal, dense with signal, zero fluff. Everything updates live over SSE.</p>
+  <div class="kicker" data-reveal>the cockpit</div>
+  <h2 data-reveal>Built like mission control</h2>
+  <p class="lead" data-reveal>Amber-on-charcoal, dense with signal, zero fluff. Everything updates live over SSE.</p>
   <div class="shots">
-    <img class="shot" src="assets/dashboard.png" alt="Fleet dashboard" loading="lazy" />
-    <div class="shot-row">
+    <img class="shot" src="assets/dashboard.png" alt="Fleet dashboard" loading="lazy" data-reveal />
+    <div class="shot-row" data-reveal>
       <img class="shot" src="assets/run-detail.png" alt="Run detail with live workflow tree" loading="lazy" />
       <img class="shot" src="assets/board.png" alt="Kanban board executed by the agent PM" loading="lazy" />
     </div>
-    <img class="shot" src="assets/template.png" alt="Agent profile editor with skill picker" loading="lazy" />
+    <img class="shot" src="assets/template.png" alt="Agent profile editor with skill picker" loading="lazy" data-reveal />
   </div>
 </section>
 
 <!-- ── DOCUMENTATION ────────────────────────────────────────────────────── -->
 <section id="docs">
-  <div class="kicker">documentation</div>
-  <h2>How it works — in depth</h2>
-  <p class="lead">Everything you need to know to get the most out of your fleet. Select a topic to dive in.</p>
+  <div class="kicker" data-reveal>documentation</div>
+  <h2 data-reveal>How it works — in depth</h2>
+  <p class="lead" data-reveal>Everything you need to know to get the most out of your fleet. Select a topic to dive in.</p>
 
   <div class="doc-grid">
     <div class="doc-sidebar">
@@ -865,9 +958,9 @@
 
 <!-- ── RELEASES ─────────────────────────────────────────────────────────── -->
 <section id="releases">
-  <div class="kicker">changelog</div>
-  <h2>Releases</h2>
-  <p class="lead">Track every version, see what shipped, and stay up to date.</p>
+  <div class="kicker" data-reveal>changelog</div>
+  <h2 data-reveal>Releases</h2>
+  <p class="lead" data-reveal>Track every version, see what shipped, and stay up to date.</p>
 
   <div class="release-timeline">
     <div class="release-entry current">
@@ -1022,10 +1115,10 @@
 
 <!-- ── INSTALL ──────────────────────────────────────────────────────────── -->
 <section id="install">
-  <div class="kicker">get started</div>
-  <h2>Running in two minutes</h2>
-  <div class="install-cols">
-    <div class="card">
+  <div class="kicker" data-reveal>get started</div>
+  <h2 data-reveal>Running in two minutes</h2>
+  <div class="install-cols" data-stagger="80">
+    <div class="card" data-reveal>
       <h3>⇩ Download the app</h3>
       <p>Prebuilt by GitHub Actions for every release — no Node, pnpm or checkout required.</p>
       <div class="plat">
@@ -1042,7 +1135,7 @@
         <div class="macnote-opt">or open it once → <b>System Settings → Privacy &amp; Security → “Open Anyway”</b> → launch again</div>
       </div>
     </div>
-    <div class="card">
+    <div class="card" data-reveal>
       <h3>⌁ Build from source</h3>
 <pre><span class="c"># Node ≥ 20 · pnpm · git</span>
 git clone https://github.com/YOUSSEFELJAYAD/claude-fleet-portal.git
@@ -1056,18 +1149,18 @@ cd claude-fleet-portal
 
 <!-- ── OPEN SOURCE ──────────────────────────────────────────────────────── -->
 <section id="oss">
-  <div class="kicker">open source</div>
-  <h2>Built in the open. Yours to shape.</h2>
-  <p class="lead">Claude Fleet Portal is MIT-licensed, end to end — the control plane, the UI, the desktop
+  <div class="kicker" data-reveal>open source</div>
+  <h2 data-reveal>Built in the open. Yours to shape.</h2>
+  <p class="lead" data-reveal>Claude Fleet Portal is MIT-licensed, end to end — the control plane, the UI, the desktop
     shell and the release pipeline. Local-first by design: your code, your data and your API spend never
     leave your machine. Every engineering decision is logged in the repo (<span class="mono">DC.md</span>),
     every release ships from a public GitHub Actions pipeline you can audit, and the deterministic
     mock + 350-test hermetic suite mean you can hack on it without spending a token.</p>
-  <div class="stats">
-    <div class="stat"><b>MIT</b><span>license — use it anywhere</span></div>
-    <div class="stat"><b>660+</b><span>deterministic server tests</span></div>
-    <div class="stat"><b>3 OS</b><span>installers, built by public CI</span></div>
-    <div class="stat"><b>100%</b><span>local — nothing leaves your machine</span></div>
+  <div class="stats" data-stagger="70">
+    <div class="stat" data-reveal><b>MIT</b><span>license — use it anywhere</span></div>
+    <div class="stat" data-reveal><b>660+</b><span>deterministic server tests</span></div>
+    <div class="stat" data-reveal><b>3 OS</b><span>installers, built by public CI</span></div>
+    <div class="stat" data-reveal><b>100%</b><span>local — nothing leaves your machine</span></div>
   </div>
   <div class="cta" style="justify-content:flex-start; margin-top:36px">
     <a class="btn btn-amber" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal">Read the source</a>
@@ -1078,31 +1171,31 @@ cd claude-fleet-portal
 
 <!-- ── FAQ ──────────────────────────────────────────────────────────────── -->
 <section id="faq">
-  <div class="kicker">questions</div>
-  <h2>Frequently asked</h2>
-  <p class="lead">Straight answers — no sign-up, no catch. It runs on your machine.</p>
-  <div class="faq-list">
-    <details class="faq-item">
+  <div class="kicker" data-reveal>questions</div>
+  <h2 data-reveal>Frequently asked</h2>
+  <p class="lead" data-reveal>Straight answers — no sign-up, no catch. It runs on your machine.</p>
+  <div class="faq-list" data-stagger="60">
+    <details class="faq-item" data-reveal>
       <summary>Do I need a Claude subscription or API key?</summary>
       <div class="faq-a">For real agent runs you need the <a href="https://claude.com/claude-code">Claude Code CLI</a> with its normal auth. No CLI installed? A free deterministic <code>--mock</code> mode lets you explore the whole portal without spending a token. Codex and OpenCode are optional engine add-ons.</div>
     </details>
-    <details class="faq-item">
+    <details class="faq-item" data-reveal>
       <summary>Does my code or data ever leave my machine?</summary>
       <div class="faq-a">No. The portal is local-first by design — the control plane and UI run on <code>localhost</code> (<code>:4318</code> / <code>:4319</code>). Your code, API keys and spend data never leave your network.</div>
     </details>
-    <details class="faq-item">
+    <details class="faq-item" data-reveal>
       <summary>Which operating systems are supported?</summary>
       <div class="faq-a">Prebuilt desktop apps for <b>macOS</b>, <b>Windows</b> and <b>Linux</b>, built by public GitHub Actions for every release — or build from source with Node&nbsp;20+ and pnpm.</div>
     </details>
-    <details class="faq-item">
+    <details class="faq-item" data-reveal>
       <summary>Can it run Codex and OpenCode too?</summary>
       <div class="faq-a">Yes. They join the same unified model catalog as engine add-ons and route automatically. Claude stays the native, full-feature engine (subagent trees, resume, per-run cost streams); engine add-ons are one-shot headless runs.</div>
     </details>
-    <details class="faq-item">
+    <details class="faq-item" data-reveal>
       <summary>Is it really free and open source?</summary>
       <div class="faq-a">Yes — <b>MIT licensed</b> end to end: control plane, UI, desktop shell and release pipeline. You only ever pay your own model/API costs when running real agents.</div>
     </details>
-    <details class="faq-item">
+    <details class="faq-item" data-reveal>
       <summary>How do updates work?</summary>
       <div class="faq-a">The server checks GitHub Releases in the background; when a new version lands you can update in place (<code>git pull</code> + <code>pnpm install</code>) and restart. Desktop builds point you at the new installer.</div>
     </details>
@@ -1111,11 +1204,11 @@ cd claude-fleet-portal
 
 <!-- ── CLOSING CTA ──────────────────────────────────────────────────────── -->
 <section id="launch-cta">
-  <div class="cta-card ticked">
-    <span class="kicker">get started</span>
-    <h2>Ready to launch your fleet?</h2>
-    <p>Download the desktop app or build from source — and run your first agent in about two minutes.</p>
-    <div class="cta">
+  <div class="cta-card ticked" data-stagger="80">
+    <span class="kicker" data-reveal>get started</span>
+    <h2 data-reveal>Ready to launch your fleet?</h2>
+    <p data-reveal>Download the desktop app or build from source — and run your first agent in about two minutes.</p>
+    <div class="cta" data-reveal>
       <a class="btn btn-amber" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest">⇩ Download</a>
       <a class="btn btn-ghost" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal">★ Star on GitHub</a>
     </div>
@@ -1576,30 +1669,32 @@ new IntersectionObserver((entries) => {
 
 <script>
 (() => {
-  const CYCLE = 2600;
-  const steps = [...document.querySelectorAll('#steps .step')];
-  steps.forEach((el) => el.style.setProperty('--cycle', CYCLE + 'ms'));
-  let i = -1, timer = null, paused = false;
-  function activate(n) {
-    i = n % steps.length;
+  const start = () => {
+    const steps = [...document.querySelectorAll('#steps .step')];
+    const line = document.querySelector('.steps-line');
+    const root = document.getElementById('steps');
+    if (!steps.length || !root) return;
+    const vertical = () => window.matchMedia('(max-width: 980px)').matches;
+    let lastP = 0;
+    const apply = (p) => {
+      lastP = p;
+      const pct = Math.max(0, Math.min(1, (p - 0.15) / 0.7));
+      if (line) line.style[vertical() ? 'height' : 'width'] = (pct * 100) + '%';
+      const active = Math.min(steps.length - 1, Math.floor(pct * steps.length));
+      steps.forEach((el, k) => {
+        el.classList.toggle('done', k < active || pct >= 1);
+        el.classList.toggle('active', k === active && pct > 0 && pct < 1);
+      });
+    };
     steps.forEach((el, k) => {
-      el.classList.toggle('active', k === i);
-      el.classList.toggle('done', k < i);
-      if (k !== i) { const b = el.querySelector('.bar'); b.style.animation = 'none'; void b.offsetWidth; b.style.animation = ''; }
+      el.addEventListener('pointerenter', () => steps.forEach((s, j) => s.classList.toggle('active', j === k)));
+      el.addEventListener('pointerleave', () => apply(lastP));
     });
-  }
-  function tick() { if (!paused) activate(i + 1); }
-  steps.forEach((el, k) => {
-    el.addEventListener('click', () => { activate(k); });
-    el.addEventListener('pointerenter', () => { paused = true; });
-    el.addEventListener('pointerleave', () => { paused = false; });
-  });
-  new IntersectionObserver((entries) => {
-    for (const e of entries) {
-      if (e.isIntersecting && !timer) { activate(0); timer = setInterval(tick, CYCLE); }
-      else if (!e.isIntersecting && timer) { clearInterval(timer); timer = null; }
-    }
-  }, { threshold: 0.35 }).observe(document.getElementById('steps'));
+    if (window.__onScrollProgress) window.__onScrollProgress(root, apply);
+    else { steps.forEach((s) => s.classList.add('done')); if (line) line.style[vertical() ? 'height' : 'width'] = '100%'; }
+  };
+  if (window.__onScrollProgress) start();
+  else window.addEventListener('DOMContentLoaded', start);
 })();
 </script>
 
@@ -1618,7 +1713,8 @@ new IntersectionObserver((entries) => {
       links.forEach((l) => l.classList.remove('active'));
       link.classList.add('active');
       sections.forEach((s) => {
-        s.classList.toggle('active', s.id === 'doc-' + target);
+        if (s.id === 'doc-' + target) { s.style.display = 'block'; requestAnimationFrame(() => s.classList.add('active')); }
+        else { s.classList.remove('active'); s.style.display = 'none'; }
       });
     });
   });
@@ -1653,6 +1749,192 @@ new IntersectionObserver((entries) => {
     const el = document.getElementById(id);
     if (el) observer.observe(el);
   });
+})();
+</script>
+<!-- ── shared motion engine: one demand-driven rAF ticker + reveal/parallax ──── -->
+<script type="module">
+(() => {
+  const prefersReduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduce = () => window.__reduceMotion ?? prefersReduce;
+  const mobile = () => window.matchMedia('(max-width: 860px)').matches;
+
+  // ── one shared, demand-driven rAF ticker ──
+  // A subscriber's fn(dt) returns true to request more frames. The loop keeps
+  // running while any subscriber is "settling" and sleeps fully when all are
+  // idle (an idle page below the fold costs nothing). Scroll/resize re-wake it.
+  const subs = new Set();
+  let raf = 0, last = 0;
+  function frame(t) {
+    const dt = last ? Math.min(64, t - last) : 16.67; last = t;
+    let alive = false;
+    for (const s of subs) {
+      if (s.fn(dt) === true) s.settleUntil = t + 250;  // keep frames while moving
+      if (t < s.settleUntil) alive = true;
+    }
+    if (alive) raf = requestAnimationFrame(frame);
+    else { raf = 0; last = 0; }
+  }
+  function ping() { if (!raf) { last = 0; raf = requestAnimationFrame(frame); } }
+  function subscribe(fn) {
+    const s = { fn, settleUntil: 0 };
+    subs.add(s);
+    s.settleUntil = performance.now() + 250; ping();      // initial settle burst
+    return { wake: () => { s.settleUntil = performance.now() + 250; ping(); }, stop: () => subs.delete(s) };
+  }
+  window.__ticker = { subscribe, wake: ping };
+
+  // ── frame-rate-independent exponential smoothing (dt in ms) ──
+  const lerp = (cur, target, base = 0.18, dt = 16.67) =>
+    cur + (target - cur) * (1 - Math.pow(1 - base, dt / 16.67));
+  window.__lerp = lerp;
+
+  // ── reveal: one IntersectionObserver toggles `.in`, honoring nested stagger ──
+  const revealEls = [...document.querySelectorAll('[data-reveal]')];
+  if (reduce()) {
+    revealEls.forEach((el) => el.classList.add('in'));
+  } else {
+    document.querySelectorAll('[data-stagger]').forEach((group) => {
+      const stepMs = parseInt(group.dataset.stagger || '55', 10);
+      [...group.querySelectorAll('[data-reveal]')]
+        .filter((el) => el.closest('[data-stagger]') === group)   // own children only
+        .forEach((el, i) => el.style.setProperty('--rv-delay', (i * stepMs) + 'ms'));
+    });
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    }, { threshold: 0, rootMargin: '0px 0px -8% 0px' });
+    revealEls.forEach((el) => io.observe(el));
+  }
+
+  // scroll/resize wake the shared ticker for a settle burst
+  if (!reduce()) {
+    addEventListener('scroll', ping, { passive: true });
+    addEventListener('resize', ping, { passive: true });
+  }
+
+  // ── parallax: [data-parallax]="px" drift (desktop, motion-on) ──
+  if (!reduce() && !mobile()) {
+    const items = [...document.querySelectorAll('[data-parallax]')]
+      .map((el) => ({ el, str: parseFloat(el.dataset.parallax) || 24, cur: 0, vis: false }));
+    if (items.length) {
+      const visObs = new IntersectionObserver((entries) => {
+        for (const e of entries) { const it = items.find((x) => x.el === e.target); if (it) it.vis = e.isIntersecting; }
+        ping();
+      }, { threshold: 0 });
+      items.forEach((it) => visObs.observe(it.el));
+      subscribe((dt) => {
+        const vh = window.innerHeight || 1; let moving = false;
+        for (const it of items) {
+          if (!it.vis) continue;
+          const r = it.el.getBoundingClientRect();
+          const target = -(((r.top + r.height / 2) / vh) - 0.5) * it.str;
+          const next = lerp(it.cur, target, 0.12, dt);
+          if (Math.abs(next - it.cur) > 0.03) moving = true;
+          it.cur = next;
+          it.el.style.transform = `translate3d(0, ${it.cur.toFixed(2)}px, 0)`;
+        }
+        return moving;
+      });
+    }
+  }
+
+  // ── scroll progress for section choreography (pure fn of scroll position) ──
+  window.__onScrollProgress = (el, cb) => {
+    if (reduce()) { cb(1); return () => {}; }
+    const handle = subscribe(() => {
+      const r = el.getBoundingClientRect(); const vh = window.innerHeight || 1;
+      cb(Math.max(0, Math.min(1, (vh - r.top) / (vh + r.height))));
+      return false;   // never self-perpetuates; driven by scroll ping
+    });
+    return handle.stop;
+  };
+})();
+</script>
+<!-- ── fx: global portal-event toast stream ── -->
+<script>
+(() => {
+  const start = () => {
+    const host = document.getElementById('fx-toasts');
+    if (!host) return;
+    const pops = [...host.querySelectorAll('.fx-pop')];
+    const reduce = window.__reduceMotion ?? matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || !pops.length) return;
+    const cta = document.getElementById('launch-cta');
+    let ctaVis = false;
+    if (cta) new IntersectionObserver((es) => { for (const e of es) ctaVis = e.isIntersecting; sync(); }, { threshold: 0 }).observe(cta);
+    let i = 0, timer = null, running = false;
+    function showNext() {
+      pops.forEach((p) => p.classList.remove('show'));
+      const p = pops[i % pops.length]; i++; p.classList.add('show');
+      window.dispatchEvent(new CustomEvent('fx:event', { detail: p.id.replace('fx-pop-', '') }));
+      timer = setTimeout(() => { p.classList.remove('show'); timer = setTimeout(showNext, 380); }, 2600);
+    }
+    function wantLive() { return !document.hidden && !ctaVis && window.scrollY > window.innerHeight * 0.6; }
+    function sync() {
+      const live = wantLive();
+      host.classList.toggle('live', live);
+      if (live && !running) { running = true; showNext(); }
+      else if (!live && running) { running = false; clearTimeout(timer); timer = null; pops.forEach((p) => p.classList.remove('show')); window.dispatchEvent(new CustomEvent('fx:event', { detail: null })); }
+    }
+    addEventListener('scroll', sync, { passive: true });
+    document.addEventListener('visibilitychange', sync);
+    sync();
+  };
+  if (document.readyState !== 'loading') start(); else addEventListener('DOMContentLoaded', start);
+})();
+</script>
+
+<!-- ── fx: agent-robot scroll guide + status ── -->
+<script>
+(() => {
+  const start = () => {
+    const robot = document.getElementById('fx-robot');
+    const mount = document.getElementById('fx-robot-lottie');
+    const chip = document.getElementById('fx-robot-chip');
+    if (!robot || !mount) return;
+    const reduce = window.__reduceMotion ?? matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) return;
+    const lerp = window.__lerp || ((a,b,k)=>a+(b-a)*k);
+    const SEG = { loop:[0,45], success:[46,80], halt:[81,110], pulse:[111,135] };
+    const STATUS = {
+      run:{cls:'busy',chip:'executing',seg:'pulse'}, cost:{cls:'teal',chip:'compressing',seg:'pulse'},
+      merge:{cls:'ok',chip:'merged',seg:'success'}, budget:{cls:'warn',chip:'halted',seg:'halt'},
+      campaign:{cls:'violet',chip:'orchestrating',seg:'pulse'}, notify:{cls:'busy',chip:'review',seg:'pulse'},
+    };
+    let anim = null, ready = false;
+    function backToLoop(){ if(!anim) return; anim.removeEventListener('complete', backToLoop); anim.loop = true; anim.playSegments(SEG.loop, true); }
+    function build(){
+      if (anim || !window.lottie || !window.__fxRobotData) return;
+      anim = window.lottie.loadAnimation({ container: mount, renderer:'svg', loop:true, autoplay:false, animationData: window.__fxRobotData });
+      anim.addEventListener('DOMLoaded', () => { ready = true; anim.loop = true; anim.playSegments(SEG.loop, true); });
+    }
+    (function waitL(n){ if (window.lottie && window.__fxRobotData) build(); else if (n>0) setTimeout(()=>waitL(n-1),60); })(60);
+    document.addEventListener('visibilitychange', () => { if (anim) document.hidden ? anim.pause() : anim.play(); });
+    function react(seg){ if(!anim||!ready) return; anim.removeEventListener('complete', backToLoop); anim.loop=false; anim.addEventListener('complete', backToLoop); anim.playSegments(seg, true); }
+    function setStatus(key){
+      const s = STATUS[key];
+      if (!s) { robot.dataset.status='idle'; if (chip) chip.textContent='online'; return; }
+      robot.dataset.status = s.cls;
+      if (chip) chip.textContent = s.chip;
+      react(SEG[s.seg]);
+    }
+    window.addEventListener('fx:event', (e) => setStatus(e.detail));
+    const flight = () => window.innerWidth >= 1200;
+    let curX = window.innerWidth - 120, curY = window.innerHeight * 0.45;
+    function frame(){
+      const show = flight() && window.scrollY > window.innerHeight * 0.55;
+      robot.classList.toggle('on', show);
+      if (!show) return false;
+      const vw=window.innerWidth, vh=window.innerHeight, sy=window.scrollY;
+      const tx = vw - 128 - 26*Math.sin(sy/320);
+      const ty = Math.max(96, Math.min(vh-150, vh*0.42 + 72*Math.sin(sy/260)));
+      curX = lerp(curX, tx, 0.12); curY = lerp(curY, ty, 0.12);
+      robot.style.transform = `translate3d(${curX.toFixed(1)}px, ${curY.toFixed(1)}px, 0)`;
+      return (Math.abs(curX-tx)>0.3 || Math.abs(curY-ty)>0.3);
+    }
+    if (window.__ticker) { window.__ticker.subscribe(frame); window.__ticker.wake(); }
+    else { addEventListener('scroll', frame, {passive:true}); frame(); }
+  };
+  if (window.__ticker) start(); else addEventListener('DOMContentLoaded', start);
 })();
 </script>
 </body>
