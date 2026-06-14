@@ -18,8 +18,8 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // §3 — chat-scoped SSE for session lifecycle state; sessionId may be '' when none active.
-  const { state: chatState } = useChatStream(activeId ?? '');
+  // §3 — chat-scoped SSE for session lifecycle state; null when no session is active.
+  const { state: chatState } = useChatStream(activeId);
 
   const refreshSessions = useCallback(async () => { setSessions(await api.chatSessions()); }, []);
   const loadSession = useCallback(async (id: string) => {

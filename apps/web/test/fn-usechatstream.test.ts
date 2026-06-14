@@ -25,16 +25,14 @@ describe('useChatStream — connection + session_state', () => {
     expect(result.current.connected).toBe(false);
   });
 
-  it('reduces the session_state envelope into state + live', () => {
+  it('reduces the session_state envelope into state', () => {
     const { result } = renderHook(() => useChatStream('sess1'));
     const es = FakeEventSource.last();
     expect(result.current.state).toBe('idle'); // default before any frame
     act(() => es.emit({ kind: 'session_state', state: 'running', live: true } as any));
     expect(result.current.state).toBe('running');
-    expect(result.current.live).toBe(true);
     act(() => es.emit({ kind: 'session_state', state: 'killed', live: false } as any));
     expect(result.current.state).toBe('killed');
-    expect(result.current.live).toBe(false);
   });
 
   it('closes the stream on unmount and ignores malformed frames', () => {
