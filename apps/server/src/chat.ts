@@ -11,8 +11,11 @@ import { dispatchCommand } from './commands.js';
 import type {
   ChatSession, ChatMessage, ChatRole, ChatMessageKind,
   CreateChatSessionRequest, RunEngine, EffortLevel, PermissionMode,
-  ChatTurnResponse, AddChatMessageRequest,
+  ChatTurnResponse, AddChatMessageRequest, ChatAttachment,
 } from '@fleet/shared';
+
+export { db };
+export default db;
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -41,6 +44,15 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, created_at);
 `);
 
+// §6 — additive migration: nullable attachments (JSON array of ChatAttachment).
+// Guarded by table_info so it is idempotent (safe on existing DBs + repeated test runs);
+// old rows keep attachments = NULL.
+{
+  const hasAttachments = (db.prepare("PRAGMA table_info('chat_messages')").all() as any[])
+    .some((c) => c.name === 'attachments');
+  if (!hasAttachments) db.exec('ALTER TABLE chat_messages ADD COLUMN attachments TEXT');
+}
+
 const insSession = db.prepare(`INSERT INTO chat_sessions
   (id,title,engine,model,effort,permission_mode,cwd,allowed_tools,skills,run_id,created_at,updated_at)
   VALUES (@id,@title,@engine,@model,@effort,@permission_mode,@cwd,@allowed_tools,@skills,@run_id,@created_at,@updated_at)`);
@@ -51,7 +63,8 @@ const setRunStmt = db.prepare('UPDATE chat_sessions SET run_id = ?, updated_at =
 const delSessionStmt = db.prepare('DELETE FROM chat_sessions WHERE id = ?');
 const delMessagesStmt = db.prepare('DELETE FROM chat_messages WHERE session_id = ?');
 const insMessage = db.prepare(`INSERT INTO chat_messages
-  (id,session_id,role,kind,content,run_id,created_at) VALUES (@id,@session_id,@role,@kind,@content,@run_id,@created_at)`);
+  (id,session_id,role,kind,content,run_id,attachments,created_at)
+  VALUES (@id,@session_id,@role,@kind,@content,@run_id,@attachments,@created_at)`);
 const listMessagesStmt = db.prepare('SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC');
 
 function rowToSession(r: any): ChatSession {
@@ -64,8 +77,14 @@ function rowToSession(r: any): ChatSession {
   };
 }
 function rowToMessage(r: any): ChatMessage {
-  return { id: r.id, sessionId: r.session_id, role: r.role as ChatRole, kind: r.kind as ChatMessageKind,
-    content: r.content, runId: r.run_id ?? null, createdAt: r.created_at };
+  const msg: ChatMessage = {
+    id: r.id, sessionId: r.session_id, role: r.role as ChatRole, kind: r.kind as ChatMessageKind,
+    content: r.content, runId: r.run_id ?? null, createdAt: r.created_at,
+  };
+  if (r.attachments) {
+    try { msg.attachments = JSON.parse(r.attachments) as ChatAttachment[]; } catch { /* leave undefined on garbage */ }
+  }
+  return msg;
 }
 
 export const chatRepo = {
@@ -92,8 +111,13 @@ export const chatRepo = {
   renameSession(id: string, title: string) { renameStmt.run(title, Date.now(), id); },
   setSessionRun(id: string, runId: string | null) { setRunStmt.run(runId, Date.now(), id); },
   deleteSession(id: string) { delMessagesStmt.run(id); delSessionStmt.run(id); },
-  addMessage(m: { sessionId: string; role: ChatRole; kind: ChatMessageKind; content: string; runId: string | null }): ChatMessage {
-    const row = { id: randomUUID(), session_id: m.sessionId, role: m.role, kind: m.kind, content: m.content, run_id: m.runId, created_at: Date.now() };
+  addMessage(m: { sessionId: string; role: ChatRole; kind: ChatMessageKind; content: string; runId: string | null; attachments?: ChatAttachment[] }): ChatMessage {
+    const row = {
+      id: randomUUID(), session_id: m.sessionId, role: m.role, kind: m.kind, content: m.content,
+      run_id: m.runId,
+      attachments: m.attachments && m.attachments.length ? JSON.stringify(m.attachments) : null,
+      created_at: Date.now(),
+    };
     insMessage.run(row);
     return rowToMessage(row);
   },
