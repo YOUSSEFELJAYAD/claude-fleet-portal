@@ -1,5 +1,5 @@
 // Generates a bespoke, on-brand agent-robot Lottie (OSS / self-owned).
-// Run: node site/tools/gen-lottie.mjs  → writes site/assets/lottie/robot.json
+// Run: node site/tools/gen-lottie.mjs  → writes site/assets/lottie/robot.js (window.__fxRobotData)
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
