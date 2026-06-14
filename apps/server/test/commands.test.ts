@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
+vi.mock('../src/inbox.js', () => ({ enqueueApproval: vi.fn(() => 'appr-test') }));
 vi.mock('../src/registry.js', () => ({
   registry: {
     listRuns: vi.fn(() => [
@@ -27,11 +28,10 @@ describe('dispatchCommand', () => {
     expect(r.rows?.some((row) => row.includes('z9'))).toBe(false); // completed excluded
   });
 
-  it('/kill <id> stops the run', async () => {
-    const { registry } = await import('../src/registry.js');
+  it('/kill <id> parks an Inbox approval (danger-gated)', async () => {
     const r = await dispatchCommand('/kill a1', '/repo');
-    expect((registry.stop as any)).toHaveBeenCalledWith('a1');
     expect(r.ok).toBe(true);
+    expect(String(r.text)).toMatch(/approv/i);
   });
 
   it('/launch <prompt> starts a run and returns its id', async () => {

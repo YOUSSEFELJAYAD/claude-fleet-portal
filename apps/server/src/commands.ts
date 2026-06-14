@@ -7,6 +7,7 @@
 import { registry } from './registry.js';
 import { listAddonInfos, setAddonEnabledById } from './addons.js';
 import { campaigns } from './campaigns.js';
+import { enqueueApproval } from './inbox.js';
 import type { ChatCommandResult, CommandDef } from '@fleet/shared';
 
 const TERMINAL = new Set(['completed', 'failed', 'killed']);
@@ -96,6 +97,21 @@ const COMMANDS: CommandEntry[] = [
     args: [], resultKind: 'text',
     run: async () => ok('Open the Schedules page to create or manage schedules: /schedules'),
   },
+  {
+    name: 'stop-all',
+    group: 'control',
+    description: 'Stop every running agent in the fleet',
+    usage: '/stop-all',
+    args: [],
+    resultKind: 'ack',
+    danger: true,
+    async run() {
+      // never reached while danger:true (dispatchCommand parks it); kept for when an
+      // approved action replays the command. Returns a text ack of the count stopped.
+      const n = registry.stopAll();
+      return { ok: true, kind: 'text', text: `stopped ${n} run(s)` };
+    },
+  },
 ];
 
 /** Wire view: the CommandDefs the GET /api/commands route serializes (run() stripped). */
@@ -109,5 +125,9 @@ export async function dispatchCommand(line: string, cwd: string): Promise<ChatCo
   const [name, ...rest] = trimmed.split(/\s+/);
   const cmd = COMMANDS.find((c) => c.name === name);
   if (!cmd) return err(`unknown command: /${name} — try /help`);
+  if (cmd.danger) {
+    const id = enqueueApproval({ command: cmd.name, summary: cmd.description, cwd });
+    return { ok: true, kind: 'text', text: `Queued "/${cmd.name}" for approval (Inbox · ${id}). It will run once approved.` };
+  }
   return cmd.run({ args: rest, arg: rest.join(' '), cwd });
 }

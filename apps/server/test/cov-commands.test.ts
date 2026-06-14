@@ -25,6 +25,7 @@ const listAddonInfosBehavior = {
   ],
 };
 
+vi.mock('../src/inbox.js', () => ({ enqueueApproval: vi.fn(() => 'appr-cov') }));
 vi.mock('../src/registry.js', () => ({
   registry: {
     listRuns: vi.fn(() => [
@@ -107,38 +108,12 @@ describe('dispatchCommand — /agents', () => {
 });
 
 describe('dispatchCommand — /kill', () => {
-  it('errors with usage when no run id is given (line 39)', async () => {
-    const r = await dispatchCommand('/kill', '/repo');
-    expect(r.ok).toBe(false);
-    expect(r.kind).toBe('error');
-    expect(r.text).toBe('usage: /kill <run-id>');
-    expect(registry.stop as any).not.toHaveBeenCalled();
-  });
-
-  it('stops the run and confirms on success', async () => {
+  // /kill is danger:true — dispatchCommand parks it in the Inbox instead of executing.
+  it('parks an Inbox approval for any /kill invocation (danger-gated)', async () => {
     const r = await dispatchCommand('/kill a1', '/repo');
-    expect(registry.stop as any).toHaveBeenCalledWith('a1');
     expect(r.ok).toBe(true);
-    expect(r.text).toBe('stopped a1');
-  });
-
-  it('returns the thrown error message when stop throws (catch, line 41)', async () => {
-    stopBehavior.fn = () => {
-      throw new Error('no such run');
-    };
-    const r = await dispatchCommand('/kill ghost', '/repo');
-    expect(r.ok).toBe(false);
-    expect(r.kind).toBe('error');
-    expect(r.text).toBe('no such run');
-  });
-
-  it('falls back to a default message when the thrown error has no message (catch, line 41)', async () => {
-    stopBehavior.fn = () => {
-      throw { code: 'X' }; // no .message
-    };
-    const r = await dispatchCommand('/kill ghost', '/repo');
-    expect(r.ok).toBe(false);
-    expect(r.text).toBe('kill failed');
+    expect(String(r.text)).toMatch(/approv/i);
+    expect(registry.stop as any).not.toHaveBeenCalled();
   });
 });
 
@@ -184,39 +159,12 @@ describe('dispatchCommand — /launch', () => {
 });
 
 describe('dispatchCommand — /campaign', () => {
-  it('errors with usage when no objective is given (line 51)', async () => {
-    const r = await dispatchCommand('/campaign', '/repo');
-    expect(r.ok).toBe(false);
-    expect(r.kind).toBe('error');
-    expect(r.text).toBe('usage: /campaign <objective>');
-    expect((campaigns.create as any)).not.toHaveBeenCalled();
-  });
-
-  it('creates a campaign with the objective + cwd and confirms (lines 52)', async () => {
-    campaignCreateBehavior.fn = async () => ({ id: 'camp-42' });
-    const r = await dispatchCommand('/campaign ship the release', '/work/dir');
-    expect((campaigns.create as any)).toHaveBeenCalledWith({ objective: 'ship the release', cwd: '/work/dir' });
+  // /campaign is danger:true — dispatchCommand parks it in the Inbox instead of executing.
+  it('parks an Inbox approval for any /campaign invocation (danger-gated)', async () => {
+    const r = await dispatchCommand('/campaign ship the release', '/repo');
     expect(r.ok).toBe(true);
-    expect(r.text).toBe('started campaign camp-42');
-  });
-
-  it('returns the error message when campaign creation rejects (catch, line 53)', async () => {
-    campaignCreateBehavior.fn = async () => {
-      throw new Error('planner offline');
-    };
-    const r = await dispatchCommand('/campaign do a thing', '/repo');
-    expect(r.ok).toBe(false);
-    expect(r.kind).toBe('error');
-    expect(r.text).toBe('planner offline');
-  });
-
-  it('falls back to default message when campaign error has no message (catch, line 53)', async () => {
-    campaignCreateBehavior.fn = async () => {
-      throw 'boom'; // non-Error throwable, no .message
-    };
-    const r = await dispatchCommand('/campaign do a thing', '/repo');
-    expect(r.ok).toBe(false);
-    expect(r.text).toBe('campaign failed');
+    expect(String(r.text)).toMatch(/approv/i);
+    expect((campaigns.create as any)).not.toHaveBeenCalled();
   });
 });
 

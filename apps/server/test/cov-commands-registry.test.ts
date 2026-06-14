@@ -1,10 +1,25 @@
-import { describe, it, expect, vi } from 'vitest';
+/**
+ * cov-commands-registry — the EXTENDED verb set: a safe verb renders a result, a danger
+ * verb parks an Inbox approval (never executes), and listCommands() exposes the full set.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const { enqueueSpy, stopAllSpy } = vi.hoisted(() => ({
+  enqueueSpy: vi.fn((_i: any) => 'appr-1'),
+  stopAllSpy: vi.fn(() => 3),
+}));
+
+vi.mock('../src/inbox.js', () => ({ enqueueApproval: enqueueSpy }));
+
+// stopAll must NOT be called when /stop-all is danger-gated.
 vi.mock('../src/registry.js', () => ({
   registry: {
     listRuns: vi.fn(() => [{ id: 'a1', status: 'running', model: 'opus', task: 'do x', cwd: '/r' }]),
+    stopAll: stopAllSpy,
     stop: vi.fn(),
-    launch: vi.fn(async () => ({ id: 'new-run' })),
+    launch: vi.fn(async () => ({ id: 'r1' })),
+    resume: vi.fn(() => ({ id: 'r1' })),
+    spend: vi.fn(() => ({ todayUsd: 1.5, activeRuns: 0, totalRunsToday: 4 })),
   },
 }));
 vi.mock('../src/addons.js', () => ({
@@ -13,7 +28,9 @@ vi.mock('../src/addons.js', () => ({
 }));
 vi.mock('../src/campaigns.js', () => ({ campaigns: { create: vi.fn(async () => ({ id: 'camp-1' })) } }));
 
-import { listCommands } from '../src/commands.js';
+import { dispatchCommand, listCommands } from '../src/commands.js';
+
+beforeEach(() => { enqueueSpy.mockClear(); stopAllSpy.mockClear(); });
 
 describe('listCommands', () => {
   it('returns wire CommandDefs with NO run() field', () => {
@@ -34,5 +51,16 @@ describe('listCommands', () => {
   });
   it('marks at least one destructive verb danger:true', () => {
     expect(listCommands().some((c) => c.danger === true)).toBe(true);
+  });
+});
+
+describe('danger verbs route to the Inbox', () => {
+  it('/stop-all parks an approval and does NOT execute', async () => {
+    const r = await dispatchCommand('/stop-all', '/repo');
+    expect(r.ok).toBe(true);
+    expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    expect(enqueueSpy.mock.calls[0][0]).toMatchObject({ command: 'stop-all', cwd: '/repo' });
+    expect(stopAllSpy).not.toHaveBeenCalled();
+    expect(String(r.text)).toMatch(/approv/i);
   });
 });
