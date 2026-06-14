@@ -45,7 +45,7 @@
     --radius-card: 14px; --radius-pill: 999px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; font-size: clamp(13px, 0.45vw + 10.7px, 17px); }
   body {
     color: var(--ink); font: 16px/1.6 var(--sans); overflow-x: hidden;
     /* the portal's mission-control atmosphere: vignettes + blueprint grid + scanlines */
@@ -80,12 +80,12 @@
   .hero-foot { position: absolute; bottom: 26px; left: 0; right: 0; color: var(--faint); font-size: 12.5px; z-index: 1; }
 
   /* ── sections ── */
-  section { max-width: 1120px; margin: 0 auto; padding: 96px 24px; }
+  section { max-width: 1120px; margin: 0 auto; padding: var(--space-section) 24px; }
   .kicker { color: var(--amber); font-size: 12px; letter-spacing: .28em; text-transform: uppercase; font-weight: 600; }
-  h2 { font-size: clamp(26px, 4vw, 40px); margin: 10px 0 18px; }
+  h2 { font-size: var(--text-h2); margin: var(--space-3) 0 var(--space-4); letter-spacing: .01em; }
   .lead { color: var(--dim); max-width: 760px; }
 
-  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 42px; }
+  .grid { display: grid; gap: var(--space-gap); grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: var(--space-7); }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 26px; transition: border-color .2s, transform .2s; }
   .card:hover { border-color: rgba(255,176,0,.45); transform: translateY(-3px); }
   .card .ico { font-size: 26px; }
