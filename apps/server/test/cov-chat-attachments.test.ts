@@ -10,6 +10,20 @@ vi.mock('../src/registry.js', () => ({
     launch: vi.fn(async (req: any) => ({ id: 'run-launch', sessionId: 's', status: 'running', ...req })),
     resume: vi.fn(async (id: string) => ({ id: 'run-resume', sessionId: 's', status: 'running' })),
     launchEngine: vi.fn(async (req: any) => ({ id: 'run-engine', ...req })),
+    sendInput: vi.fn(),
+  },
+}));
+
+// Fix 03 — claude turns now route through chatLive.ensureLive first. These cases pin the
+// resumable/one-shot fallback (launch/resume) that carries attachments → --add-dir, so force the
+// budget-exhausted signal (live:false) to keep exercising that path.
+vi.mock('../src/chatLive.js', () => ({
+  chatLive: {
+    ensureLive: vi.fn(async () => ({ live: false, runId: null })),
+    touch: vi.fn(),
+    isLive: vi.fn(() => false),
+    liveRunId: vi.fn(() => null),
+    init: vi.fn(),
   },
 }));
 

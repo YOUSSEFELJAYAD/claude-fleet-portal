@@ -167,10 +167,21 @@ export async function startTurn(sessionId: string, message: string, attachments?
     const history = chatRepo.listMessages(sessionId).slice(0, -1); // exclude the just-added user msg
     const enginePrompt = buildEnginePrompt(history.map((m) => ({ role: m.role, content: m.content })), prompt);
     run = await registry.launchEngine({ ...baseOpts, engine: session.engine, prompt: enginePrompt });
-  } else if (!session.runId) {
-    run = await registry.launch({ ...baseOpts, prompt });
   } else {
-    run = await registry.resume(session.runId, prompt, undefined, addDirs.length ? addDirs : undefined);
+    // §3.3 — claude turns route through the HELD interactive process: ensureLive returns the live
+    // run id (reused across every turn) and the turn is delivered via registry.sendInput. The
+    // folder --add-dir set only takes effect on a fresh launch/resume — a live run can't change it
+    // mid-turn — so live turns deliver `prompt` (message + file path-references) as plain stdin text.
+    const ensured = await chatLive.ensureLive(session); // claude only
+    if (ensured.live && ensured.runId) {
+      registry.sendInput(ensured.runId, prompt); // deliver this turn to the held interactive process
+      chatLive.touch(session.id);                // reset idle-suspend
+      run = { id: ensured.runId };
+    } else if (!session.runId) {
+      run = await registry.launch({ ...baseOpts, prompt }); // budget-exhausted fallback: one-shot
+    } else {
+      run = await registry.resume(session.runId, prompt, undefined, addDirs.length ? addDirs : undefined);
+    }
   }
   chatRepo.setSessionRun(sessionId, run.id);
   return { runId: run.id, userMessage };

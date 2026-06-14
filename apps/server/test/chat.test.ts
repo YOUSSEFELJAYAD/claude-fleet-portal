@@ -60,6 +60,20 @@ vi.mock('../src/registry.js', () => ({
     launch: vi.fn(async (req: any) => ({ id: 'run-launch', sessionId: 's', status: 'running', ...req })),
     resume: vi.fn(async (id: string) => ({ id: 'run-resume', sessionId: 's', status: 'running' })),
     launchEngine: vi.fn(async (req: any) => ({ id: 'run-engine', sessionId: 's', status: 'running', ...req })),
+    sendInput: vi.fn(),
+  },
+}));
+
+// Fix 03 — claude turns now route through chatLive.ensureLive first. The launch(turn-1)/resume(turn-2)
+// assertions below pin the resumable fallback, so force the budget-exhausted signal (live:false) to
+// keep that path live (the held-process/sendInput path is covered by fn-chat-turn-live.test.ts).
+vi.mock('../src/chatLive.js', () => ({
+  chatLive: {
+    ensureLive: vi.fn(async () => ({ live: false, runId: null })),
+    touch: vi.fn(),
+    isLive: vi.fn(() => false),
+    liveRunId: vi.fn(() => null),
+    init: vi.fn(),
   },
 }));
 
