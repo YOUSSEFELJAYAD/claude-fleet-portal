@@ -43,3 +43,44 @@ describe('api.findFiles', () => {
     expect(String((f.mock.calls as any)[0][0])).not.toContain('limit=');
   });
 });
+
+describe('api chat control helpers', () => {
+  const captured = () => {
+    const f = vi.fn(async () => ({ ok: true, json: async () => ({}), statusText: 'OK' }) as any);
+    vi.stubGlobal('fetch', f);
+    return f;
+  };
+
+  it('chatInput POSTs the mid-turn text to /input with attachments', async () => {
+    const f = captured();
+    await api.chatInput('sess1', 'approve', [{ path: 'a.ts', kind: 'file' }]);
+    const [url, init] = (f.mock.calls as any)[0];
+    expect(String(url)).toContain('/api/chat/sessions/sess1/input');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ message: 'approve', attachments: [{ path: 'a.ts', kind: 'file' }] });
+  });
+
+  it('chatInterrupt POSTs to /interrupt with an empty body', async () => {
+    const f = captured();
+    await api.chatInterrupt('sess1');
+    const [url, init] = (f.mock.calls as any)[0];
+    expect(String(url)).toContain('/api/chat/sessions/sess1/interrupt');
+    expect(init.method).toBe('POST');
+  });
+
+  it('chatKill DELETEs the session-backing run', async () => {
+    const f = captured();
+    await api.chatKill('sess1');
+    const [url, init] = (f.mock.calls as any)[0];
+    expect(String(url)).toContain('/api/chat/sessions/sess1');
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('chatTurn carries attachments in the body when supplied', async () => {
+    const f = captured();
+    await api.chatTurn('sess1', 'hello @a.ts', [{ path: 'a.ts', kind: 'file' }]);
+    const [url, init] = (f.mock.calls as any)[0];
+    expect(String(url)).toContain('/api/chat/sessions/sess1/turn');
+    expect(JSON.parse(init.body)).toEqual({ message: 'hello @a.ts', attachments: [{ path: 'a.ts', kind: 'file' }] });
+  });
+});

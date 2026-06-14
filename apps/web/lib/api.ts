@@ -41,6 +41,7 @@ import type {
   ChatCommandResult,
   CommandDef,
   FileFindResult,
+  ChatAttachment,
 } from '@fleet/shared';
 // F10 — config-as-code export/import types (defined locally to avoid cross-package imports)
 export interface ExportedSetup {
@@ -450,7 +451,22 @@ export const api = {
   createChatSession: (body: CreateChatSessionRequest) => j<ChatSession>('/api/chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
   renameChatSession: (id: string, title: string) => j<ChatSession>(`/api/chat/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteChatSession: (id: string) => j(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
-  chatTurn: (id: string, message: string) => j<ChatTurnResponse>(`/api/chat/sessions/${id}/turn`, { method: 'POST', body: JSON.stringify({ message }) }),
+  chatTurn: (id: string, message: string, attachments?: ChatAttachment[]) =>
+    j<ChatTurnResponse>(`/api/chat/sessions/${id}/turn`, {
+      method: 'POST',
+      body: JSON.stringify(attachments?.length ? { message, attachments } : { message }),
+    }),
+  /** §3 — mid-turn input / permission decision to the live process (409 if not live). */
+  chatInput: (id: string, message: string, attachments?: ChatAttachment[]) =>
+    j(`/api/chat/sessions/${id}/input`, {
+      method: 'POST',
+      body: JSON.stringify(attachments?.length ? { message, attachments } : { message }),
+    }),
+  /** §3 — stop the current turn, keep the process live if possible. */
+  chatInterrupt: (id: string) =>
+    j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
+  /** §3 — explicit kill: stops the live process; session becomes killed/resumable. */
+  chatKill: (id: string) => j(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
   addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
   // ── chat-surface upgrade (§5/§6) ──
