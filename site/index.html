@@ -1938,8 +1938,12 @@ new IntersectionObserver((entries) => {
     function targetXY() {
       const vw = window.innerWidth, vh = window.innerHeight;
       if (crVis && cr) {
+        if (!flight()) { // mobile: perch above the monitor's top-right, clear of the cards
+          const mon = (cr.querySelector('.cr-screen') || cr).getBoundingClientRect();
+          return [Math.max(10, Math.min(vw - 96, mon.right - 64)), Math.max(70, mon.top - 38)];
+        }
         const r = cr.getBoundingClientRect();
-        const tx = flight() ? Math.min(vw - 110, vw * 0.5 + 250) : (vw - 104);
+        const tx = Math.min(vw - 110, vw * 0.5 + 250);
         const ty = Math.max(80, Math.min(vh - 150, r.top + r.height * 0.32));
         return [tx, ty];
       }
