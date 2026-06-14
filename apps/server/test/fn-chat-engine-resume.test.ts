@@ -53,3 +53,15 @@ describe('engine chat resume degradation', () => {
     await expect((registry.resume as any)('any-engine-run')).rejects.toMatchObject({ statusCode: 409, code: 'engine-unsupported' });
   });
 });
+
+describe('engineSafeState — engines never go live', () => {
+  it('forces live:false and demotes a "live" derived state to idle for engines', async () => {
+    const { engineSafeState } = await import('../src/chat.js');
+    expect(engineSafeState('codex', { state: 'live', live: true })).toEqual({ state: 'idle', live: false });
+    expect(engineSafeState('opencode', { state: 'running', live: true })).toEqual({ state: 'running', live: false });
+  });
+  it('passes claude session state through untouched', async () => {
+    const { engineSafeState } = await import('../src/chat.js');
+    expect(engineSafeState('claude', { state: 'live', live: true })).toEqual({ state: 'live', live: true });
+  });
+});

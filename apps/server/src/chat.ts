@@ -188,6 +188,15 @@ export function deriveSessionState(session: ChatSession): { state: ChatSessionSt
   return { state: 'idle', live: false };
 }
 
+/** Engines (codex/opencode) never hold a live process (spec §3.2 D8). Force live:false and
+ *  collapse 'live' down to 'idle' for engine sessions; all other states pass through. */
+export function engineSafeState(engine: string, derived: { state?: ChatSessionState; live?: boolean }):
+  { state?: ChatSessionState; live?: boolean } {
+  if (engine === 'claude') return derived;
+  const state = derived.state === 'live' ? 'idle' : derived.state;
+  return { state, live: false };
+}
+
 /** The chat-control envelope the chat-scoped SSE emits alongside run events (§4). Owned here; the
  *  ChatSessionState literal is from @fleet/shared. */
 export interface SessionStateEnvelope { kind: 'session_state'; state: ChatSessionState; live: boolean; }
@@ -220,8 +229,8 @@ export function registerChatStreamRoute(
     const { send, stop } = s;
 
     // initial chat-control frame
-    const st = deriveSessionState(session);
-    send({ kind: 'session_state', state: st.state, live: st.live } satisfies SessionStateEnvelope);
+    const st = engineSafeState(session.engine, deriveSessionState(session));
+    send({ kind: 'session_state', state: st.state ?? 'idle', live: st.live ?? false } satisfies SessionStateEnvelope);
 
     // proxy the current backing run, if any (re-resolve per connect so reload re-attaches).
     // The run's hello snapshot carries its FULL event log = the whole transcript (the run is
@@ -248,7 +257,8 @@ export function registerChatRoutes(app: FastifyInstance) {
     const id = (req.params as any).id;
     const session = chatRepo.getSession(id);
     if (!session) return reply.code(404).send({ error: 'not found' });
-    return { session: { ...session, ...deriveSessionState(session) }, messages: chatRepo.listMessages(id) };
+    const safe = engineSafeState(session.engine, deriveSessionState(session));
+    return { session: { ...session, ...safe }, messages: chatRepo.listMessages(id) };
   });
 
   app.patch('/api/chat/sessions/:id', async (req, reply) => {
