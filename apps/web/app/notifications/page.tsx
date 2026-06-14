@@ -295,24 +295,24 @@ export default function NotificationsPage() {
       )}
 
       <div className="space-y-5">
-        {/* ── feed ── */}
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <Kicker>recent</Kicker>
-            <div className="flex gap-2">
-              <Btn variant="ghost" onClick={markAllRead} disabled={busy || unread === 0}>
-                mark all read
-              </Btn>
-            </div>
+        {/* ── block 1 · recent ── */}
+        <Panel ticked>
+          <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+            <span className="flex items-center gap-2">
+              <Dot color="#ffb000" live={unread > 0} size={6} />
+              <Kicker>recent</Kicker>
+              <span className="font-mono tnum text-[12px] text-amber ml-1">{String(items.length).padStart(2, '0')}</span>
+              <span className="font-mono text-[10px] text-faint ml-1">{unread} unread</span>
+            </span>
+            <Btn variant="ghost" onClick={markAllRead} disabled={busy || unread === 0}>mark all read</Btn>
           </div>
 
           {loading ? (
-            <div className="font-mono text-faint text-[12px]">loading…</div>
+            <div className="p-4 font-mono text-faint text-[12px]">loading…</div>
           ) : items.length === 0 ? (
-            <Empty>No notifications yet.</Empty>
+            <div className="p-4"><Empty>No notifications yet.</Empty></div>
           ) : (
-            <Panel className="overflow-hidden">
-              <div className="divide-y divide-white/[0.04]">
+            <div className="divide-y divide-white/[0.04]">
                 {items.map((n) => (
                   <div
                     key={n.id}
@@ -339,18 +339,17 @@ export default function NotificationsPage() {
                     {!n.read && <Dot color="#ffb000" size={6} />}
                   </div>
                 ))}
-              </div>
-            </Panel>
+            </div>
           )}
-        </div>
+        </Panel>
 
-        {/* ── right column: rules + channels ── */}
-        <div className="flex flex-col gap-5">
-          {/* ── config / rules ── */}
-          <div>
-            <Kicker className="mb-3 block">rules</Kicker>
-            <Panel className="p-4">
-              {!cfg ? (
+        {/* ── block 2 · rules ── */}
+        <Panel ticked>
+          <div className="px-4 py-3 border-b hairline">
+            <Kicker>rules</Kicker>
+          </div>
+          <div className="p-4">
+            {!cfg ? (
                 <div className="font-mono text-faint text-[12px]">loading…</div>
               ) : (
                 <div className="space-y-4">
@@ -415,18 +414,16 @@ export default function NotificationsPage() {
                   </p>
                 </div>
               )}
-            </Panel>
-          </div>
+            </div>
+          </Panel>
 
-          {/* ── F8: channels block ── */}
-          <div>
-            <Kicker className="mb-3 block">channels</Kicker>
-            <Panel>
-              {/* header row */}
-              <div className="px-4 py-3 border-b hairline flex items-center justify-between">
-                <span className="font-mono text-[11px] text-faint">
-                  {channels.length}/10 configured
-                </span>
+        {/* ── block 3 · channels ── */}
+        <Panel ticked>
+          <div className="px-4 py-3 border-b hairline flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <Kicker>channels</Kicker>
+              <span className="font-mono text-[11px] text-faint ml-1">{channels.length}/10 configured</span>
+            </span>
                 {chSaving && <span className="font-mono text-[10px] text-faint animate-pulse">saving…</span>}
               </div>
 
@@ -450,10 +447,7 @@ export default function NotificationsPage() {
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2 min-w-0">
-                            <span
-                              className="font-mono text-[10px] uppercase px-1.5 py-0.5 border"
-                              style={{ borderColor: 'rgba(255,176,0,0.3)', color: '#ffb000', background: 'rgba(255,176,0,0.06)' }}
-                            >
+                            <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border text-amber border-amber/30 bg-amber/[0.06]">
                               {ch.kind}
                             </span>
                             <span className="font-mono text-[11px] text-dim truncate" title={ch.url}>
@@ -554,9 +548,7 @@ export default function NotificationsPage() {
                   </div>
                 )}
               </div>
-            </Panel>
-          </div>
-        </div>
+        </Panel>
       </div>
     </div>
   );
