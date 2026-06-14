@@ -45,3 +45,29 @@ describe('useChatStream — connection + session_state', () => {
     expect(es.closed).toBe(true);
   });
 });
+
+describe('useChatStream — event reduction', () => {
+  it('accumulates assistant_partial deltas per node and clears on assistant_text', () => {
+    const { result } = renderHook(() => useChatStream('sess1'));
+    const es = FakeEventSource.last();
+    act(() => es.emit({ kind: 'event', event: ev('assistant_partial', 'n1', { text: 'Hel' }) }));
+    act(() => es.emit({ kind: 'event', event: ev('assistant_partial', 'n1', { text: 'lo' }) }));
+    expect(result.current.partials).toEqual({ n1: 'Hello' });
+    // full message arrives → partial buffer for that node clears, event lands in events
+    act(() => es.emit({ kind: 'event', event: ev('assistant_text', 'n1', { text: 'Hello' }) }));
+    expect(result.current.partials).toEqual({ n1: '' });
+    expect(result.current.events.map((e) => e.type)).toEqual(['assistant_text']);
+  });
+
+  it('appends non-partial run events (tool_use, tool_result, permission_request, result)', () => {
+    const { result } = renderHook(() => useChatStream('sess1'));
+    const es = FakeEventSource.last();
+    act(() => es.emit({ kind: 'event', event: ev('tool_use', 'n1', { name: 'Bash' }) }));
+    act(() => es.emit({ kind: 'event', event: ev('tool_result', 'n1', { ok: true }) }));
+    act(() => es.emit({ kind: 'event', event: ev('permission_request', 'n1', { id: 'p1' }) }));
+    act(() => es.emit({ kind: 'event', event: ev('result', 'n1', {}) }));
+    expect(result.current.events.map((e) => e.type)).toEqual([
+      'tool_use', 'tool_result', 'permission_request', 'result',
+    ]);
+  });
+});
