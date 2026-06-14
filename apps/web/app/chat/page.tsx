@@ -7,7 +7,8 @@ import { ChatSessionList } from '@/components/ChatSessionList';
 import { ChatThread } from '@/components/ChatThread';
 import { ChatComposer } from '@/components/ChatComposer';
 import { RunningAgentsPanel } from '@/components/RunningAgentsPanel';
-import { ErrorBanner } from '@/components/ui';
+import { ErrorBanner, Badge } from '@/components/ui';
+import { chatStateMeta } from '@/lib/chatState';
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -19,7 +20,16 @@ export default function ChatPage() {
   const [err, setErr] = useState<string | null>(null);
 
   // §3 — chat-scoped SSE for session lifecycle state; null when no session is active.
-  const { state: chatState } = useChatStream(activeId);
+  const { state: liveState, live } = useChatStream(activeId);
+  // derive `chatState` alias for ChatComposer (still expects `chatState === 'running'`)
+  const chatState = liveState;
+  // previews for the sidebar: last persisted message per session (cheap client derivation).
+  const previews = sessions.reduce<Record<string, string>>((acc, s) => {
+    if (s.id === activeId) acc[s.id] = messages[messages.length - 1]?.content?.slice(0, 60) ?? '';
+    return acc;
+  }, {});
+  // Prefer the live-streamed state; fall back to the session read's derived field (spec §3).
+  const effectiveState = liveState ?? session?.state ?? 'idle';
 
   const refreshSessions = useCallback(async () => { setSessions(await api.chatSessions()); }, []);
   const loadSession = useCallback(async (id: string) => {
@@ -103,16 +113,21 @@ export default function ChatPage() {
   // exactly: viewport − 58px sticky header − 48px (main p-6) so it never overflows the body.
   return (
     <div className="flex h-[calc(100vh-106px)] min-h-0">
-      <ChatSessionList sessions={sessions} activeId={activeId}
-        previews={Object.fromEntries(sessions.map((s) => [s.id, messages.find((m) => m.sessionId === s.id && m.role === 'assistant')?.content ?? '']))}
+      <ChatSessionList sessions={sessions} activeId={activeId} previews={previews}
         onSelect={loadSession} onNew={newSession} onRename={renameSession}
         onKill={killSession} onResume={resumeSession} onDelete={deleteSession} />
       <div className="flex-1 flex flex-col min-w-0">
         {session ? (
           <>
-            <div className="px-4 py-2 border-b hairline text-[12px]">
-              {session.title} · {session.engine} · {session.model} · {session.cwd}
-              {session.engine !== 'claude' && <span className="ml-2 text-faint">(one-shot per turn · limited memory)</span>}
+            <div className="px-4 py-2 border-b hairline text-[12px] flex items-center gap-2">
+              <span>{session.title} · {session.engine} · {session.model} · {session.cwd}</span>
+              {session.engine !== 'claude' && <span className="text-faint">(one-shot per turn · limited memory)</span>}
+              {effectiveState === 'idle' && (
+                <Badge label="RESUMABLE" color={chatStateMeta('idle').color} />
+              )}
+              {(effectiveState === 'live' || live) && (
+                <Badge label="LIVE" color={chatStateMeta('live').color} live />
+              )}
             </div>
             {err && (
               <div className="px-4 pt-3">
