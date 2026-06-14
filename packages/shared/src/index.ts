@@ -1100,6 +1100,37 @@ export interface ChatCommandResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Command registry (chat surface upgrade §5) — ONE declarative source of truth
+// feeding dispatch + GET /api/commands + /help + the `/` composer palette.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A single declared argument of a slash command. `source` marks an arg whose
+ *  suggestions are fetched live on demand (e.g. `/kill ` → running run-ids). */
+export interface CommandArg {
+  name: string;
+  required: boolean;
+  type: 'string' | 'enum' | 'run-id' | 'project' | 'prompt';
+  /** allowed literals when `type === 'enum'`. */
+  enum?: string[];
+  /** live-value autocomplete source for the `/` palette. */
+  source?: 'running-runs' | 'addons' | 'templates';
+  hint?: string;
+}
+
+/** WIRE shape of a slash command — the server-only `run()` is intentionally
+ *  omitted (it never crosses the wire). `GET /api/commands` returns CommandDef[]. */
+export interface CommandDef {
+  name: string;                 // 'kill'
+  group: 'control' | 'project' | 'knowledge' | 'config' | 'meta';
+  description: string;
+  usage: string;                // '/kill <run-id>'
+  args: CommandArg[];
+  resultKind: 'text' | 'table' | 'error' | 'ack';
+  /** routes through the existing Inbox approval queue when true. */
+  danger?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool/skill packs (§23) — operator-defined presets of allowed-tools entries +
 // skills, applied with one click in the launch modal / template editor.
 // ─────────────────────────────────────────────────────────────────────────────
