@@ -25,6 +25,7 @@ export default function AddonsPage() {
   const router = useRouter();
   const [addons, setAddons] = useState<AddonInfo[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // addon id with an in-flight toggle
+  const [installing, setInstalling] = useState<string | null>(null); // addon id with an in-flight install
   const [err, setErr] = useState<string | null>(null);
   // the poll is a setTimeout CHAIN — an in-flight fetch resolving after unmount must
   // not re-arm it (alive ref), and an error must not kill the watch (re-arm in catch)
@@ -58,6 +59,25 @@ export default function AddonsPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function install(a: AddonInfo) {
+    setInstalling(a.id);
+    setErr(null);
+    try {
+      const r = await api.installAddon(a.id);
+      if (!alive.current) return;
+      // Provisioned (or surfaced why it couldn't). Refresh so the card flips to Enable, and
+      // show the note either way — install steps (e.g. Docker missing) live in r.note.
+      if (!r.ok) setErr(r.note || `${a.name} install did not complete — open the add-on page for details.`);
+      load();
+      notifyShell();
+    } catch (e: any) {
+      if (!alive.current) return;
+      setErr((e as ApiError)?.message || 'install failed');
+    } finally {
+      if (alive.current) setInstalling(null);
+    }
+  }
 
   async function toggle(a: AddonInfo) {
     setBusy(a.id);
@@ -135,6 +155,11 @@ export default function AddonsPage() {
                   {a.installed || a.enabled ? (
                     <Btn variant={a.enabled ? 'ghost' : 'solid'} onClick={() => toggle(a)} disabled={busy === a.id}>
                       {busy === a.id ? '…' : a.enabled ? 'Disable' : '⏻ Enable'}
+                    </Btn>
+                  ) : a.page === '/research' ? (
+                    // service add-on — provision its dependency (SearXNG with json enabled) in one click
+                    <Btn variant="solid" onClick={() => install(a)} disabled={installing === a.id}>
+                      {installing === a.id ? 'Installing…' : '⇩ Install'}
                     </Btn>
                   ) : (
                     a.page && (

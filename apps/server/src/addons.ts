@@ -30,10 +30,12 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { AddonInfo, AddonStatus, AddonInstallResult, CompressionConfig, CompressionStats, SelfUpdateStep, RunEngine, WebResearchConfig } from '@fleet/shared';
-import { HOME, PORT, WEB_PORT, CLAUDE_REAL_BIN } from './config.js';
+import { HOME, PORT, WEB_PORT, CLAUDE_REAL_BIN, DATA_DIR } from './config.js';
 import db from './db.js';
 import type { CodexEngineConfig, OpencodeEngineConfig } from './engines.js';
 
@@ -743,6 +745,16 @@ export function addonRunEnvForEngine(engine: 'claude' | 'codex' | 'opencode', mo
 
 /** Probe a SearXNG instance for /search?format=json reachability. Kept inline here
  *  (not imported from research.ts) to avoid an addons.ts ↔ research.ts module cycle. */
+/** Only auto-provision the bundled Docker instance for a local default URL — a user who has
+ *  pointed Web Research at a remote SearXNG manages that instance themselves. */
+function isLocalSearxng(url: string): boolean {
+  try {
+    return ['localhost', '127.0.0.1', '[::1]', '::1'].includes(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 async function probeSearxng(url: string): Promise<{ state: 'ok' | 'unreachable' | 'json-disabled'; detail: string | null }> {
   const base = url.replace(/\/+$/, '');
   const ctrl = new AbortController();
@@ -990,6 +1002,48 @@ async function installHeadroom(): Promise<AddonInstallResult> {
 
 // ── service dependency install (web-research → SearXNG via Docker) ──────────────────
 
+const SEARXNG_CONTAINER = 'fleet-searxng';
+const SEARXNG_PORT = 8080;
+const SEARXNG_CONFIG_DIR = path.join(DATA_DIR, 'searxng');
+
+/** Write the SearXNG settings.yml that ENABLES the json output format — the whole reason
+ *  installs failed before. The official searxng/searxng image ships `search.formats: [html]`
+ *  only, so `/search?format=json` returns 403 until json is added; there is NO env-var
+ *  override for it (the old `SEARXNG_FORMATS=json` was a no-op), so we bind-mount this file.
+ *  `use_default_settings: true` merges these few overrides onto the image defaults; the
+ *  limiter is disabled because our server's non-browser json calls are not bot traffic. */
+async function writeSearxngSettings(): Promise<string> {
+  await mkdir(SEARXNG_CONFIG_DIR, { recursive: true });
+  const secret = randomBytes(32).toString('hex');
+  const yaml = [
+    '# Managed by Claude Fleet Portal — Web Research add-on (rewritten on each Install).',
+    'use_default_settings: true',
+    'server:',
+    `  secret_key: "${secret}"`,
+    '  limiter: false        # personal/self-hosted: do not bot-block our own json calls',
+    '  image_proxy: true',
+    'search:',
+    '  formats:',
+    '    - html',
+    '    - json',
+    '',
+  ].join('\n');
+  await writeFile(path.join(SEARXNG_CONFIG_DIR, 'settings.yml'), yaml, 'utf8');
+  return SEARXNG_CONFIG_DIR;
+}
+
+/** Poll a freshly-started SearXNG until it answers format=json (the container needs a few
+ *  seconds to boot) or the deadline passes. Returns the last probe so the caller can report. */
+async function waitForSearxng(url: string, timeoutMs: number): Promise<{ state: 'ok' | 'unreachable' | 'json-disabled'; detail: string | null }> {
+  const deadline = Date.now() + timeoutMs;
+  let last = await probeSearxng(url);
+  while (last.state !== 'ok' && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1500));
+    last = await probeSearxng(url);
+  }
+  return last;
+}
+
 async function installSearxng(): Promise<AddonInstallResult> {
   const steps: SelfUpdateStep[] = [];
   const trunc = (s: string) => (s.length > 4000 ? `…${s.slice(-4000)}` : s);
@@ -1003,23 +1057,63 @@ async function installSearxng(): Promise<AddonInstallResult> {
     return {
       ok: false,
       steps,
-      note: 'Docker not found. Run SearXNG yourself (docker run -d -p 8080:8080 searxng/searxng) with json enabled in settings.yml `search.formats`, then set the URL on the Web Research page.',
+      note: 'Docker not found. Run SearXNG yourself (docker run -d -p 8080:8080 -v ./searxng:/etc/searxng searxng/searxng) with `search.formats: [html, json]` in settings.yml, then set the URL on the Web Research page.',
     };
   }
+
+  // 1) Write settings.yml with json enabled (the fix for the "enable json" error).
+  let configDir: string;
+  try {
+    configDir = await writeSearxngSettings();
+    steps.push({ step: 'write settings.yml (search.formats: [html, json])', ok: true, output: path.join(configDir, 'settings.yml') });
+  } catch (e: any) {
+    steps.push({ step: 'write settings.yml', ok: false, output: trunc(String(e?.message ?? e)) });
+    return { ok: false, steps, note: 'Could not write the SearXNG settings file — check filesystem permissions on the data dir.' };
+  }
+
+  // 2) Idempotent: drop any prior fleet-searxng container (usually the old json-disabled one)
+  //    so re-running Install repairs a broken instance instead of erroring on the name clash.
+  try {
+    await execFileAsync('docker', ['rm', '-f', SEARXNG_CONTAINER], { timeout: 60_000 });
+    steps.push({ step: `remove any existing ${SEARXNG_CONTAINER} container`, ok: true, output: 'cleared' });
+  } catch {
+    steps.push({ step: `remove any existing ${SEARXNG_CONTAINER} container`, ok: true, output: 'none to remove' });
+  }
+
+  // 3) Start SearXNG with our config bind-mounted at /etc/searxng — the entrypoint reads
+  //    settings.yml from there (and generates uwsgi.ini alongside it).
   try {
     const { stdout, stderr } = await execFileAsync(
       'docker',
-      ['run', '-d', '--name', 'fleet-searxng', '-p', '8080:8080',
-       '-e', 'SEARXNG_SETTINGS_PATH=', '-e', 'SEARXNG_FORMATS=json',
+      ['run', '-d', '--name', SEARXNG_CONTAINER, '-p', `${SEARXNG_PORT}:8080`,
+       '-v', `${configDir}:/etc/searxng`, '--restart', 'unless-stopped',
        'searxng/searxng'],
       { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 2 * 1024 * 1024 },
     );
     steps.push({ step: 'docker run searxng/searxng', ok: true, output: trunc(stdout + stderr) });
-    return { ok: true, steps, note: 'SearXNG started on http://localhost:8080. If json is still disabled, set `search.formats: [html, json]` in its settings.yml and restart the container.' };
   } catch (e: any) {
     steps.push({ step: 'docker run searxng/searxng', ok: false, output: trunc(String(e?.stderr ?? e?.message ?? e)) });
-    return { ok: false, steps, note: 'Could not start SearXNG via Docker (a container named fleet-searxng may already exist). Check `docker ps -a`.' };
+    return { ok: false, steps, note: 'Could not start SearXNG via Docker — check `docker ps -a` and the output above.' };
   }
+
+  // 4) Confirm json actually works before declaring success (boot takes a few seconds).
+  const url = researchConfig().searxngUrl;
+  const probe = await waitForSearxng(url, 25_000);
+  steps.push({
+    step: 'verify json search is enabled',
+    ok: probe.state === 'ok',
+    output: probe.state === 'ok' ? `${url} answering format=json` : (probe.detail ?? probe.state),
+  });
+  if (probe.state === 'ok') {
+    return { ok: true, steps, note: `SearXNG running on ${url} with json enabled — enable the add-on and search away.` };
+  }
+  return {
+    ok: false,
+    steps,
+    note: probe.state === 'json-disabled'
+      ? 'SearXNG started but still reports json disabled — check the mounted settings.yml `search.formats`.'
+      : `SearXNG started but is not answering yet at ${url}. Give it a few seconds and reload, or check \`docker logs ${SEARXNG_CONTAINER}\`.`,
+  };
 }
 
 // ── engine dependency install (npm first; brew/curl advisory fallback) ──────────────
@@ -1202,6 +1296,14 @@ export function registerAddonRoutes(app: FastifyInstance) {
     if (def.runtime === 'service') {
       const row = loadRow(id);
       saveRow(id, true, row.config); // status reflects reachability; enabling never blocks
+      // Auto-configure on enable: if SearXNG isn't already answering json, provision it via
+      // Docker with json enabled (best-effort — never block the toggle). Only for a local
+      // default URL; a user-configured remote instance is theirs to manage.
+      const url = researchConfig().searxngUrl;
+      const probe = await probeSearxng(url);
+      if (probe.state !== 'ok' && isLocalSearxng(url) && (await executableAvailable('docker', ['--version']))) {
+        await installSearxng().catch(() => {});
+      }
       return addonInfo(id);
     }
 

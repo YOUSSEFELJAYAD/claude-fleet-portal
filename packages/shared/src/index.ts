@@ -777,6 +777,30 @@ export interface CreateLoopRequest {
   routableCeiling?: RiskLevel;
 }
 
+/** Ask AI to draft a loop from a natural-language description (POST /api/loops/generate).
+ *  The server gathers the project's board + repo signals as context. Nothing is created —
+ *  the response prefills the create form for human review. */
+export interface GenerateLoopRequest {
+  prompt: string;
+  projectId: string;
+}
+
+/** AI-generated loop draft (a fully-normalized, mostly-valid config to prefill the form).
+ *  `warning` is non-null when the generated contract would not pass create validation as-is
+ *  (e.g. an empty evaluation) — surfaced so the user can fix it before creating. */
+export interface GenerateLoopResponse {
+  kind: LoopKind;
+  controlPlane: ControlPlaneKind;
+  suggestedName: string;
+  contract: LoopContract;
+  mergePosture: MergePosture;
+  reviewPolicy: string;
+  routableCeiling: RiskLevel;
+  escalationThreshold: number;
+  riskRubric: RiskRule[];
+  warning: string | null;
+}
+
 /** Derived execution badge, orthogonal to the column. `resolving` = a conflict-resolution agent is
  *  reconciling the task branch (v2 #9, §3.6). */
 export type ExecutionPhase =

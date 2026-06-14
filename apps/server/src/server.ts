@@ -44,6 +44,7 @@ import { registerPlanboardRoutes, planboard } from './planboard.js'; // v2 #3 �
 import { registerFleetRoutes, assertCapAboveReserve } from './fleet.js'; // v2 #7 — cross-project fleet scheduler (admission)
 import { registerTriggersRoutes, startTriggerPoller } from './triggers.js'; // F1 — GitHub triggers
 import { registerLoopRoutes, loops } from './loops.js'; // Loops (loop-engineering)
+import { registerLoopGenRoutes } from './loopGen.js'; // Loops — AI draft-from-prompt
 import { pm } from './pm.js';
 
 /** H21 — a cwd query must be an absolute path with no traversal/null byte (or absent). */
@@ -245,6 +246,7 @@ export function buildServer() {
   registerFleetRoutes(app); // v2 #7 — fleet config + status (admission gate is in pm.launchBuild)
   registerTriggersRoutes(app); // F1 — GitHub triggers
   registerLoopRoutes(app); // Loops — CRUD + fire/promote/demote (spec §16)
+  registerLoopGenRoutes(app); // Loops — POST /api/loops/generate (AI draft from prompt)
   startTriggerPoller(); // F1 — 120s poll interval (unref'd)
   planboard.init(); // subscribe onRunTerminal — partitioned (§3.7): acts only on its own planning runs
   pm.init(); // subscribe onRunTerminal + safety tick
