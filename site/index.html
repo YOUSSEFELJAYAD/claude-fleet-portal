@@ -454,7 +454,7 @@
   [data-reveal="left"]  { transform: translateX(calc(-1 * var(--reveal-travel))); }
   [data-reveal="right"] { transform: translateX(var(--reveal-travel)); }
   [data-reveal="scale"] { transform: scale(.985); }
-  [data-reveal].in { opacity: 1; transform: none; transition-delay: var(--rv-delay, 0ms); }
+  [data-reveal].in { opacity: 1; transform: none; transition-delay: var(--rv-delay, 0ms); will-change: auto; }
   [data-parallax] { will-change: transform; }
   @media (max-width: 860px) { [data-parallax] { transform: none !important; } }
   @media (prefers-reduced-motion: reduce) {
@@ -1687,83 +1687,101 @@ new IntersectionObserver((entries) => {
   });
 })();
 </script>
-<!-- ── shared motion engine: one rAF ticker + one reveal/parallax observer ──── -->
+<!-- ── shared motion engine: one demand-driven rAF ticker + reveal/parallax ──── -->
 <script type="module">
 (() => {
-  // reduced-motion override hook (lets verification force the static path)
   const prefersReduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const reduce = () => window.__reduceMotion ?? prefersReduce;
   const mobile = () => window.matchMedia('(max-width: 860px)').matches;
 
-  // ── one shared requestAnimationFrame ticker (ref-counted) ──
+  // ── one shared, demand-driven rAF ticker ──
+  // A subscriber's fn(dt) returns true to request more frames. The loop keeps
+  // running while any subscriber is "settling" and sleeps fully when all are
+  // idle (an idle page below the fold costs nothing). Scroll/resize re-wake it.
   const subs = new Set();
-  let raf = 0;
-  function frame() { for (const fn of subs) fn(); raf = subs.size ? requestAnimationFrame(frame) : 0; }
-  function subscribe(fn) { subs.add(fn); if (!raf) raf = requestAnimationFrame(frame); return () => subs.delete(fn); }
-  window.__ticker = { subscribe };
+  let raf = 0, last = 0;
+  function frame(t) {
+    const dt = last ? Math.min(64, t - last) : 16.67; last = t;
+    let alive = false;
+    for (const s of subs) {
+      if (s.fn(dt) === true) s.settleUntil = t + 250;  // keep frames while moving
+      if (t < s.settleUntil) alive = true;
+    }
+    if (alive) raf = requestAnimationFrame(frame);
+    else { raf = 0; last = 0; }
+  }
+  function ping() { if (!raf) { last = 0; raf = requestAnimationFrame(frame); } }
+  function subscribe(fn) {
+    const s = { fn, settleUntil: 0 };
+    subs.add(s);
+    s.settleUntil = performance.now() + 250; ping();      // initial settle burst
+    return { wake: () => { s.settleUntil = performance.now() + 250; ping(); }, stop: () => subs.delete(s) };
+  }
+  window.__ticker = { subscribe, wake: ping };
 
-  // ── frame-rate-independent spring-lerp (critically damped feel) ──
-  // returns a stepper: cur = step(cur, target); ~0.18 = snappy/precise
-  const lerp = (cur, target, k = 0.18) => cur + (target - cur) * k;
+  // ── frame-rate-independent exponential smoothing (dt in ms) ──
+  const lerp = (cur, target, base = 0.18, dt = 16.67) =>
+    cur + (target - cur) * (1 - Math.pow(1 - base, dt / 16.67));
   window.__lerp = lerp;
 
-  // ── reveal: one IntersectionObserver toggles `.in`, honoring stagger ──
+  // ── reveal: one IntersectionObserver toggles `.in`, honoring nested stagger ──
   const revealEls = [...document.querySelectorAll('[data-reveal]')];
   if (reduce()) {
     revealEls.forEach((el) => el.classList.add('in'));
   } else {
-    // stagger: elements sharing a [data-stagger] parent get incremental delay
     document.querySelectorAll('[data-stagger]').forEach((group) => {
       const stepMs = parseInt(group.dataset.stagger || '55', 10);
-      [...group.querySelectorAll('[data-reveal]')].forEach((el, i) => {
-        el.style.setProperty('--rv-delay', (i * stepMs) + 'ms');
-      });
+      [...group.querySelectorAll('[data-reveal]')]
+        .filter((el) => el.closest('[data-stagger]') === group)   // own children only
+        .forEach((el, i) => el.style.setProperty('--rv-delay', (i * stepMs) + 'ms'));
     });
     const io = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-      }
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
     }, { threshold: 0.18, rootMargin: '0px 0px -8% 0px' });
     revealEls.forEach((el) => io.observe(el));
   }
 
-  // ── parallax: subscribe [data-parallax] elements to the shared ticker ──
-  // data-parallax = strength in px of travel across the viewport (e.g. "40")
+  // scroll/resize wake the shared ticker for a settle burst
+  if (!reduce()) {
+    addEventListener('scroll', ping, { passive: true });
+    addEventListener('resize', ping, { passive: true });
+  }
+
+  // ── parallax: [data-parallax]="px" drift (desktop, motion-on) ──
   if (!reduce() && !mobile()) {
-    const items = [...document.querySelectorAll('[data-parallax]')].map((el) => ({ el, str: parseFloat(el.dataset.parallax) || 24, cur: 0 }));
+    const items = [...document.querySelectorAll('[data-parallax]')]
+      .map((el) => ({ el, str: parseFloat(el.dataset.parallax) || 24, cur: 0, vis: false }));
     if (items.length) {
-      const vh = () => window.innerHeight || 1;
-      let active = false;
       const visObs = new IntersectionObserver((entries) => {
         for (const e of entries) { const it = items.find((x) => x.el === e.target); if (it) it.vis = e.isIntersecting; }
-        active = items.some((x) => x.vis);
+        ping();
       }, { threshold: 0 });
       items.forEach((it) => visObs.observe(it.el));
-      subscribe(() => {
-        if (!active) return;
+      subscribe((dt) => {
+        const vh = window.innerHeight || 1; let moving = false;
         for (const it of items) {
           if (!it.vis) continue;
           const r = it.el.getBoundingClientRect();
-          const prog = (r.top + r.height / 2) / vh() - 0.5; // -0.5..0.5
-          const target = -prog * it.str;
-          it.cur = lerp(it.cur, target, 0.12);
+          const target = -(((r.top + r.height / 2) / vh) - 0.5) * it.str;
+          const next = lerp(it.cur, target, 0.12, dt);
+          if (Math.abs(next - it.cur) > 0.03) moving = true;
+          it.cur = next;
           it.el.style.transform = `translate3d(0, ${it.cur.toFixed(2)}px, 0)`;
         }
+        return moving;
       });
     }
   }
 
-  // ── expose a scroll-progress helper for section choreography (Task 5) ──
-  // onScrollProgress(el, cb): cb(p) where p is 0 (el top hits vh bottom) → 1 (el bottom hits vh top)
+  // ── scroll progress for section choreography (pure fn of scroll position) ──
   window.__onScrollProgress = (el, cb) => {
     if (reduce()) { cb(1); return () => {}; }
-    let raf2 = 0;
-    const run = () => {
+    const handle = subscribe(() => {
       const r = el.getBoundingClientRect(); const vh = window.innerHeight || 1;
-      const p = Math.max(0, Math.min(1, (vh - r.top) / (vh + r.height)));
-      cb(p); raf2 = 0;
-    };
-    return subscribe(() => { if (!raf2) raf2 = requestAnimationFrame(run); });
+      cb(Math.max(0, Math.min(1, (vh - r.top) / (vh + r.height))));
+      return false;   // never self-perpetuates; driven by scroll ping
+    });
+    return handle.stop;
   };
 })();
 </script>
