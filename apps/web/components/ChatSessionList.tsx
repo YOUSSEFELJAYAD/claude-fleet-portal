@@ -1,17 +1,19 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import type { ChatSession } from '@fleet/shared';
-import { Btn, Dot, Input, Kicker } from '@/components/ui';
+import { Btn, Badge, Dot, Input, Kicker } from '@/components/ui';
 import { chatStateMeta } from '@/lib/chatState';
 import { ago } from '@/lib/format';
 
+const AMBER = '#ffb000';
+
 export function ChatSessionList({
-  sessions, activeId, previews, onSelect, onNew, onRename, onKill, onResume, onDelete,
+  sessions, activeId, previews = {}, onSelect, onNew, onRename, onKill, onResume, onDelete,
 }: {
   sessions: ChatSession[];
   activeId: string | null;
   /** sessionId → last-message preview text (supplied by the page). */
-  previews: Record<string, string>;
+  previews?: Record<string, string>;
   onSelect: (id: string) => void;
   onNew: () => void;
   onRename: (id: string, title: string) => void;
@@ -42,7 +44,8 @@ export function ChatSessionList({
         {sessions.map((s) => {
           const meta = chatStateMeta(s.state ?? 'idle');
           const active = s.id === activeId;
-          const canKill = s.state === 'live' || s.state === 'running';
+          /** Engine sessions (codex/opencode) are one-shot and never hold a live process. */
+          const isEngine = s.engine !== 'claude';
           return (
             <div key={s.id}
               className={`px-3 py-2.5 text-[12px] cursor-pointer border-b hairline last:border-0 transition-colors ${active ? 'bg-amber/[0.06]' : 'hover:bg-white/[0.02]'}`}
@@ -69,15 +72,22 @@ export function ChatSessionList({
                 <span>{s.engine} · {s.model}</span>
                 <span>{ago(s.updatedAt)}</span>
               </div>
+              {/* Engine badge: one-shot engines cannot hold a live process (spec §12, D8). */}
+              {isEngine && (
+                <div className="mt-1">
+                  <Badge label="one-shot · limited memory" color={AMBER} />
+                </div>
+              )}
               {active && editId !== s.id && (
                 // eslint-disable-next-line jsx-a11y/click-events-have-key-events
                 <div className="flex gap-1.5 mt-1.5" onClick={(e) => e.stopPropagation()}>
                   <Btn variant="ghost" className="text-[10px] px-2 py-1" onClick={() => startRename(s)}>rename</Btn>
-                  {canKill && (
-                    <Btn variant="danger" className="text-[10px] px-2 py-1" onClick={() => onKill(s.id)}>kill</Btn>
-                  )}
-                  {(s.state === 'idle' || s.state === 'killed') && (
-                    <Btn variant="amber" className="text-[10px] px-2 py-1" onClick={() => onResume(s.id)}>resume</Btn>
+                  {/* Kill / Resume are live-process controls — meaningless for one-shot engines (spec §12, D8). */}
+                  {!isEngine && (
+                    <>
+                      <Btn variant="danger" className="text-[10px] px-2 py-1" onClick={() => onKill(s.id)}>kill</Btn>
+                      <Btn variant="amber" className="text-[10px] px-2 py-1" onClick={() => onResume(s.id)}>resume</Btn>
+                    </>
                   )}
                   <Btn variant="danger" className="text-[10px] px-2 py-1" onClick={() => onDelete(s.id)}>delete</Btn>
                 </div>
