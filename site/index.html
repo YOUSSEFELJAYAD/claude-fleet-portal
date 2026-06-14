@@ -448,6 +448,19 @@
   .span-l { font-size: 10px; color: var(--dim); margin-bottom: 3px; }
   .span-track { position: relative; height: 5px; background: rgba(255,255,255,.04); border-radius: 3px; }
   .span-bar { position: absolute; top: 0; height: 100%; width: 0; border-radius: 3px; transition: width .55s ease; box-shadow: 0 0 8px -2px currentColor; }
+
+  /* ── motion engine: reveal + stagger + parallax (Precise/Confident) ── */
+  [data-reveal] { opacity: 0; transform: translateY(var(--reveal-travel)); will-change: opacity, transform; transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
+  [data-reveal="left"]  { transform: translateX(calc(-1 * var(--reveal-travel))); }
+  [data-reveal="right"] { transform: translateX(var(--reveal-travel)); }
+  [data-reveal="scale"] { transform: scale(.985); }
+  [data-reveal].in { opacity: 1; transform: none; transition-delay: var(--rv-delay, 0ms); }
+  [data-parallax] { will-change: transform; }
+  @media (max-width: 860px) { [data-parallax] { transform: none !important; } }
+  @media (prefers-reduced-motion: reduce) {
+    [data-reveal] { opacity: 1 !important; transform: none !important; transition: none !important; }
+    [data-parallax] { transform: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -1672,6 +1685,86 @@ new IntersectionObserver((entries) => {
     const el = document.getElementById(id);
     if (el) observer.observe(el);
   });
+})();
+</script>
+<!-- ── shared motion engine: one rAF ticker + one reveal/parallax observer ──── -->
+<script type="module">
+(() => {
+  // reduced-motion override hook (lets verification force the static path)
+  const prefersReduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduce = () => window.__reduceMotion ?? prefersReduce;
+  const mobile = () => window.matchMedia('(max-width: 860px)').matches;
+
+  // ── one shared requestAnimationFrame ticker (ref-counted) ──
+  const subs = new Set();
+  let raf = 0;
+  function frame() { for (const fn of subs) fn(); raf = subs.size ? requestAnimationFrame(frame) : 0; }
+  function subscribe(fn) { subs.add(fn); if (!raf) raf = requestAnimationFrame(frame); return () => subs.delete(fn); }
+  window.__ticker = { subscribe };
+
+  // ── frame-rate-independent spring-lerp (critically damped feel) ──
+  // returns a stepper: cur = step(cur, target); ~0.18 = snappy/precise
+  const lerp = (cur, target, k = 0.18) => cur + (target - cur) * k;
+  window.__lerp = lerp;
+
+  // ── reveal: one IntersectionObserver toggles `.in`, honoring stagger ──
+  const revealEls = [...document.querySelectorAll('[data-reveal]')];
+  if (reduce()) {
+    revealEls.forEach((el) => el.classList.add('in'));
+  } else {
+    // stagger: elements sharing a [data-stagger] parent get incremental delay
+    document.querySelectorAll('[data-stagger]').forEach((group) => {
+      const stepMs = parseInt(group.dataset.stagger || '55', 10);
+      [...group.querySelectorAll('[data-reveal]')].forEach((el, i) => {
+        el.style.setProperty('--rv-delay', (i * stepMs) + 'ms');
+      });
+    });
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      }
+    }, { threshold: 0.18, rootMargin: '0px 0px -8% 0px' });
+    revealEls.forEach((el) => io.observe(el));
+  }
+
+  // ── parallax: subscribe [data-parallax] elements to the shared ticker ──
+  // data-parallax = strength in px of travel across the viewport (e.g. "40")
+  if (!reduce() && !mobile()) {
+    const items = [...document.querySelectorAll('[data-parallax]')].map((el) => ({ el, str: parseFloat(el.dataset.parallax) || 24, cur: 0 }));
+    if (items.length) {
+      const vh = () => window.innerHeight || 1;
+      let active = false;
+      const visObs = new IntersectionObserver((entries) => {
+        for (const e of entries) { const it = items.find((x) => x.el === e.target); if (it) it.vis = e.isIntersecting; }
+        active = items.some((x) => x.vis);
+      }, { threshold: 0 });
+      items.forEach((it) => visObs.observe(it.el));
+      subscribe(() => {
+        if (!active) return;
+        for (const it of items) {
+          if (!it.vis) continue;
+          const r = it.el.getBoundingClientRect();
+          const prog = (r.top + r.height / 2) / vh() - 0.5; // -0.5..0.5
+          const target = -prog * it.str;
+          it.cur = lerp(it.cur, target, 0.12);
+          it.el.style.transform = `translate3d(0, ${it.cur.toFixed(2)}px, 0)`;
+        }
+      });
+    }
+  }
+
+  // ── expose a scroll-progress helper for section choreography (Task 5) ──
+  // onScrollProgress(el, cb): cb(p) where p is 0 (el top hits vh bottom) → 1 (el bottom hits vh top)
+  window.__onScrollProgress = (el, cb) => {
+    if (reduce()) { cb(1); return () => {}; }
+    let raf2 = 0;
+    const run = () => {
+      const r = el.getBoundingClientRect(); const vh = window.innerHeight || 1;
+      const p = Math.max(0, Math.min(1, (vh - r.top) / (vh + r.height)));
+      cb(p); raf2 = 0;
+    };
+    return subscribe(() => { if (!raf2) raf2 = requestAnimationFrame(run); });
+  };
 })();
 </script>
 </body>
