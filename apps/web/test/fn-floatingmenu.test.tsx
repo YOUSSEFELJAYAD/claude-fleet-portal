@@ -42,3 +42,37 @@ describe('FloatingMenu — rendering', () => {
     expect(getByText('no matches')).toBeTruthy();
   });
 });
+
+describe('FloatingMenu — interaction', () => {
+  const items: FloatingItem[] = [
+    { id: 'a', label: 'alpha', group: 'g1' },
+    { id: 'b', label: 'beta', group: 'g1' },
+    { id: 'c', label: 'gamma', group: 'g2' },
+  ];
+
+  it('paints the active row amber and others default', () => {
+    const { container } = render(
+      <FloatingMenu open items={items} activeIndex={1} onPick={() => {}} onClose={() => {}} />,
+    );
+    const rows = [...container.querySelectorAll('[data-menu-item]')] as HTMLElement[];
+    expect(rows[1].style.color).toBe('rgb(255, 176, 0)'); // #ffb000 active
+    expect(rows[0].style.color).not.toBe('rgb(255, 176, 0)');
+  });
+
+  it('fires onPick with the item and its flat index on mousedown', () => {
+    const onPick = vi.fn();
+    const { container } = render(
+      <FloatingMenu open items={items} activeIndex={0} onPick={onPick} onClose={() => {}} />,
+    );
+    const rows = [...container.querySelectorAll('[data-menu-item]')] as HTMLElement[];
+    fireEvent.mouseDown(rows[2]);
+    expect(onPick).toHaveBeenCalledWith(items[2], 2);
+  });
+
+  it('calls onClose on an outside mousedown', () => {
+    const onClose = vi.fn();
+    render(<FloatingMenu open items={items} activeIndex={0} onPick={() => {}} onClose={onClose} />);
+    fireEvent.mouseDown(document.body);
+    expect(onClose).toHaveBeenCalled();
+  });
+});
