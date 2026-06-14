@@ -461,6 +461,11 @@
     [data-reveal] { opacity: 1 !important; transform: none !important; transition: none !important; }
     [data-parallax] { transform: none !important; }
   }
+  /* hero headline words + HUD fade (HUD keeps its translateY(-50%) centering) */
+  .h1-words span { display: inline-block; }
+  .hud[data-reveal] { opacity: 0; transform: translateY(-50%); transition: opacity var(--dur-slow) var(--ease-out); }
+  .hud[data-reveal].in { opacity: 1; transform: translateY(-50%); }
+  @media (prefers-reduced-motion: reduce) { .hud[data-reveal] { opacity: 1 !important; transform: translateY(-50%) !important; transition: none !important; } }
 </style>
 </head>
 <body>
@@ -483,27 +488,30 @@
 
 <!-- ── HERO with three.js fleet ─────────────────────────────────────────── -->
 <header id="hero">
-  <div id="scene"></div>
+  <div id="scene" data-parallax="36"></div>
 
   <!-- left HUD: live tasks in progress -->
-  <aside class="hud hud-left" aria-hidden="true">
+  <aside class="hud hud-left" aria-hidden="true" data-reveal>
     <div class="hud-head"><span class="hud-dot"></span> tasks · in progress</div>
     <ul class="hud-tasks" id="hudTasks"></ul>
   </aside>
   <!-- right HUD: an agent spawns subagents, which spawn their own subagents -->
-  <aside class="hud hud-right" aria-hidden="true">
+  <aside class="hud hud-right" aria-hidden="true" data-reveal>
     <div class="hud-head"><span class="hud-dot"></span> orchestration · subagents</div>
     <div class="hud-tree" id="hudTree"></div>
   </aside>
 
-  <div class="hero-inner">
-    <div class="hero-badge">⚖ <b>100% open source</b> · MIT licensed</div>
-    <h1>What can your <span class="amber">fleet</span> build?</h1>
-    <p class="tagline">Mission control for Claude&nbsp;Code, Codex &amp; OpenCode agents — launch, watch and
+  <div class="hero-inner" data-stagger="70">
+    <div class="hero-badge" data-reveal>⚖ <b>100% open source</b> · MIT licensed</div>
+    <h1 class="h1-words" data-stagger="60">
+      <span data-reveal>What</span> <span data-reveal>can</span> <span data-reveal>your</span>
+      <span class="amber" data-reveal>fleet</span> <span data-reveal>build?</span>
+    </h1>
+    <p class="tagline" data-reveal>Mission control for Claude&nbsp;Code, Codex &amp; OpenCode agents — launch, watch and
       orchestrate a whole fleet from one cockpit, with live cost guardrails and an autonomous PM.</p>
 
     <!-- the command console: an animated, evocative launch box (not a live input) -->
-    <div class="console" id="console" aria-hidden="true">
+    <div class="console" id="console" aria-hidden="true" data-reveal>
       <div class="console-top">
         <span class="console-glyph">＋</span>
         <span class="console-label">Launch&nbsp;Agent</span>
@@ -518,12 +526,12 @@
       </div>
     </div>
 
-    <div class="hero-cta">
+    <div class="hero-cta" data-reveal>
       <a class="btn btn-amber" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest">⇩ Download for macOS · Windows · Linux</a>
       <a class="btn btn-ghost" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal">★ Star on GitHub</a>
     </div>
 
-    <div class="cred-row"><b>MIT licensed</b> · <b>660+ tests</b> · <b>3 OS installers</b> · <b>100% local</b></div>
+    <div class="cred-row" data-reveal><b>MIT licensed</b> · <b>660+ tests</b> · <b>3 OS installers</b> · <b>100% local</b></div>
   </div>
   <a class="hero-foot mono" href="#how" style="display:block">🐙 one octopus, many arms — see how it works ↓</a>
 </header>
