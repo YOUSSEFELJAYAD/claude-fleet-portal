@@ -46,36 +46,12 @@ function PersistedMessage({ m }: { m: ChatMessage }) {
   );
 }
 
-/** The live turn — consumes the chat-scoped stream and renders the full event vocabulary
- *  as ordered, chat-native cards. Fires onComplete once when the backing run goes terminal. */
+/** Presentational live turn — renders ONLY the in-flight turn's events + streaming tokens.
+ *  It owns NO subscription: the parent passes the already-scoped events so completed turns
+ *  (which live in the persisted transcript) are never re-rendered here. */
 function LiveTurn({
-  sessionId, onComplete, onError,
-}: { sessionId: string; onComplete: (runId: string, finalText: string) => void; onError: (runId: string) => void }) {
-  const { run, events, partials, state, error } = useChatStream(sessionId);
-  const done = useRef<string | null>(null);
-
-  // Final assistant text = concatenation of assistant_text + result payloads (matches the old contract).
-  const finalText = events
-    .filter((e) => e.type === 'assistant_text' || e.type === 'result')
-    .map((e) => String((e.payload as any)?.text ?? (e.payload as any)?.result ?? ''))
-    .join('');
-
-  useEffect(() => {
-    if (!run || done.current === run.id || !TERMINAL.has(run.status)) return;
-    done.current = run.id;
-    onComplete(run.id, (run as any).resultText ?? finalText);
-  }, [run, finalText, onComplete]);
-
-  if (error) {
-    return (
-      <ErrorBanner>
-        live stream lost — {error}
-        <button type="button" onClick={() => onError(run?.id ?? '')} className="ml-2 underline hover:text-ink transition-colors">dismiss</button>
-      </ErrorBanner>
-    );
-  }
-
-  // Live streaming token text (any node currently mid-message).
+  sessionId, events, partials,
+}: { sessionId: string; events: NormalizedEvent[]; partials: Record<string, string> }) {
   const streaming = Object.values(partials).filter(Boolean).join('');
   const nothingYet = events.length === 0 && !streaming;
 
@@ -128,7 +104,7 @@ function LiveTurn({
           <span className="caret" />
         </div>
       )}
-      {nothingYet && state === 'running' && <div className="text-[13px] text-faint">⟳ thinking…</div>}
+      {nothingYet && <div className="text-[13px] text-faint">⟳ thinking…</div>}
     </div>
   );
 }
@@ -142,7 +118,31 @@ export function ChatThread({
   onTurnError: (runId: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
-  const { state } = useChatStream(sessionId);
+  // ONE chat-scoped subscription for the whole thread (the live turn is presentational).
+  const { run, events, partials, error } = useChatStream(sessionId);
+  const fired = useRef(false);
+
+  // A turn is in flight only while the backing run is non-terminal. When it is terminal the
+  // persisted `messages` are the complete transcript, so the live turn renders nothing —
+  // this is what prevents a completed turn from being duplicated / shown out of order.
+  const turnActive = !!run && !TERMINAL.has(run.status);
+
+  // Final assistant text = concatenation of assistant_text + result payloads (server-authoritative
+  // run.resultText is preferred when present, so persistence stays complete even after reload).
+  const finalText = events
+    .filter((e) => e.type === 'assistant_text' || e.type === 'result')
+    .map((e) => String((e.payload as any)?.text ?? (e.payload as any)?.result ?? ''))
+    .join('');
+
+  // Fire onComplete ONCE per turn completion. Re-arm while the run is active so each resumed
+  // turn (the run id is reused across turns) still persists its own reply.
+  useEffect(() => {
+    if (!run) return;
+    if (!TERMINAL.has(run.status)) { fired.current = false; return; }
+    if (fired.current) return;
+    fired.current = true;
+    onTurnComplete(run.id, (run as any).resultText ?? finalText);
+  }, [run, finalText, onTurnComplete]);
 
   useEffect(() => {
     const end = endRef.current;
@@ -151,13 +151,21 @@ export function ChatThread({
     while (sc && sc.scrollHeight <= sc.clientHeight) sc = sc.parentElement;
     if (!sc) return;
     if (sc.scrollHeight - sc.scrollTop - sc.clientHeight < 120) sc.scrollTop = sc.scrollHeight;
-  }, [messages.length, state]);
+  }, [messages.length, events.length, partials]);
 
   return (
     <div className="flex-1 overflow-auto p-4">
       {messages.map((m) => <PersistedMessage key={m.id} m={m} />)}
-      {sessionId && <LiveTurn sessionId={sessionId} onComplete={onTurnComplete} onError={onTurnError} />}
-      {state === 'running' && (
+      {sessionId && error && (
+        <ErrorBanner>
+          live stream lost — {error}
+          <button type="button" onClick={() => onTurnError(run?.id ?? '')} className="ml-2 underline hover:text-ink transition-colors">dismiss</button>
+        </ErrorBanner>
+      )}
+      {sessionId && turnActive && !error && (
+        <LiveTurn sessionId={sessionId} events={events} partials={partials} />
+      )}
+      {turnActive && (
         <div className="sticky bottom-0 flex justify-center py-2">
           <Btn variant="danger" onClick={() => { if (sessionId) api.chatInterrupt(sessionId).catch(() => {}); }}>stop</Btn>
         </div>

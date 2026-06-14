@@ -197,6 +197,16 @@ export interface SessionStateEnvelope { kind: 'session_state'; state: ChatSessio
  * backs it, so a kill→resume (run id changes underneath) and a page reload both re-attach cleanly.
  * `mkSse` is server.ts's connection-capped SSE factory (passed in to keep the hijack plumbing there).
  */
+/** Chat-stream frame transform: strip the historical `events` from a run's `hello` snapshot
+ *  (the transcript lives in persisted chat_messages; replaying it would duplicate the thread
+ *  and render it out of order on reload). All other frames pass through unchanged. */
+export function stripHelloEvents(m: unknown): unknown {
+  if (m && typeof m === 'object' && (m as any).kind === 'hello') {
+    return { ...(m as any), events: [] };
+  }
+  return m;
+}
+
 export function registerChatStreamRoute(
   app: FastifyInstance,
   mkSse: (reply: any, req: any) => { send: (obj: unknown) => void; stop: () => void } | null,
@@ -214,9 +224,12 @@ export function registerChatStreamRoute(
     send({ kind: 'session_state', state: st.state, live: st.live } satisfies SessionStateEnvelope);
 
     // proxy the current backing run, if any (re-resolve per connect so reload re-attaches).
+    // The run's hello snapshot carries its FULL event log = the whole transcript (the run is
+    // reused across turns via --resume) — already persisted as chat_messages. stripHelloEvents
+    // drops that history so the live turn never duplicates the transcript / reorders on reload.
     const runId = chatLive.liveRunId(id) ?? session.runId;
     let unsub: (() => void) | null = null;
-    if (runId) unsub = registry.subscribeRun(runId, send);
+    if (runId) unsub = registry.subscribeRun(runId, (m) => send(stripHelloEvents(m)));
 
     reply.raw.on('close', () => { unsub?.(); stop(); });
   });

@@ -14,6 +14,9 @@ import type {
 } from '@fleet/shared';
 import { API } from './api';
 
+/** Run statuses that mean "no turn is in flight" — a terminal turn lives in the persisted transcript. */
+const TERMINAL_STATUS = new Set(['completed', 'failed', 'killed']);
+
 export function buildTree(nodes: RunNode[], rootId: string): RunNode | null {
   const byParent = new Map<string | null, RunNode[]>();
   const byId = new Map<string, RunNode>();
@@ -252,10 +255,14 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const partialRef = useRef<Record<string, string>>({});
+  // last seen backing-run status — used to detect a new turn (terminal → active) so the
+  // prior turn's live events (already persisted as messages) are dropped from the live view.
+  const prevRunStatusRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!sessionId) return;
     partialRef.current = {};
+    prevRunStatusRef.current = null;
     setRun(null);
     setEvents([]);
     setPartials({});
@@ -287,6 +294,7 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
       }
       if (m.kind === 'hello') {
         setRun(m.run ?? null);
+        prevRunStatusRef.current = (m.run as Run | undefined)?.status ?? null;
         setEvents(m.events ?? []);
         partialRef.current = {};
         setPartials({});
@@ -297,6 +305,16 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
         return;
       }
       if (m.kind === 'run') {
+        const prev = prevRunStatusRef.current;
+        const next = (m.run as Run | undefined)?.status ?? null;
+        // new turn starting (run went terminal → active): drop the prior turn's live events;
+        // they belong to a completed turn that now lives in the persisted transcript.
+        if (prev && TERMINAL_STATUS.has(prev) && next && !TERMINAL_STATUS.has(next)) {
+          partialRef.current = {};
+          setEvents([]);
+          setPartials({});
+        }
+        prevRunStatusRef.current = next;
         setRun(m.run);
         return;
       }
