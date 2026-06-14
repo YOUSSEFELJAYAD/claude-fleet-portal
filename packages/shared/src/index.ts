@@ -229,6 +229,8 @@ export interface LaunchRequest {
   retryPolicy?: RetryPolicy | null;
   /** F3 — internal: how many retries have already fired in this chain (0-based). */
   _attempt?: number;
+  /** §6 — `@`-mention dir attachments: paths added to `--add-dir` for this turn. */
+  addDirs?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

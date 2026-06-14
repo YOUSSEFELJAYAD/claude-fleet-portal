@@ -140,27 +140,36 @@ export function buildEnginePrompt(history: Array<{ role: string; content: string
 }
 
 /** Run one chat turn. Persists the user message, then launches (turn 1) or resumes (turn N) for
- *  Claude, or launches a fresh engine one-shot with a reconstructed prompt for engines. */
-export async function startTurn(sessionId: string, message: string): Promise<ChatTurnResponse> {
+ *  Claude, or launches a fresh engine one-shot with a reconstructed prompt for engines.
+ *  §6 — files in `attachments` become path-reference tokens in the prompt; dirs become --add-dir. */
+export async function startTurn(sessionId: string, message: string, attachments?: ChatAttachment[]): Promise<ChatTurnResponse> {
   const session = chatRepo.getSession(sessionId);
   if (!session) throw Object.assign(new Error('session not found'), { statusCode: 404 });
   if (typeof message !== 'string' || !message.trim()) throw Object.assign(new Error('message is required'), { statusCode: 400 });
 
-  const userMessage = chatRepo.addMessage({ sessionId, role: 'user', kind: 'text', content: message, runId: null });
-  const opts = {
+  const userMessage = chatRepo.addMessage({ sessionId, role: 'user', kind: 'text', content: message, runId: null, attachments });
+
+  // §6.2 — files become path-reference tokens in the prompt; dirs become --add-dir for this turn.
+  const files = (attachments ?? []).filter((a) => a.kind === 'file').map((a) => a.path);
+  const addDirs = (attachments ?? []).filter((a) => a.kind === 'dir').map((a) => a.path);
+  const refSuffix = files.length ? `\n\nReferenced files:\n${files.map((f) => `- ${f}`).join('\n')}` : '';
+  const prompt = message + refSuffix;
+
+  const baseOpts = {
     cwd: session.cwd, model: session.model, effort: session.effort, permissionMode: session.permissionMode,
     allowedTools: session.allowedTools ?? undefined, skills: session.skills ?? undefined,
+    ...(addDirs.length ? { addDirs } : {}),
   };
 
   let run: { id: string };
   if (session.engine && session.engine !== 'claude') {
     const history = chatRepo.listMessages(sessionId).slice(0, -1); // exclude the just-added user msg
-    const prompt = buildEnginePrompt(history.map((m) => ({ role: m.role, content: m.content })), message);
-    run = await registry.launchEngine({ ...opts, engine: session.engine, prompt });
+    const enginePrompt = buildEnginePrompt(history.map((m) => ({ role: m.role, content: m.content })), prompt);
+    run = await registry.launchEngine({ ...baseOpts, engine: session.engine, prompt: enginePrompt });
   } else if (!session.runId) {
-    run = await registry.launch({ ...opts, prompt: message });
+    run = await registry.launch({ ...baseOpts, prompt });
   } else {
-    run = await registry.resume(session.runId, message, undefined);
+    run = await registry.resume(session.runId, prompt, undefined);
   }
   chatRepo.setSessionRun(sessionId, run.id);
   return { runId: run.id, userMessage };
