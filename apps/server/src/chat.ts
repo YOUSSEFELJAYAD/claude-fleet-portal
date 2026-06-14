@@ -323,4 +323,21 @@ export function registerChatRoutes(app: FastifyInstance) {
       return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'interrupt failed' });
     }
   });
+
+  // §3.1/§3.3 — revive a killed/idle session by resuming its backing run via registry.resume.
+  // Returns 400 when there is no backing run (session never had a turn); 409 forwarded from
+  // registry if the run is still live. Returns the updated ChatSession so the client resolves.
+  app.post('/api/chat/sessions/:id/resume', async (req, reply) => {
+    const id = (req.params as any).id;
+    const session = chatRepo.getSession(id);
+    if (!session) return reply.code(404).send({ error: 'not found' });
+    if (!session.runId) return reply.code(400).send({ error: 'no run to resume — send a message to start' });
+    try {
+      const run = registry.resume(session.runId);
+      chatRepo.setSessionRun(id, run.id);
+      return chatRepo.getSession(id);
+    } catch (e: any) {
+      return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'resume failed' });
+    }
+  });
 }
