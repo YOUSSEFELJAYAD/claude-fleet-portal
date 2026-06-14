@@ -57,6 +57,14 @@ export function ChatComposer({
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [caret, setCaret] = useState(0);
+  // §fix09 — explicit menu dismissal. Escape/click-outside set this true; the next
+  // keystroke/onChange clears it. `detectTrigger` is consulted only when !dismissed,
+  // so a dismissed menu does NOT immediately re-open on the same text.
+  const [dismissed, setDismissed] = useState(false);
+  // §fix09 — count of selectable rows in the open menu. Enter is "owned" by the menu
+  // (and must not submit) only while it has at least one pickable row — mirroring each
+  // menu's own `if (rows[active])` Enter guard. An open-but-empty menu lets Enter submit.
+  const [menuCount, setMenuCount] = useState(0);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   // auto-grow: reset to single-row height then grow to scrollHeight (capped)
@@ -67,12 +75,15 @@ export function ChatComposer({
     ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
   }, [text]);
 
-  const trigger = detectTrigger(text, caret);
+  const trigger = dismissed ? null : detectTrigger(text, caret);
+  // a menu "owns" Enter only when it is open AND has a row to pick (else Enter submits).
+  const menuOpen = trigger !== null && menuCount > 0;
 
   function reset() {
     setText('');
     setAttachments([]);
     setCaret(0);
+    setDismissed(false);
   }
 
   function submit() {
@@ -146,7 +157,8 @@ export function ChatComposer({
             query={trigger.query}
             cwd={cwd}
             onPick={(name: string) => pickCommand(name)}
-            onClose={() => setCaret(-1)}
+            onClose={() => setDismissed(true)}
+            onCount={setMenuCount}
           />
         )}
         {/* `@` picker */}
@@ -155,7 +167,8 @@ export function ChatComposer({
             query={trigger.query}
             cwd={cwd}
             onPick={(att: ChatAttachment) => addAttachment(att, trigger.start)}
-            onClose={() => setCaret(-1)}
+            onClose={() => setDismissed(true)}
+            onCount={setMenuCount}
           />
         )}
 
@@ -168,11 +181,15 @@ export function ChatComposer({
           onChange={(e) => {
             setText(e.target.value);
             setCaret(e.target.selectionStart ?? e.target.value.length);
+            // a new keystroke clears an Escape/click-outside dismissal (§fix09)
+            setDismissed(false);
           }}
           onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            // Enter while a `/` or `@` trigger menu is open must NEVER submit — the menu
+            // owns Enter (it picks the active row + stopPropagation). Only submit when closed.
+            if (e.key === 'Enter' && !e.shiftKey && !menuOpen) {
               e.preventDefault();
               submit();
             }

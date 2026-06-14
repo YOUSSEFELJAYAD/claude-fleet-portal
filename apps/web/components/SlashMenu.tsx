@@ -19,11 +19,15 @@ export function SlashMenu({
   cwd,
   onPick,
   onClose,
+  onCount,
 }: {
   query: string;
   cwd: string;
   onPick: (name: string) => void;
   onClose: () => void;
+  /** §fix09 — report the count of selectable rows so the composer knows whether the
+   *  menu currently "owns" Enter (an empty menu lets Enter submit). */
+  onCount?: (n: number) => void;
 }) {
   const [rows, setRows] = useState<CatalogRow[]>([]);
   const [active, setActive] = useState(0);
@@ -91,6 +95,12 @@ export function SlashMenu({
     setActive((a) => (a >= filtered.length ? 0 : a));
   }, [filtered.length]);
 
+  // §fix09 — surface the selectable-row count to the composer's Enter guard
+  useEffect(() => {
+    onCount?.(filtered.length);
+    return () => onCount?.(0);
+  }, [filtered.length, onCount]);
+
   // keyboard nav: arrow/enter/escape on the document while the menu is open. The
   // trigger char lives in the composer's textarea, which keeps focus, so we listen
   // at the document (capture) and act on the menu.
@@ -98,16 +108,21 @@ export function SlashMenu({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
+        e.stopPropagation();
         setActive((a) => Math.min(a + 1, filtered.length - 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
+        e.stopPropagation();
         setActive((a) => Math.max(a - 1, 0));
       } else if (e.key === 'Enter') {
         if (filtered[active]) {
           e.preventDefault();
+          e.stopPropagation();
           onPick(filtered[active].name);
         }
       } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };

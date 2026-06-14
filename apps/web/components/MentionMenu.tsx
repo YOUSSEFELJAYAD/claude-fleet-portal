@@ -14,11 +14,15 @@ export function MentionMenu({
   cwd,
   onPick,
   onClose,
+  onCount,
 }: {
   query: string;
   cwd: string;
   onPick: (att: ChatAttachment) => void;
   onClose: () => void;
+  /** §fix09 — report the count of selectable rows so the composer knows whether the
+   *  menu currently "owns" Enter (an empty menu lets Enter submit). */
+  onCount?: (n: number) => void;
 }) {
   const [results, setResults] = useState<FileFindResult[]>([]);
   const [active, setActive] = useState(0);
@@ -49,21 +53,32 @@ export function MentionMenu({
     trailing: r.kind === 'dir' ? 'dir' : 'file',
   }));
 
+  // §fix09 — surface the selectable-row count to the composer's Enter guard
+  useEffect(() => {
+    onCount?.(results.length);
+    return () => onCount?.(0);
+  }, [results.length, onCount]);
+
   // keyboard nav at the document (the textarea keeps focus — same model as SlashMenu)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
+        e.stopPropagation();
         setActive((a) => Math.min(a + 1, results.length - 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
+        e.stopPropagation();
         setActive((a) => Math.max(a - 1, 0));
       } else if (e.key === 'Enter') {
         if (results[active]) {
           e.preventDefault();
+          e.stopPropagation();
           onPick({ path: results[active].path, kind: results[active].kind });
         }
       } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
