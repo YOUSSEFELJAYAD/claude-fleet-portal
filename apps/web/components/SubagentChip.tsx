@@ -7,11 +7,11 @@ export function SubagentChip({ label, childId }: { label: string; childId: strin
   return (
     <a
       href={`/agents/${childId}`}
-      className="inline-flex items-center gap-1.5 my-1 px-2 py-0.5 border border-line2 hover:border-amber/60 hover:bg-amber/5 transition-colors"
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 border border-line2 text-dim hover:border-amber/60 hover:bg-amber/5 hover:text-ink transition-colors"
     >
       <Dot color="#ffb000" size={6} />
-      <span className="font-mono text-[11px] text-ink">{label}</span>
-      <span className="font-mono text-[9px] text-faint">{childId.slice(0, 8)}</span>
+      <span className="font-mono text-[11px]">{label}</span>
+      <span className="font-mono text-[11px]">{childId.slice(0, 8)}</span>
     </a>
   );
 }
