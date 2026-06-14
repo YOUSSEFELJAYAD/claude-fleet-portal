@@ -36,6 +36,7 @@ export function ChatComposer({
   running,
   engine = 'claude',
   cwd,
+  sessionId,
   onSend,
   onCommand,
   onStop,
@@ -45,8 +46,11 @@ export function ChatComposer({
   running: boolean;
   /** §12 D8 — engine type; Stop is only shown for claude (one-shot engines have no live process). */
   engine?: RunEngine;
-  /** §6 — session workspace, scopes the `@` file search. */
+  /** §6 — session workspace label (slash-command context). The `@` file search no longer trusts
+   *  this client value: its root is resolved server-side from `sessionId` (fix 10B). */
   cwd: string;
+  /** §6 — pins the `@` file search to the session's server-trusted workspace root (fix 10B). */
+  sessionId?: string | null;
   /** plain message + its `@` attachments. */
   onSend: (message: string, attachments: ChatAttachment[]) => void;
   /** a `/command` line (verbatim, leading slash kept). */
@@ -65,6 +69,9 @@ export function ChatComposer({
   // (and must not submit) only while it has at least one pickable row — mirroring each
   // menu's own `if (rows[active])` Enter guard. An open-but-empty menu lets Enter submit.
   const [menuCount, setMenuCount] = useState(0);
+  // §fix10C — combobox wiring: the open menu reports its listbox id + active option id so the
+  // textarea (role=combobox) can point aria-controls / aria-activedescendant at the live listbox.
+  const [aria, setAria] = useState<{ listboxId: string; activeOptionId: string | null }>({ listboxId: '', activeOptionId: null });
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   // auto-grow: reset to single-row height then grow to scrollHeight (capped)
@@ -159,16 +166,18 @@ export function ChatComposer({
             onPick={(name: string) => pickCommand(name)}
             onClose={() => setDismissed(true)}
             onCount={setMenuCount}
+            onActiveDescendant={setAria}
           />
         )}
-        {/* `@` picker */}
-        {trigger?.kind === 'mention' && (
+        {/* `@` picker — only mountable once we have a session to scope the server-side search */}
+        {trigger?.kind === 'mention' && sessionId && (
           <MentionMenu
             query={trigger.query}
-            cwd={cwd}
+            sessionId={sessionId}
             onPick={(att: ChatAttachment) => addAttachment(att, trigger.start)}
             onClose={() => setDismissed(true)}
             onCount={setMenuCount}
+            onActiveDescendant={setAria}
           />
         )}
 
@@ -178,6 +187,14 @@ export function ChatComposer({
           value={text}
           disabled={disabled}
           placeholder="Message…  (/ for commands · @ to attach)"
+          // §fix10C — combobox: the textarea drives an open `/`-or-`@` listbox. aria-controls /
+          // aria-activedescendant point at the live menu so SR users hear the highlighted row.
+          role="combobox"
+          aria-expanded={menuOpen}
+          aria-haspopup="listbox"
+          aria-autocomplete="list"
+          aria-controls={menuOpen && aria.listboxId ? aria.listboxId : undefined}
+          aria-activedescendant={menuOpen && aria.activeOptionId ? aria.activeOptionId : undefined}
           onChange={(e) => {
             setText(e.target.value);
             setCaret(e.target.selectionStart ?? e.target.value.length);

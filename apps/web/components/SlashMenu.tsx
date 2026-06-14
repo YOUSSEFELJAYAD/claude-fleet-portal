@@ -1,8 +1,11 @@
 'use client';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { CommandDef, SkillInfo, SubagentInfo } from '@fleet/shared';
-import { FloatingMenu, type FloatingItem } from '@/components/ui';
+import { FloatingMenu, floatingOptionId, type FloatingItem } from '@/components/ui';
 import { api } from '@/lib/api';
+
+/** stable listbox id so the composer's combobox textarea can reference it (aria-controls). */
+const SLASH_LISTBOX_ID = 'chat-slash-menu';
 
 /** §5.3 — the merged `/` catalog: typed Portal verbs (grouped by CommandDef.group),
  *  plus Skills and Subagents under their own headers. Fetched ONCE per mount and
@@ -20,6 +23,7 @@ export function SlashMenu({
   onPick,
   onClose,
   onCount,
+  onActiveDescendant,
 }: {
   query: string;
   cwd: string;
@@ -28,6 +32,9 @@ export function SlashMenu({
   /** §fix09 — report the count of selectable rows so the composer knows whether the
    *  menu currently "owns" Enter (an empty menu lets Enter submit). */
   onCount?: (n: number) => void;
+  /** fix 10C — report this listbox's id + the active option's id so the composer's
+   *  combobox textarea can wire aria-controls / aria-activedescendant. */
+  onActiveDescendant?: (info: { listboxId: string; activeOptionId: string | null }) => void;
 }) {
   const [rows, setRows] = useState<CatalogRow[]>([]);
   const [active, setActive] = useState(0);
@@ -101,6 +108,15 @@ export function SlashMenu({
     return () => onCount?.(0);
   }, [filtered.length, onCount]);
 
+  // fix 10C — surface the active descendant for the composer's combobox aria wiring
+  useEffect(() => {
+    onActiveDescendant?.({
+      listboxId: SLASH_LISTBOX_ID,
+      activeOptionId: filtered[active] ? floatingOptionId(SLASH_LISTBOX_ID, active) : null,
+    });
+    return () => onActiveDescendant?.({ listboxId: SLASH_LISTBOX_ID, activeOptionId: null });
+  }, [active, filtered, onActiveDescendant]);
+
   // keyboard nav: arrow/enter/escape on the document while the menu is open. The
   // trigger char lives in the composer's textarea, which keeps focus, so we listen
   // at the document (capture) and act on the menu.
@@ -133,6 +149,7 @@ export function SlashMenu({
   return (
     <FloatingMenu
       open
+      id={SLASH_LISTBOX_ID}
       items={filtered}
       activeIndex={active}
       onPick={(item) => onPick((item as CatalogRow).name)}

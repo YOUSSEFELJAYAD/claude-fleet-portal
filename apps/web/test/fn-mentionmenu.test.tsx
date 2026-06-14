@@ -22,17 +22,17 @@ afterEach(() => { vi.useRealTimers(); });
 
 describe('MentionMenu', () => {
   it('debounces the search and renders the ranked results', async () => {
-    const { container } = render(<MentionMenu query="a" cwd="/work" onPick={() => {}} onClose={() => {}} />);
+    const { container } = render(<MentionMenu query="a" sessionId="sess-1" onPick={() => {}} onClose={() => {}} />);
     // before the debounce window elapses, no fetch has fired
     expect(findFiles).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(200);
-    expect(findFiles).toHaveBeenCalledWith('/work', 'a', expect.any(Number));
+    expect(findFiles).toHaveBeenCalledWith('sess-1', 'a', expect.any(Number));
     await waitFor(() => expect(container.querySelectorAll('[data-menu-item]').length).toBe(2));
   });
 
   it('picks a result as a ChatAttachment with its kind', async () => {
     const onPick = vi.fn();
-    const { container } = render(<MentionMenu query="a" cwd="/work" onPick={onPick} onClose={() => {}} />);
+    const { container } = render(<MentionMenu query="a" sessionId="sess-1" onPick={onPick} onClose={() => {}} />);
     await vi.advanceTimersByTimeAsync(200);
     await waitFor(() => expect(container.querySelectorAll('[data-menu-item]').length).toBe(2));
     const rows = container.querySelectorAll('[data-menu-item]');
@@ -41,19 +41,19 @@ describe('MentionMenu', () => {
   });
 
   it('coalesces rapid query changes into a single trailing fetch', async () => {
-    const { rerender } = render(<MentionMenu query="a" cwd="/work" onPick={() => {}} onClose={() => {}} />);
-    rerender(<MentionMenu query="ab" cwd="/work" onPick={() => {}} onClose={() => {}} />);
-    rerender(<MentionMenu query="abc" cwd="/work" onPick={() => {}} onClose={() => {}} />);
+    const { rerender } = render(<MentionMenu query="a" sessionId="sess-1" onPick={() => {}} onClose={() => {}} />);
+    rerender(<MentionMenu query="ab" sessionId="sess-1" onPick={() => {}} onClose={() => {}} />);
+    rerender(<MentionMenu query="abc" sessionId="sess-1" onPick={() => {}} onClose={() => {}} />);
     await vi.advanceTimersByTimeAsync(200);
     expect(findFiles).toHaveBeenCalledTimes(1);
-    expect(findFiles).toHaveBeenLastCalledWith('/work', 'abc', expect.any(Number));
+    expect(findFiles).toHaveBeenLastCalledWith('sess-1', 'abc', expect.any(Number));
   });
 });
 
 describe('MentionMenu — keyboard nav', () => {
   it('ArrowDown + Enter picks the highlighted result', async () => {
     const onPick = vi.fn();
-    const { container } = render(<MentionMenu query="a" cwd="/work" onPick={onPick} onClose={() => {}} />);
+    const { container } = render(<MentionMenu query="a" sessionId="sess-1" onPick={onPick} onClose={() => {}} />);
     await vi.advanceTimersByTimeAsync(200);
     await waitFor(() => expect(container.querySelectorAll('[data-menu-item]').length).toBe(2));
     fireEvent.keyDown(document, { key: 'ArrowDown' });

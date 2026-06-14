@@ -23,7 +23,7 @@ import { ChatComposer } from '../components/ChatComposer';
 function mount() {
   const onSend = vi.fn();
   const utils = render(
-    <ChatComposer disabled={false} running={false} cwd="/work" onSend={onSend} onCommand={() => {}} onStop={() => {}} />,
+    <ChatComposer disabled={false} running={false} cwd="/work" sessionId="sess-1" onSend={onSend} onCommand={() => {}} onStop={() => {}} />,
   );
   const ta = utils.container.querySelector('textarea') as HTMLTextAreaElement;
   return { ...utils, ta, onSend };
@@ -68,7 +68,7 @@ describe('composer Enter ↔ open menu (fix 09)', () => {
     const onSend = vi.fn();
     const onCommand = vi.fn();
     const utils = render(
-      <ChatComposer disabled={false} running={false} cwd="/work" onSend={onSend} onCommand={onCommand} onStop={() => {}} />,
+      <ChatComposer disabled={false} running={false} cwd="/work" sessionId="sess-1" onSend={onSend} onCommand={onCommand} onStop={() => {}} />,
     );
     const ta = utils.container.querySelector('textarea') as HTMLTextAreaElement;
     fireEvent.change(ta, { target: { value: '/' } });
@@ -89,7 +89,7 @@ describe('composer Enter ↔ open menu (fix 09)', () => {
   it('Enter with the MentionMenu open attaches and does NOT submit', async () => {
     const onSend = vi.fn();
     const utils = render(
-      <ChatComposer disabled={false} running={false} cwd="/work" onSend={onSend} onCommand={() => {}} onStop={() => {}} />,
+      <ChatComposer disabled={false} running={false} cwd="/work" sessionId="sess-1" onSend={onSend} onCommand={() => {}} onStop={() => {}} />,
     );
     const ta = utils.container.querySelector('textarea') as HTMLTextAreaElement;
     fireEvent.change(ta, { target: { value: 'see @a' } });

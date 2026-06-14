@@ -305,6 +305,12 @@ export interface FloatingItem {
   group?: string;
 }
 
+/** Stable DOM id for the option at flat index `i` within a listbox identified by `listboxId`.
+ *  Exported so a combobox input can wire `aria-activedescendant` to the active row's id. */
+export function floatingOptionId(listboxId: string, i: number): string {
+  return `${listboxId}-opt-${i}`;
+}
+
 export function FloatingMenu({
   open,
   items,
@@ -315,6 +321,7 @@ export function FloatingMenu({
   header,
   footer,
   className = '',
+  id,
 }: {
   open: boolean;
   items: FloatingItem[];
@@ -326,8 +333,15 @@ export function FloatingMenu({
   header?: React.ReactNode;
   footer?: React.ReactNode;
   className?: string;
+  /** listbox DOM id — lets a combobox input reference it via aria-controls /
+   *  aria-activedescendant (paired with {@link floatingOptionId}). A stable fallback is
+   *  generated when absent. */
+  id?: string;
 }) {
   const rootRef = React.useRef<HTMLDivElement | null>(null);
+  // a stable listbox id (caller-provided or auto) so each option gets a referenceable id.
+  const autoId = React.useId();
+  const listboxId = id ?? `floating-menu-${autoId}`;
 
   // click-outside dismiss — mirrors MultiPicker's mousedown listener
   React.useEffect(() => {
@@ -366,6 +380,8 @@ export function FloatingMenu({
     <div
       ref={rootRef}
       data-floating-menu
+      id={listboxId}
+      role="listbox"
       className={`absolute left-0 bottom-full mb-1 z-50 w-full border border-line2 overflow-auto ${className}`}
       style={{ background: '#101217', maxHeight: 280, boxShadow: '0 -12px 32px -8px rgba(0,0,0,0.8)' }}
     >
@@ -390,6 +406,9 @@ export function FloatingMenu({
                 type="button"
                 data-menu-item
                 data-idx={idx}
+                id={floatingOptionId(listboxId, idx)}
+                role="option"
+                aria-selected={active}
                 // onMouseDown (not onClick) so the row fires BEFORE the textarea blurs
                 onMouseDown={(e) => {
                   e.preventDefault();

@@ -23,14 +23,17 @@ describe('api.listCommands', () => {
 });
 
 describe('api.findFiles', () => {
-  it('GETs /api/files/find with cwd, q and limit query params (url-encoded)', async () => {
+  it('GETs /api/files/find with sessionId, q and limit query params (url-encoded)', async () => {
+    // fix 10B — the root is resolved server-side from the SESSION, so the client sends a
+    // sessionId, never a free-form cwd (which had enabled host-wide filename enumeration).
     const rows = [{ path: 'src/a.ts', kind: 'file', score: 9 }];
     const f = okJson(rows);
     vi.stubGlobal('fetch', f);
-    const out = await api.findFiles('/work/space', 'a.ts', 20);
+    const out = await api.findFiles('sess-1', 'a.ts', 20);
     const url = String((f.mock.calls as any)[0][0]);
     expect(url).toContain('/api/files/find');
-    expect(url).toContain('cwd=' + encodeURIComponent('/work/space'));
+    expect(url).toContain('sessionId=' + encodeURIComponent('sess-1'));
+    expect(url).not.toContain('cwd=');
     expect(url).toContain('q=' + encodeURIComponent('a.ts'));
     expect(url).toContain('limit=20');
     expect(out).toEqual(rows);
@@ -39,7 +42,7 @@ describe('api.findFiles', () => {
   it('omits limit from the query when not supplied', async () => {
     const f = okJson([]);
     vi.stubGlobal('fetch', f);
-    await api.findFiles('/c', 'x');
+    await api.findFiles('sess-1', 'x');
     expect(String((f.mock.calls as any)[0][0])).not.toContain('limit=');
   });
 });

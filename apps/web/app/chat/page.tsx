@@ -20,7 +20,9 @@ export default function ChatPage() {
   const [err, setErr] = useState<string | null>(null);
 
   // §3 — chat-scoped SSE for session lifecycle state; null when no session is active.
-  const { state: liveState, live } = useChatStream(activeId);
+  // fix 10A — ONE subscription hoisted here (was 3: page + ChatThread + RunningAgentsPanel);
+  // the derived stream values flow down to those children as props (1 EventSource per session).
+  const { state: liveState, live, run, events, partials, error: streamError, runId: liveStreamRunId, subagents } = useChatStream(activeId);
   // derive `chatState` alias for ChatComposer (still expects `chatState === 'running'`)
   const chatState = liveState;
   // previews for the sidebar: last persisted message per session (cheap client derivation).
@@ -144,12 +146,13 @@ export default function ChatPage() {
                   <ErrorBanner onRetry={() => setErr(null)}>{err}</ErrorBanner>
                 </div>
               )}
-              <ChatThread sessionId={activeId} messages={messages} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
+              <ChatThread sessionId={activeId} messages={messages} run={run} events={events} partials={partials} error={streamError} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
               <ChatComposer
                 disabled={busy}
                 running={chatState === 'running'}
                 engine={session.engine}
                 cwd={session.cwd}
+                sessionId={session.id}
                 onSend={(message, attachments) => sendTurn(message, attachments)}
                 onCommand={(line) => runCommand(line)}
                 onStop={() => api.chatInterrupt(session.id)}
@@ -159,7 +162,7 @@ export default function ChatPage() {
             <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
           )}
         </div>
-        <RunningAgentsPanel sessionId={activeId} />
+        <RunningAgentsPanel sessionId={activeId} state={liveState} live={live} runId={liveStreamRunId} subagents={subagents} />
       </div>
     </div>
   );

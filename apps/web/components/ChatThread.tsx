@@ -1,7 +1,6 @@
 'use client';
 import React, { useEffect, useRef } from 'react';
-import type { ChatMessage, NormalizedEvent, ChatCommandResult } from '@fleet/shared';
-import { useChatStream } from '@/lib/live';
+import type { ChatMessage, NormalizedEvent, ChatCommandResult, Run } from '@fleet/shared';
 import { api } from '@/lib/api';
 import { MarkdownView } from './MarkdownView';
 import { ToolCallCard } from './ToolCallCard';
@@ -110,16 +109,20 @@ function LiveTurn({
 }
 
 export function ChatThread({
-  sessionId, messages, onTurnComplete, onTurnError,
+  sessionId, messages, run, events, partials, error, onTurnComplete, onTurnError,
 }: {
   sessionId: string | null;
   messages: ChatMessage[];
+  /** fix 10A — the chat stream is hoisted to the page (ONE EventSource per session); the
+   *  thread no longer subscribes, it receives the derived stream values as props. */
+  run: Run | null;
+  events: NormalizedEvent[];
+  partials: Record<string, string>;
+  error: string | null;
   onTurnComplete: (runId: string, finalText: string) => void;
   onTurnError: (runId: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
-  // ONE chat-scoped subscription for the whole thread (the live turn is presentational).
-  const { run, events, partials, error } = useChatStream(sessionId);
   // fix 05 — completion is driven off the per-turn `result` event (emitted in both live and
   // resumable modes), NOT run-terminal: a live interactive run never goes terminal between
   // turns (it goes awaiting-input), so terminal-driven persistence would never fire for it.

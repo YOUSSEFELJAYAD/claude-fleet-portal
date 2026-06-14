@@ -488,7 +488,8 @@ export const api = {
   // ── chat-surface upgrade (§5/§6) ──
   /** §5.3 — `/` palette catalog (server strips CommandDef.run before serializing). */
   listCommands: () => j<CommandDef[]>('/api/commands'),
-  /** §6.1 — `@` fuzzy file/folder search scoped to the session cwd. */
-  findFiles: (cwd: string, q: string, limit?: number) =>
-    j<FileFindResult[]>('/api/files/find' + qs({ cwd, q, limit: limit != null ? String(limit) : undefined })),
+  /** §6.1 — `@` fuzzy file/folder search. The workspace root is resolved SERVER-SIDE from the
+   *  session's trusted cwd (fix 10B); the client passes only the sessionId, never a raw cwd. */
+  findFiles: (sessionId: string, q: string, limit?: number) =>
+    j<FileFindResult[]>('/api/files/find' + qs({ sessionId, q, limit: limit != null ? String(limit) : undefined })),
 };

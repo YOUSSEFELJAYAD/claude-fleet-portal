@@ -43,6 +43,32 @@ describe('FloatingMenu — rendering', () => {
   });
 });
 
+describe('FloatingMenu — ARIA (listbox semantics)', () => {
+  it('marks the container role=listbox and each row role=option with a stable id', () => {
+    const { container } = render(
+      <FloatingMenu open items={items} activeIndex={0} onPick={() => {}} onClose={() => {}} />,
+    );
+    const listbox = container.querySelector('[data-floating-menu]') as HTMLElement;
+    expect(listbox.getAttribute('role')).toBe('listbox');
+    const options = [...container.querySelectorAll('[data-menu-item]')] as HTMLElement[];
+    expect(options.length).toBe(3);
+    for (const o of options) {
+      expect(o.getAttribute('role')).toBe('option');
+      expect(o.id).toBeTruthy();
+    }
+  });
+
+  it('sets aria-selected only on the active row', () => {
+    const { container } = render(
+      <FloatingMenu open items={items} activeIndex={1} onPick={() => {}} onClose={() => {}} />,
+    );
+    const options = [...container.querySelectorAll('[data-menu-item]')] as HTMLElement[];
+    expect(options[1].getAttribute('aria-selected')).toBe('true');
+    expect(options[0].getAttribute('aria-selected')).toBe('false');
+    expect(options[2].getAttribute('aria-selected')).toBe('false');
+  });
+});
+
 describe('FloatingMenu — interaction', () => {
   const items: FloatingItem[] = [
     { id: 'a', label: 'alpha', group: 'g1' },

@@ -30,6 +30,7 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { FileFindResult } from '@fleet/shared';
 import { projectsRepo } from './projects.js';
+import { chatRepo } from './chat.js';
 import {
   safePath,
   lsTree,
@@ -386,19 +387,30 @@ export function registerFileviewRoutes(app: FastifyInstance) {
   });
 
   /**
-   * GET /api/files/find?cwd=<abs>&q=<str>&limit=<n> → FileFindResult[] (SPEC §6.1).
-   * Resolves the workspace (git root else the raw cwd), fuzzy-matches files+dirs, floats nothing
-   * special in v1 (recents are a client concern), guards each candidate with safePath containment,
-   * and returns workspace-relative paths. Disk I/O is bounded by `limit` (walk cap) + the scorer sort.
+   * GET /api/files/find?sessionId=<id>&q=<str>&limit=<n> → FileFindResult[] (SPEC §6.1).
+   *
+   * Trust model (fix 10B): the workspace root is resolved from SERVER-TRUSTED state — the chat
+   * session's `cwd` (`chatRepo.getSession(sessionId).cwd`), NEVER from a free-form client `cwd`.
+   * Resolving the root from an arbitrary client `cwd` enabled host-wide filename enumeration
+   * (`?cwd=/Users/x/.ssh`); requiring a known session pins the root to a place the user already owns.
+   * An absent/unknown sessionId is a 400. Any client-supplied `cwd` is ignored.
+   *
+   * Resolves the workspace (git root else the session cwd), fuzzy-matches files+dirs, guards each
+   * candidate with safePath containment, and returns workspace-relative paths. Disk I/O is bounded
+   * by `limit` (walk cap) + the scorer sort.
    */
   app.get('/api/files/find', async (req, reply) => {
     const q = (req.query as any) ?? {};
-    const cwd = typeof q.cwd === 'string' ? q.cwd : '';
+    const sessionId = typeof q.sessionId === 'string' ? q.sessionId : '';
     const query = typeof q.q === 'string' ? q.q.toLowerCase() : '';
     const limit = Math.min(Math.max(Number(q.limit) || 20, 1), 100);
-    if (!cwd) { reply.code(400); return { error: 'cwd is required' }; }
+    if (!sessionId) { reply.code(400); return { error: 'sessionId is required' }; }
 
-    const root = (await repoRoot(cwd)) ?? cwd;
+    // server-trusted root: the session's cwd, never a client-supplied cwd.
+    const session = chatRepo.getSession(sessionId);
+    if (!session) { reply.code(400); return { error: 'unknown session' }; }
+
+    const root = (await repoRoot(session.cwd)) ?? session.cwd;
     const candidates = await collectWorkspace(root, 2000);
 
     const scored: Array<FileFindResult> = [];

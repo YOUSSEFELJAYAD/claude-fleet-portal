@@ -1,38 +1,45 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import type { ChatAttachment, FileFindResult } from '@fleet/shared';
-import { FloatingMenu, type FloatingItem } from '@/components/ui';
+import { FloatingMenu, floatingOptionId, type FloatingItem } from '@/components/ui';
 import { api } from '@/lib/api';
 
 const DEBOUNCE_MS = 150;
 const LIMIT = 30;
+/** stable listbox id so the composer's combobox textarea can reference it (aria-controls). */
+const MENTION_LISTBOX_ID = 'chat-mention-menu';
 
-/** §6 — the `@` file/folder picker. Debounces a server-side fuzzy search scoped to the
- *  session `cwd`; a pick becomes a removable attachment chip in the composer. */
+/** §6 — the `@` file/folder picker. Debounces a server-side fuzzy search whose workspace root is
+ *  resolved server-side from the session's trusted cwd (fix 10B — the client passes only the
+ *  sessionId, never a raw cwd); a pick becomes a removable attachment chip in the composer. */
 export function MentionMenu({
   query,
-  cwd,
+  sessionId,
   onPick,
   onClose,
   onCount,
+  onActiveDescendant,
 }: {
   query: string;
-  cwd: string;
+  sessionId: string;
   onPick: (att: ChatAttachment) => void;
   onClose: () => void;
   /** §fix09 — report the count of selectable rows so the composer knows whether the
    *  menu currently "owns" Enter (an empty menu lets Enter submit). */
   onCount?: (n: number) => void;
+  /** fix 10C — report this listbox's id + the active option's id so the composer's
+   *  combobox textarea can wire aria-controls / aria-activedescendant. */
+  onActiveDescendant?: (info: { listboxId: string; activeOptionId: string | null }) => void;
 }) {
   const [results, setResults] = useState<FileFindResult[]>([]);
   const [active, setActive] = useState(0);
 
-  // debounce the search on (query, cwd); a trailing timer coalesces rapid keystrokes
+  // debounce the search on (query, sessionId); a trailing timer coalesces rapid keystrokes
   useEffect(() => {
     let alive = true;
     const t = setTimeout(async () => {
       try {
-        const rows = await api.findFiles(cwd, query, LIMIT);
+        const rows = await api.findFiles(sessionId, query, LIMIT);
         if (alive) {
           setResults(rows);
           setActive(0);
@@ -45,7 +52,7 @@ export function MentionMenu({
       alive = false;
       clearTimeout(t);
     };
-  }, [query, cwd]);
+  }, [query, sessionId]);
 
   const items: FloatingItem[] = results.map((r) => ({
     id: r.path,
@@ -58,6 +65,15 @@ export function MentionMenu({
     onCount?.(results.length);
     return () => onCount?.(0);
   }, [results.length, onCount]);
+
+  // fix 10C — surface the active descendant for the composer's combobox aria wiring
+  useEffect(() => {
+    onActiveDescendant?.({
+      listboxId: MENTION_LISTBOX_ID,
+      activeOptionId: results[active] ? floatingOptionId(MENTION_LISTBOX_ID, active) : null,
+    });
+    return () => onActiveDescendant?.({ listboxId: MENTION_LISTBOX_ID, activeOptionId: null });
+  }, [active, results, onActiveDescendant]);
 
   // keyboard nav at the document (the textarea keeps focus — same model as SlashMenu)
   useEffect(() => {
@@ -89,6 +105,7 @@ export function MentionMenu({
   return (
     <FloatingMenu
       open
+      id={MENTION_LISTBOX_ID}
       items={items}
       activeIndex={active}
       onPick={(item) => {
