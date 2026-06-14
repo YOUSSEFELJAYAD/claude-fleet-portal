@@ -450,7 +450,7 @@
   .span-bar { position: absolute; top: 0; height: 100%; width: 0; border-radius: 3px; transition: width .55s ease; box-shadow: 0 0 8px -2px currentColor; }
 
   /* ── motion engine: reveal + stagger + parallax (Precise/Confident) ── */
-  [data-reveal] { opacity: 0; transform: translateY(var(--reveal-travel)); will-change: opacity, transform; transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
+  [data-reveal] { opacity: 0; transform: translateY(var(--reveal-travel)); will-change: opacity, transform; transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out), border-color var(--dur-fast) var(--ease-out); }
   [data-reveal="left"]  { transform: translateX(calc(-1 * var(--reveal-travel))); }
   [data-reveal="right"] { transform: translateX(var(--reveal-travel)); }
   [data-reveal="scale"] { transform: scale(.985); }
@@ -595,34 +595,34 @@
 
 <!-- ── FEATURES ─────────────────────────────────────────────────────────── -->
 <section id="features">
-  <div class="kicker">capabilities</div>
-  <h2>Everything your fleet needs</h2>
-  <p class="lead">The portal owns local agent sessions end to end: native Claude runs plus Codex and OpenCode engine add-ons.
+  <div class="kicker" data-reveal>capabilities</div>
+  <h2 data-reveal>Everything your fleet needs</h2>
+  <p class="lead" data-reveal>The portal owns local agent sessions end to end: native Claude runs plus Codex and OpenCode engine add-ons.
     It spawns them headless, parses live events, rebuilds orchestrator → subagent hierarchy and streams it to your browser —
     with full control over every run.</p>
-  <div class="grid">
-    <div class="card"><div class="ico">◉</div><h3>Fleet dashboard</h3><p>Every run live: status, engine, model and effort, cost gauge heating toward the budget ceiling, token burn, subagent count &amp; depth.</p></div>
-    <div class="card"><div class="ico">▣</div><h3>Unified model routing</h3><p>One model picker everywhere: Claude catalog entries, Codex models and OpenCode provider/model IDs. Engine-tagged models route automatically.</p></div>
-    <div class="card"><div class="ico">⧉</div><h3>Live workflow trees</h3><p>Root → subagents at any depth with per-node streaming timelines, span waterfalls and OTLP telemetry. Stop, steer, resume, approve.</p></div>
-    <div class="card"><div class="ico">◫</div><h3>Autonomous PM</h3><p>Attach a git repo, drop cards on the Kanban board — delegate each card to Claude, Codex or OpenCode, with isolated worktrees, validation, gates and merges.</p></div>
-    <div class="card"><div class="ico">⛓</div><h3>Campaigns</h3><p>One objective in, a planned dependency DAG out — a real worker agent per subtask, run in parallel, merged by a synthesizer.</p></div>
-    <div class="card"><div class="ico">◌</div><h3>Compression proxy</h3><p>Headroom can compress Claude traffic and compatible engine traffic too: Codex through OpenAI base URL, OpenCode for Anthropic/OpenAI models.</p></div>
-    <div class="card"><div class="ico">⊞</div><h3>Agent library</h3><p>12 tuned profiles — Debugger, Test Writer, Security Auditor, Frontend Builder… — fully editable, with skills that genuinely shape the spawned agent.</p></div>
-    <div class="card"><div class="ico">⊕</div><h3>Your whole Claude setup</h3><p>Every skill and slash-command from your installed plugins, surfaced and attachable. Launch a run directly on any /command.</p></div>
-    <div class="card"><div class="ico">⊘</div><h3>Hard guardrails</h3><p>Budget ceilings enforced twice (CLI flag + server auto-kill), concurrency caps, per-project spend ceilings, daily tracking.</p></div>
-    <div class="card"><div class="ico">⇪</div><h3>Self-updating</h3><p>Checks GitHub releases in the background, updates itself, and asks for a simple restart. Desktop builds point you at the new installer.</p></div>
-    <div class="card"><div class="ico">🖥</div><h3>Desktop or source</h3><p>Prebuilt apps for macOS, Windows and Linux — or clone and <span class="mono">./install.sh</span>. No Claude installed? A free deterministic mock lets you explore everything.</p></div>
+  <div class="grid" data-stagger="50">
+    <div class="card" data-reveal="scale"><div class="ico">◉</div><h3>Fleet dashboard</h3><p>Every run live: status, engine, model and effort, cost gauge heating toward the budget ceiling, token burn, subagent count &amp; depth.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">▣</div><h3>Unified model routing</h3><p>One model picker everywhere: Claude catalog entries, Codex models and OpenCode provider/model IDs. Engine-tagged models route automatically.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⧉</div><h3>Live workflow trees</h3><p>Root → subagents at any depth with per-node streaming timelines, span waterfalls and OTLP telemetry. Stop, steer, resume, approve.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">◫</div><h3>Autonomous PM</h3><p>Attach a git repo, drop cards on the Kanban board — delegate each card to Claude, Codex or OpenCode, with isolated worktrees, validation, gates and merges.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⛓</div><h3>Campaigns</h3><p>One objective in, a planned dependency DAG out — a real worker agent per subtask, run in parallel, merged by a synthesizer.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">◌</div><h3>Compression proxy</h3><p>Headroom can compress Claude traffic and compatible engine traffic too: Codex through OpenAI base URL, OpenCode for Anthropic/OpenAI models.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⊞</div><h3>Agent library</h3><p>12 tuned profiles — Debugger, Test Writer, Security Auditor, Frontend Builder… — fully editable, with skills that genuinely shape the spawned agent.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⊕</div><h3>Your whole Claude setup</h3><p>Every skill and slash-command from your installed plugins, surfaced and attachable. Launch a run directly on any /command.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⊘</div><h3>Hard guardrails</h3><p>Budget ceilings enforced twice (CLI flag + server auto-kill), concurrency caps, per-project spend ceilings, daily tracking.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">⇪</div><h3>Self-updating</h3><p>Checks GitHub releases in the background, updates itself, and asks for a simple restart. Desktop builds point you at the new installer.</p></div>
+    <div class="card" data-reveal="scale"><div class="ico">🖥</div><h3>Desktop or source</h3><p>Prebuilt apps for macOS, Windows and Linux — or clone and <span class="mono">./install.sh</span>. No Claude installed? A free deterministic mock lets you explore everything.</p></div>
   </div>
 </section>
 
 <!-- ── LIVE FEATURE DEMOS ───────────────────────────────────────────────── -->
 <section id="showcase">
-  <div class="kicker">live</div>
-  <h2>Watch the fleet work</h2>
-  <p class="lead">Real capabilities, shown live — not screenshots. Each tile loops a tiny simulation of what the portal actually does.</p>
-  <div class="show-grid">
+  <div class="kicker" data-reveal>live</div>
+  <h2 data-reveal>Watch the fleet work</h2>
+  <p class="lead" data-reveal>Real capabilities, shown live — not screenshots. Each tile loops a tiny simulation of what the portal actually does.</p>
+  <div class="show-grid" data-stagger="60">
 
-    <div class="show-card" id="demo-compress">
+    <div class="show-card" data-reveal id="demo-compress">
       <div class="sc-head"><span class="sc-ico">◌</span> Compression · Headroom <span class="sc-live"></span></div>
       <div class="sc-body">
         <div class="cmp-row"><span class="cmp-lbl">context in</span><span class="cmp-tok" data-in>48,210 tok</span></div>
@@ -633,7 +633,7 @@
       <div class="sc-cap">Headroom proxies Claude, Codex &amp; OpenCode traffic and compresses context on the fly.</div>
     </div>
 
-    <div class="show-card" id="demo-search">
+    <div class="show-card" data-reveal id="demo-search">
       <div class="sc-head"><span class="sc-ico">⌕</span> Web research · SearXNG <span class="sc-live"></span></div>
       <div class="sc-body">
         <div class="srch-q"><span class="srch-qtxt" data-q></span><span class="srch-caret"></span></div>
@@ -648,7 +648,7 @@
       <div class="sc-cap">Open-source meta-search across engines → pick sources → an agent synthesizes a cited answer.</div>
     </div>
 
-    <div class="show-card" id="demo-budget">
+    <div class="show-card" data-reveal id="demo-budget">
       <div class="sc-head"><span class="sc-ico">⊘</span> Guardrails · budget ceiling <span class="sc-live"></span></div>
       <div class="sc-body">
         <div class="bud-top"><span data-spend>$0.00</span><span class="bud-cap">ceiling $5.00</span></div>
@@ -658,7 +658,7 @@
       <div class="sc-cap">Per-run &amp; per-project ceilings, enforced twice — the server auto-kills overspend.</div>
     </div>
 
-    <div class="show-card" id="demo-route">
+    <div class="show-card" data-reveal id="demo-route">
       <div class="sc-head"><span class="sc-ico">▣</span> Unified model routing <span class="sc-live"></span></div>
       <div class="sc-body">
         <div class="rt-model" data-model>opus-4.8 · high</div>
@@ -671,7 +671,7 @@
       <div class="sc-cap">One picker for Claude, Codex &amp; OpenCode — engine-tagged models route automatically.</div>
     </div>
 
-    <div class="show-card" id="demo-spans">
+    <div class="show-card" data-reveal id="demo-spans">
       <div class="sc-head"><span class="sc-ico">▦</span> Live workflow · spans <span class="sc-live"></span></div>
       <div class="sc-body"><div class="spans" data-spans></div></div>
       <div class="sc-cap">Per-node timelines, a span waterfall and OTLP telemetry stream as the agent runs.</div>
@@ -684,16 +684,16 @@
 <div class="topo"></div>
 
 <section id="tour">
-  <div class="kicker">the cockpit</div>
-  <h2>Built like mission control</h2>
-  <p class="lead">Amber-on-charcoal, dense with signal, zero fluff. Everything updates live over SSE.</p>
+  <div class="kicker" data-reveal>the cockpit</div>
+  <h2 data-reveal>Built like mission control</h2>
+  <p class="lead" data-reveal>Amber-on-charcoal, dense with signal, zero fluff. Everything updates live over SSE.</p>
   <div class="shots">
-    <img class="shot" src="assets/dashboard.png" alt="Fleet dashboard" loading="lazy" />
-    <div class="shot-row">
+    <img class="shot" src="assets/dashboard.png" alt="Fleet dashboard" loading="lazy" data-reveal />
+    <div class="shot-row" data-reveal>
       <img class="shot" src="assets/run-detail.png" alt="Run detail with live workflow tree" loading="lazy" />
       <img class="shot" src="assets/board.png" alt="Kanban board executed by the agent PM" loading="lazy" />
     </div>
-    <img class="shot" src="assets/template.png" alt="Agent profile editor with skill picker" loading="lazy" />
+    <img class="shot" src="assets/template.png" alt="Agent profile editor with skill picker" loading="lazy" data-reveal />
   </div>
 </section>
 
