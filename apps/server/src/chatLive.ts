@@ -20,11 +20,21 @@ export interface EnsureResult { live: boolean; runId: string | null; }
 
 class ChatLiveManager {
   private handles = new Map<string, LiveHandle>();
+  private inited = false;
 
-  constructor() {
-    // Learn when a held process dies on its own (crash / complete / external kill) so isLive
-    // stops lying before idle-suspend. The run is already terminal → drop the handle WITHOUT
-    // calling registry.stop again (use dropHandle, not evict).
+  /**
+   * Subscribe to run-terminal events ONCE, from server.ts boot (same pattern as
+   * campaigns.init / pm.init / planboard.init / initNotifier / initMemory / initLearner).
+   * Done here — NOT in the constructor — because `chatLive` is a module-level singleton, so a
+   * constructor subscription would run at IMPORT time and require every test that imports chat.ts
+   * (→ chatLive.ts) to stub registry.onRunTerminal. Deferring to boot keeps imports side-effect-free.
+   *
+   * When a held process dies on its own (crash / complete / external kill) the run is already
+   * terminal → drop the handle WITHOUT calling registry.stop again (use dropHandle, not evict).
+   */
+  init(): void {
+    if (this.inited) return;
+    this.inited = true;
     registry.onRunTerminal((run) => {
       for (const [sessionId, h] of this.handles) {
         if (h.runId === run.id) { this.dropHandle(sessionId); break; }

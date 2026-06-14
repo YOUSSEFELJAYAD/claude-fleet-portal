@@ -30,6 +30,7 @@ import { registerBenchmarkRoutes } from './benchmarks.js'; // F4+F5 — benchmar
 import { registerAddonRoutes, resetAddonRuntimeForDataWipe } from './addons.js'; // §22 — add-on marketplace (compression/headroom)
 import { registerResearchRoutes } from './research.js'; // §28 — web research (SearXNG)
 import { registerChatRoutes, registerChatStreamRoute } from './chat.js'; // §30 — chat dashboard
+import { chatLive } from './chatLive.js'; // §4 — held-process manager (subscribe onRunTerminal at boot)
 import { listCommands } from './commands.js';
 import { registerPackRoutes } from './packs.js'; // §23 — tool/skill packs (launch presets)
 import { registerSettingsRoutes } from './settings.js'; // §31 — environment & settings panel
@@ -233,6 +234,7 @@ export function buildServer() {
   registerSettingsRoutes(app); // §31 — environment & settings panel
   registerChatRoutes(app); // §30 — chat dashboard
   registerChatStreamRoute(app, sse); // §4 — chat-scoped SSE (proxies the backing run)
+  chatLive.init(); // §4 — subscribe onRunTerminal: evict a held process when its run dies on its own
   app.get('/api/commands', async () => listCommands());
   registerResearchRoutes(app); // §28 — web research (SearXNG)
   registerPackRoutes(app); // §23 — tool/skill packs (launch presets)

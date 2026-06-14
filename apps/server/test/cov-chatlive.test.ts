@@ -19,6 +19,10 @@ vi.mock('../src/config.js', async (orig) => ({ ...(await orig() as any), CHAT_LI
 import { chatLive } from '../src/chatLive.js';
 import { registry } from '../src/registry.js';
 
+// Subscription now happens in init() (called from server.ts boot), not the constructor, so the
+// singleton no longer touches registry at import time. Drive init() once so onRunTerminal is wired.
+chatLive.init();
+
 beforeEach(() => { launched.length = 0; (registry.launch as any).mockClear(); (registry.stop as any).mockClear(); chatLive._resetForTest(); });
 
 const session = (id: string) => ({ id, cwd: '/tmp', model: 'claude-opus-4-8', effort: 'high', permissionMode: 'default', allowedTools: null, skills: null } as any);
