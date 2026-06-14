@@ -462,6 +462,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  /** Fix 06 — inline permission approve/deny via the dedicated chat permission route. The server
+   *  maps decision 'allow'|'deny' to the registry verb 'approve'|'deny'. */
+  chatPermission: (id: string, requestId: string, decision: 'allow' | 'deny') =>
+    j(`/api/chat/sessions/${id}/permission`, {
+      method: 'POST',
+      body: JSON.stringify({ requestId, decision }),
+    }),
   /** §3 — stop the current turn, keep the process live if possible. */
   chatInterrupt: (id: string) =>
     j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST' }),

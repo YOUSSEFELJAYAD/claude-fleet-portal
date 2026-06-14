@@ -358,6 +358,30 @@ export function registerChatRoutes(app: FastifyInstance) {
     }
   });
 
+  // Fix 06 — inline permission approve/deny. Resolves the backing run (live first, else the
+  // session's stored run) and forwards the decision to the registry, mapping the wire verb
+  // ('allow'|'deny') to the registry verb ('approve'|'deny'). Registry errors (e.g. a 409 when the
+  // run is non-interactive) are surfaced with their statusCode.
+  app.post('/api/chat/sessions/:id/permission', async (req, reply) => {
+    const id = (req.params as any).id;
+    const session = chatRepo.getSession(id);
+    if (!session) return reply.code(404).send({ error: 'not found' });
+    const body = (req.body as any) ?? {};
+    const requestId = body.requestId;
+    const decision = body.decision;
+    if (typeof requestId !== 'string' || !requestId || (decision !== 'allow' && decision !== 'deny')) {
+      return reply.code(400).send({ error: 'requestId (non-empty string) and decision (allow|deny) are required' });
+    }
+    const runId = chatLive.liveRunId(id) ?? session.runId;
+    if (!runId) return reply.code(409).send({ error: 'session is not live; no run to decide on' });
+    try {
+      registry.decidePermission(runId, requestId, decision === 'allow' ? 'approve' : 'deny');
+      return { ok: true };
+    } catch (e: any) {
+      return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'permission decision failed' });
+    }
+  });
+
   // §3.3 — stop the current turn. Keeps the held process live where possible; else the stop marks it
   // killed (the session stays resumable either way). No backing run → a harmless ack.
   app.post('/api/chat/sessions/:id/interrupt', async (req, reply) => {

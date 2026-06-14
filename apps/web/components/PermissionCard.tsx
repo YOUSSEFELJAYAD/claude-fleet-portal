@@ -4,7 +4,8 @@ import { Btn, Dot, ErrorBanner } from './ui';
 import { api } from '@/lib/api';
 
 /** Inline permission approve/deny (spec §7) — works because the chat session is live;
- *  the decision is written to the live process stdin via POST …/input. */
+ *  the decision is delivered via the dedicated POST …/permission route (fix 06), which the
+ *  server maps to registry.decidePermission ('allow'→'approve', 'deny'→'deny'). */
 function summarize(input: unknown, max = 120): string {
   if (input == null) return '';
   const s = typeof input === 'string' ? input : JSON.stringify(input);
@@ -21,7 +22,7 @@ export function PermissionCard({
   async function decide(d: 'allow' | 'deny') {
     setBusy(true); setErr(null);
     try {
-      await api.chatInput(sessionId, { type: 'permission', requestId, decision: d });
+      await api.chatPermission(sessionId, requestId, d);
       setDecision(d);
     } catch (e: any) {
       setErr(e?.message ?? 'failed to send decision');

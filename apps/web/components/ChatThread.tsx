@@ -86,7 +86,7 @@ function LiveTurn({
                 key={i}
                 sessionId={sessionId}
                 requestId={String(p.requestId ?? p.id ?? '')}
-                toolName={String(p.toolName ?? p.name ?? 'tool')}
+                toolName={String(p.tool ?? p.toolName ?? p.name ?? 'tool')}
                 input={p.input}
               />
             );
