@@ -1055,6 +1055,10 @@ export interface ChatSession {
   allowedTools: string[] | null;
   skills: string[] | null;
   runId: string | null;       // current backing run (null until first turn)
+  /** §3 — derived lifecycle (NOT a stored column); present on session reads. */
+  state?: ChatSessionState;
+  /** §3 — derived: true iff a live interactive process is held for this session. */
+  live?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -1066,6 +1070,8 @@ export interface ChatMessage {
   kind: ChatMessageKind;
   content: string;
   runId: string | null;       // links an assistant turn to the run that produced it
+  /** §6 — `@`-mention attachments carried by this message (additive; old rows null). */
+  attachments?: ChatAttachment[];
   createdAt: number;
 }
 
@@ -1080,7 +1086,11 @@ export interface CreateChatSessionRequest {
   skills?: string[] | null;
 }
 
-export interface ChatTurnRequest { message: string }
+export interface ChatTurnRequest {
+  message: string;
+  /** §6 — files = path-reference tokens; dirs = `--add-dir` for this turn. */
+  attachments?: ChatAttachment[];
+}
 export interface ChatTurnResponse { runId: string; userMessage: ChatMessage }
 
 export interface AddChatMessageRequest {
@@ -1128,6 +1138,30 @@ export interface CommandDef {
   resultKind: 'text' | 'table' | 'error' | 'ack';
   /** routes through the existing Inbox approval queue when true. */
   danger?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat session lifecycle + attachments (chat surface upgrade §3, §6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Derived (never stored) session lifecycle, computed from the live manager +
+ *  backing run status. live = a held interactive process; running = a turn is
+ *  streaming; idle = resumable (no held process); killed = explicitly stopped. */
+export type ChatSessionState = 'live' | 'running' | 'idle' | 'killed';
+
+/** A `@`-mention attachment on a turn. file = path-reference the agent reads at
+ *  runtime; dir = added to that turn's `--add-dir` set. */
+export interface ChatAttachment {
+  path: string;
+  kind: 'file' | 'dir';
+}
+
+/** A result row from `GET /api/files/find` (the `@` picker). path is
+ *  workspace-relative; score is the fuzzy-match rank (higher = better). */
+export interface FileFindResult {
+  path: string;
+  kind: 'file' | 'dir';
+  score: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
