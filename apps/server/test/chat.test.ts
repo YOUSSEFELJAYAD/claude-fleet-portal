@@ -76,7 +76,7 @@ describe('startTurn', () => {
     expect(t1.userMessage.content).toBe('first');
 
     const t2 = await startTurn(s.id, 'second');
-    expect((registry.resume as any)).toHaveBeenCalledWith('run-launch', 'second', undefined);
+    expect((registry.resume as any)).toHaveBeenCalledWith('run-launch', 'second', undefined, undefined);
     expect(t2.runId).toBe('run-resume');
     expect(chatRepo.getSession(s.id)?.runId).toBe('run-resume');
   });
