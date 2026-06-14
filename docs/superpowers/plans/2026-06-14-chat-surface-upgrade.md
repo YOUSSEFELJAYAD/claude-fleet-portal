@@ -168,8 +168,8 @@ This unit lays the typed + persistence foundation the other six units build on. 
 
 > **Domain note for the implementer.** This repo is a TypeScript monorepo (pnpm workspaces). `@fleet/shared` is a pure-types package consumed by both the Fastify server (`@fleet/server`) and the Next.js web app (`@fleet/web`). The server persists to SQLite via `better-sqlite3` (synchronous API — no `await` on db calls). Tests run on **vitest**. The server test DB is the real `data/fleet.db` (tests create throwaway sessions and clean up), so migrations must be idempotent across repeated test runs. Run commands:
 > - server tests: `pnpm --filter @fleet/server test <file>`
-> - shared typecheck: `pnpm --filter @fleet/shared build`
-> - server typecheck: `pnpm --filter @fleet/server build`
+> - shared typecheck: `pnpm --filter @fleet/shared typecheck`
+> - server typecheck: `pnpm --filter @fleet/server typecheck`
 
 ---
 
@@ -210,7 +210,7 @@ There is no server-side behavior to test for a pure type (a type has no runtime)
   void (arg satisfies CommandArg);
   ```
 
-- [ ] **Step 2: Run it, see it fail.** `pnpm --filter @fleet/shared build`
+- [ ] **Step 2: Run it, see it fail.** `pnpm --filter @fleet/shared typecheck`
   Expected: TypeScript errors `Module '"./index.js"' has no exported member 'CommandDef'` and `… 'CommandArg'`.
 
 - [ ] **Step 3: Add the types.** In `/Users/jd/Documents/agent-system/packages/shared/src/index.ts`, immediately **after** the `ChatCommandResult` interface (the block ending at the `}` on the line with `runId?: string | null;      // when a command started a run`), insert:
@@ -247,10 +247,10 @@ There is no server-side behavior to test for a pure type (a type has no runtime)
   }
   ```
 
-- [ ] **Step 4: Run it, see it pass.** `pnpm --filter @fleet/shared build`
+- [ ] **Step 4: Run it, see it pass.** `pnpm --filter @fleet/shared typecheck`
   Expected: exit 0, no errors.
 
-- [ ] **Step 5: Remove the throwaway assertion file.** `rm /Users/jd/Documents/agent-system/packages/shared/src/__typecheck_cmd.ts`, then re-run `pnpm --filter @fleet/shared build` → exit 0.
+- [ ] **Step 5: Remove the throwaway assertion file.** `rm /Users/jd/Documents/agent-system/packages/shared/src/__typecheck_cmd.ts`, then re-run `pnpm --filter @fleet/shared typecheck` → exit 0.
 
 - [ ] **Step 6: Commit.** `git add -A && git commit -m "feat(shared): add CommandDef/CommandArg wire types for chat command registry"`
 
@@ -291,7 +291,7 @@ These are the remaining shared contracts: the four session-state literals, the a
   void turn;
   ```
 
-- [ ] **Step 2: Run it, see it fail.** `pnpm --filter @fleet/shared build`
+- [ ] **Step 2: Run it, see it fail.** `pnpm --filter @fleet/shared typecheck`
   Expected: errors `has no exported member 'ChatSessionState'`, `… 'ChatAttachment'`, `… 'FileFindResult'`, and `Property 'state'/'live'/'attachments' does not exist`.
 
 - [ ] **Step 3: Add the new types.** In `/Users/jd/Documents/agent-system/packages/shared/src/index.ts`, immediately **after** the `CommandDef` interface you added in Task 1, insert:
@@ -348,12 +348,12 @@ These are the remaining shared contracts: the four session-state literals, the a
     live?: boolean;
   ```
 
-- [ ] **Step 7: Run it, see it pass.** `pnpm --filter @fleet/shared build`
+- [ ] **Step 7: Run it, see it pass.** `pnpm --filter @fleet/shared typecheck`
   Expected: exit 0.
 
-- [ ] **Step 8: Remove the throwaway file + re-verify.** `rm /Users/jd/Documents/agent-system/packages/shared/src/__typecheck_state.ts` then `pnpm --filter @fleet/shared build` → exit 0.
+- [ ] **Step 8: Remove the throwaway file + re-verify.** `rm /Users/jd/Documents/agent-system/packages/shared/src/__typecheck_state.ts` then `pnpm --filter @fleet/shared typecheck` → exit 0.
 
-- [ ] **Step 9: Confirm downstream packages still typecheck.** `pnpm --filter @fleet/server build` → exit 0 (the new optional fields are additive, so existing server code that constructs `ChatSession`/`ChatMessage` without them still compiles).
+- [ ] **Step 9: Confirm downstream packages still typecheck.** `pnpm --filter @fleet/server typecheck` → exit 0 (the new optional fields are additive, so existing server code that constructs `ChatSession`/`ChatMessage` without them still compiles).
 
 - [ ] **Step 10: Commit.** `git add -A && git commit -m "feat(shared): add ChatSessionState, ChatAttachment, FileFindResult + derived session/message fields"`
 
@@ -404,7 +404,7 @@ The live-process manager (Unit 4, `chatLive.ts`) needs a dedicated chat-process 
 - [ ] **Step 4: Run it, see it pass.** `pnpm --filter @fleet/server test cov-config-chat`
   Expected: 2 tests pass.
 
-- [ ] **Step 5: Typecheck the server.** `pnpm --filter @fleet/server build` → exit 0.
+- [ ] **Step 5: Typecheck the server.** `pnpm --filter @fleet/server typecheck` → exit 0.
 
 - [ ] **Step 6: Commit.** `git add -A && git commit -m "feat(server): add CHAT_LIVE_MAX + CHAT_IDLE_SUSPEND_MS config knobs"`
 
@@ -529,7 +529,7 @@ The live-process manager (Unit 4, `chatLive.ts`) needs a dedicated chat-process 
 - [ ] **Step 9: Run the existing chat suite — no regressions.** `pnpm --filter @fleet/server test chat.test`
   Expected: all existing `chatRepo`/`buildEnginePrompt`/`startTurn` tests still pass (the column + mapper changes are additive; `rowToSession` and the session statements are untouched).
 
-- [ ] **Step 10: Typecheck the server.** `pnpm --filter @fleet/server build` → exit 0.
+- [ ] **Step 10: Typecheck the server.** `pnpm --filter @fleet/server typecheck` → exit 0.
 
 - [ ] **Step 11: Commit.** `git add -A && git commit -m "feat(server): add nullable attachments column to chat_messages + round-trip"`
 
@@ -550,7 +550,7 @@ These tasks implement the **server-side** of the chat-surface upgrade (spec `doc
 - Tests: `apps/server/test/cov-commands-registry.test.ts`, `fn-commands-route.test.ts`, `fn-files-find.test.ts`, `cov-chatlive.test.ts`, `fn-chat-stream.test.ts`, `cov-chat-attachments.test.ts`.
 
 **Conventions you MUST follow (observed in the existing suite):**
-- Runner is **vitest** (`apps/server/vitest.config.ts`). Run a single server test file with `pnpm --filter @fleet/server test <file>` and typecheck with `pnpm --filter @fleet/server build`.
+- Runner is **vitest** (`apps/server/vitest.config.ts`). Run a single server test file with `pnpm --filter @fleet/server test <file>` and typecheck with `pnpm --filter @fleet/server typecheck`.
 - Every test file that touches the DB sets `process.env.FLEET_DATA_DIR = mkdtempSync(join(tmpdir(), 'fleet-test-<name>-'))` **at module top, before any `src/` import** (see `fn-chat-routes.test.ts`, `fn-processmanager-kill.test.ts`).
 - HTTP integration tests build the real app: `const { buildServer } = await import('../src/server.js'); app = buildServer(); await app.ready();` and inject with the `host` header `127.0.0.1:${cfg.PORT}` (see `fn-chat-routes.test.ts`).
 - Function-level tests mock collaborators with `vi.mock('../src/registry.js', …)` (see `commands.test.ts`, `chat.test.ts`).
@@ -772,7 +772,7 @@ interface CommandDef { name: string; group: 'control'|'project'|'knowledge'|'con
   `pnpm --filter @fleet/server test cov-commands-registry` → 3 passing.
   `pnpm --filter @fleet/server test commands` → the EXISTING `commands.test.ts` still passes (`/agents`, `/kill`, `/launch`, `/addon enable`, unknown-command all green). If `cov-commands.test.ts` also runs under that filter, it must stay green too.
 - [ ] **Step 5: Typecheck.**
-  `pnpm --filter @fleet/server build` → no errors (confirms `CommandDef`/`CommandArg` are exported from `@fleet/shared` by Unit F; if the build fails because they are missing, that is a Unit F dependency — note it for reconciliation and stop).
+  `pnpm --filter @fleet/server typecheck` → no errors (confirms `CommandDef`/`CommandArg` are exported from `@fleet/shared` by Unit F; if the build fails because they are missing, that is a Unit F dependency — note it for reconciliation and stop).
 - [ ] **Step 6: Commit.**
   `git commit -am "refactor(server): declarative CommandDef registry feeding dispatch + listCommands"`
 
@@ -1112,7 +1112,7 @@ The fuzzy scorer is a small subsequence matcher (a common pattern; spelled out b
 - [ ] **Step 4: Run it, see it pass.**
   `pnpm --filter @fleet/server test fn-files-find` → 5 passing.
 - [ ] **Step 5: Typecheck (confirms `FileFindResult` is exported by Unit F).**
-  `pnpm --filter @fleet/server build` → no errors. If it fails on the missing `FileFindResult` import, that is a Unit F dependency — note it and stop.
+  `pnpm --filter @fleet/server typecheck` → no errors. If it fails on the missing `FileFindResult` import, that is a Unit F dependency — note it and stop.
 - [ ] **Step 6: Commit.**
   `git commit -am "feat(server): GET /api/files/find fuzzy @-mention workspace search"`
 
@@ -1290,7 +1290,7 @@ This task tests the **pure semaphore/eviction logic** with a mocked `registry` (
 - [ ] **Step 4: Run it, see it pass.**
   `pnpm --filter @fleet/server test cov-chatlive` → 6 passing. (The idle-timer tests rely on the mocked `CHAT_IDLE_SUSPEND_MS: 50`.)
 - [ ] **Step 5: Typecheck.**
-  `pnpm --filter @fleet/server build` → no errors.
+  `pnpm --filter @fleet/server typecheck` → no errors.
 - [ ] **Step 6: Commit.**
   `git commit -am "feat(server): chatLive manager — CHAT_LIVE_MAX semaphore + idle auto-suspend"`
 
@@ -1428,7 +1428,7 @@ This task tests the **pure semaphore/eviction logic** with a mocked `registry` (
 - [ ] **Step 5: Run the existing `chat.test.ts` to prove the turn refactor is non-breaking.**
   `pnpm --filter @fleet/server test chat` → the existing `startTurn`/`buildEnginePrompt`/`chatRepo` tests stay green. (`registry.resume` is still called with the message as the 2nd arg and `undefined` as the 3rd — for an attachment-free turn the prompt equals the message, so the existing `toHaveBeenCalledWith('run-launch', 'second', undefined)` assertion holds.)
 - [ ] **Step 6: Typecheck (confirms `ChatAttachment` + `attachments` on `ChatMessage`/`ChatTurnRequest` exist in Unit F).**
-  `pnpm --filter @fleet/server build` → no errors.
+  `pnpm --filter @fleet/server typecheck` → no errors.
 - [ ] **Step 7: Commit.**
   `git commit -am "feat(server): thread @-mention attachments through the chat turn (--add-dir for dirs)"`
 
@@ -1734,7 +1734,7 @@ A chat-scoped stream subscribes to the *session*, proxying whichever run current
 - [ ] **Step 4: Run it, see it pass.**
   `pnpm --filter @fleet/server test fn-chat-input-interrupt` → 5 passing.
 - [ ] **Step 5: Full server suite sanity (the refactors touched shared modules).**
-  `pnpm --filter @fleet/server test fn-chat-routes` and `pnpm --filter @fleet/server test commands` and `pnpm --filter @fleet/server test chat` → all green; then `pnpm --filter @fleet/server build` → no type errors.
+  `pnpm --filter @fleet/server test fn-chat-routes` and `pnpm --filter @fleet/server test commands` and `pnpm --filter @fleet/server test chat` → all green; then `pnpm --filter @fleet/server typecheck` → no type errors.
 - [ ] **Step 6: Commit.**
   `git commit -am "feat(server): chat /input (mid-turn, 409 if not live) + /interrupt routes"`
 
@@ -1833,7 +1833,7 @@ The `@`-mention picker attaches folders that the spec (§6.2, D7) says are passe
   (Launch already accepts `addDirs` via `LaunchRequest`, so `registry.launch` needs no signature change — the chat turn passes it in the request object.)
 
 - [ ] **Step 7: Typecheck both affected packages.**
-  `pnpm --filter @fleet/shared build && pnpm --filter @fleet/server build`
+  `pnpm --filter @fleet/shared typecheck && pnpm --filter @fleet/server typecheck`
   Expected: no errors. (The chat-turn caller in Task 7 passes `addDirs` as the 4th arg to `resume` for resume turns and as `req.addDirs` for launch turns — confirm that call site compiles against the new signature.)
 
 - [ ] **Step 8: Commit.**
@@ -1857,7 +1857,7 @@ This unit builds the chat **input surface**: a new HUD-canon `FloatingMenu`/`Com
 - Create (tests): `/Users/jd/Documents/agent-system/apps/web/test/fn-floatingmenu.test.tsx`, `fn-slashmenu.test.tsx`, `fn-mentionmenu.test.tsx`, `fn-chatcomposer.test.tsx`, `fn-chat-trigger.test.ts`, `fn-api-chat.test.ts`, `fn-usechatstream.test.ts`.
 
 **Test runner facts (verified by reading `apps/web/vitest.config.ts` + `apps/web/test/setup.ts` + `apps/web/package.json`):**
-- Runner is **vitest** (`environment: 'jsdom'`, `globals: true`, `setupFiles: ['./test/setup.ts']`, `include: ['test/**/*.test.{ts,tsx}']`). Run web tests with `pnpm --filter @fleet/web test <file>` and typecheck/build with `pnpm --filter @fleet/web build`.
+- Runner is **vitest** (`environment: 'jsdom'`, `globals: true`, `setupFiles: ['./test/setup.ts']`, `include: ['test/**/*.test.{ts,tsx}']`). Run web tests with `pnpm --filter @fleet/web test <file>` and typecheck/build with `pnpm --filter @fleet/web typecheck`.
 - `@testing-library/react` (v16) provides `render`, `renderHook`, `act`, `waitFor`, `fireEvent`, `screen`, and re-exports `@testing-library/dom`. There is **no `@testing-library/user-event`** and **no `jest-dom`** — so assert on DOM directly (`container.querySelector`, `el.textContent`, `getByText`) and drive interaction with `fireEvent`. Do **not** use `toBeInTheDocument`/`toHaveTextContent` matchers (not installed).
 - `test/setup.ts` installs a controllable `FakeEventSource` on `globalThis` (drivers `emitOpen()`, `emit(json)`, `emitError()`, statics `FakeEventSource.last()`, `FakeEventSource.reset()`). `beforeEach` resets it; `afterEach` calls `cleanup()`. SSE-hook tests reuse this transport — do not re-mock EventSource.
 - `fetch` is **not** mocked globally. For `api.ts` tests, stub `globalThis.fetch` with `vi.fn()` inside the test and restore it after.
@@ -2098,7 +2098,7 @@ This unit builds the chat **input surface**: a new HUD-canon `FloatingMenu`/`Com
 - [ ] **Step 2: Run it, watch it pass.**
   `pnpm --filter @fleet/web test fn-floatingmenu` — the implementation from Task 1 already satisfies these (it asserts the contract end-to-end). If the active-row color assertion fails on hex serialization, confirm jsdom normalizes `#ffb000` → `rgb(255, 176, 0)` (it does). All 6 tests pass.
 - [ ] **Step 3: Typecheck.**
-  `pnpm --filter @fleet/web build` → compiles (the new export is wired). If it fails, the cause is a missing `React` import — `ui.tsx` already imports `React` at the top, so `React.useRef`/`React.useEffect` resolve.
+  `pnpm --filter @fleet/web typecheck` → compiles (the new export is wired). If it fails, the cause is a missing `React` import — `ui.tsx` already imports `React` at the top, so `React.useRef`/`React.useEffect` resolve.
 - [ ] **Step 4: Commit.**
   `git add -A && git commit -m "test(web): cover FloatingMenu active-row + pick + click-outside"`
 
@@ -2440,7 +2440,7 @@ This unit builds the chat **input surface**: a new HUD-canon `FloatingMenu`/`Com
 - [ ] **Step 2: Run it, watch it pass.**
   `pnpm --filter @fleet/web test fn-usechatstream` — the Task 5 implementation already reduces these. All 5 tests pass. (This task locks the event-vocabulary contract that Unit 3's `ChatThread` consumes.)
 - [ ] **Step 3: Typecheck.**
-  `pnpm --filter @fleet/web build` → compiles (`NormalizedEvent` and `ChatSessionState` are imported; `ChatSessionState` arrives from Unit F — **see reconciliation note 1**).
+  `pnpm --filter @fleet/web typecheck` → compiles (`NormalizedEvent` and `ChatSessionState` are imported; `ChatSessionState` arrives from Unit F — **see reconciliation note 1**).
 - [ ] **Step 4: Commit.**
   `git add -A && git commit -m "test(web): lock useChatStream event-vocabulary reduction"`
 
@@ -2821,7 +2821,7 @@ This is the keyboard-position logic the composer uses to decide when `/` or `@` 
 - [ ] **Step 4: Run it, watch it pass.**
   `pnpm --filter @fleet/web test fn-chatcomposer` → 6 tests pass.
 - [ ] **Step 5: Typecheck.**
-  `pnpm --filter @fleet/web build` → compiles. (`SlashMenu`/`MentionMenu` stubs accept `any` props for now; Tasks 9–10 give them real signatures matching the call sites above.)
+  `pnpm --filter @fleet/web typecheck` → compiles. (`SlashMenu`/`MentionMenu` stubs accept `any` props for now; Tasks 9–10 give them real signatures matching the call sites above.)
 - [ ] **Step 6: Commit.**
   `git add -A && git commit -m "feat(web): rewrite ChatComposer — multiline auto-grow, Enter/Shift+Enter, Stop, chips"`
 
@@ -3270,7 +3270,7 @@ This is the keyboard-position logic the composer uses to decide when `/` or `@` 
 - [ ] **Step 2: Run it, watch it fail then pass.**
   `pnpm --filter @fleet/web test fn-composer-menus`. If a test fails because the chip's `@a` token wasn't cleared on attach, verify `addAttachment` calls `replaceToken(trigger.start, '')` (it does, per Task 8). All 3 tests pass.
 - [ ] **Step 3: Full web test sweep + typecheck.**
-  `pnpm --filter @fleet/web test` → all unit-2 suites green. `pnpm --filter @fleet/web build` → typechecks.
+  `pnpm --filter @fleet/web test` → all unit-2 suites green. `pnpm --filter @fleet/web typecheck` → typechecks.
 - [ ] **Step 4: Commit.**
   `git add -A && git commit -m "test(web): composer ↔ SlashMenu/MentionMenu integration + chip lifecycle"`
 
@@ -3328,7 +3328,7 @@ This is the keyboard-position logic the composer uses to decide when `/` or `@` 
 - [ ] **Step 1: Run the entire web test suite.**
   `pnpm --filter @fleet/web test` → every suite (existing `fn-useasync-usefleet`, `fn-userunstream`, `fn-usecampaign` + the seven new unit-2 suites) passes.
 - [ ] **Step 2: Typecheck the whole web package.**
-  `pnpm --filter @fleet/web build`. The one expected break point is `apps/web/app/chat/page.tsx`, which still calls the OLD `ChatComposer` signature (`onSend(message)`, no `running`/`cwd`/`onStop`/attachments) and `api.chatTurn(id, message)` (now optionally takes attachments — additive, still compiles). Update the page's `<ChatComposer>` usage to the new props:
+  `pnpm --filter @fleet/web typecheck`. The one expected break point is `apps/web/app/chat/page.tsx`, which still calls the OLD `ChatComposer` signature (`onSend(message)`, no `running`/`cwd`/`onStop`/attachments) and `api.chatTurn(id, message)` (now optionally takes attachments — additive, still compiles). Update the page's `<ChatComposer>` usage to the new props:
   ```tsx
   <ChatComposer
     disabled={busy}
@@ -3341,7 +3341,7 @@ This is the keyboard-position logic the composer uses to decide when `/` or `@` 
   ```
   Wire `chatState` from `useChatStream(session.id).state` (Unit 3 owns the full `ChatThread`/page rewrite — keep this edit minimal: just satisfy the composer's new contract so the build is green). **See reconciliation note 5.**
 - [ ] **Step 3: Confirm green build.**
-  `pnpm --filter @fleet/web build` exits 0. If `ChatSessionState`/`CommandDef`/`FileFindResult`/`ChatAttachment` are reported as missing exports from `@fleet/shared`, Unit F has not landed yet — **see reconciliation note 1** (do not stub them locally; block on Unit F).
+  `pnpm --filter @fleet/web typecheck` exits 0. If `ChatSessionState`/`CommandDef`/`FileFindResult`/`ChatAttachment` are reported as missing exports from `@fleet/shared`, Unit F has not landed yet — **see reconciliation note 1** (do not stub them locally; block on Unit F).
 - [ ] **Step 4: Commit.**
   `git add -A && git commit -m "feat(web): wire ChatComposer new contract into chat page; green web build"`
 
@@ -3369,7 +3369,7 @@ This unit rewrites `ChatThread.tsx` and its `LiveTurn` subcomponent so the chat 
 - **Until Unit 2 lands**, `useChatStream` will not exist. To keep this unit independently testable and committable, Task 1 adds a thin local fallback in `lib/live.ts` ONLY IF the export is missing; if Unit 2's `useChatStream` is already present, skip the implementation step and just consume it (the contract is identical). Tests in this unit stub the hook directly, so they do not depend on Unit 2.
 - **HUD design system (match exactly):** charcoal background, amber `#ffb000` (accent / assistant / `text-amber`), teal `#39d4cf` (tools / running / `sig-running`), purple `#7b6db0`/`#b08cff` (thinking / awaiting), green `#54e08a` (success), red `#ff5d5d` (`sig-failed`). Reuse `Badge`, `Dot`, `Chip`, `StatusBadge`, `Btn`, `ErrorBanner` from `apps/web/components/ui.tsx`; `MarkdownView` from `apps/web/components/MarkdownView.tsx`; `ShikiCode` from `apps/web/components/ShikiCode.tsx`. Fonts: `font-display` (Chakra Petch) for labels/kickers, `font-mono` (JetBrains Mono) for code/ids. Card boxes use `border border-line2 bg-black/40`. Do NOT reuse `Waterfall.tsx`/`Timeline.tsx` wholesale — build compact, chat-native cards (they are heavy run-debugger renderers, wrong altitude for a chat bubble).
 - **Test harness (existing, reuse it):** vitest + jsdom + `@testing-library/react`. `apps/web/test/setup.ts` installs a `FakeEventSource` on the global and runs `cleanup()` after each test. `apps/web/vitest.config.ts` includes `test/**/*.test.{ts,tsx}`. **This unit's tests are component tests** (`.test.tsx`) using `render` + `screen` from `@testing-library/react`; they stub `useChatStream` with `vi.mock`. Existing tests follow the `fn-*`/`cov-*` naming — use `cov-*` for these component tests to match the spec's §13 convention.
-- **Run commands:** web tests `pnpm --filter @fleet/web test <file>` (e.g. `pnpm --filter @fleet/web test test/cov-chatthread.test.tsx`); web typecheck/build `pnpm --filter @fleet/web build`. The runner is vitest (confirmed in `apps/web/vitest.config.ts`); `pnpm --filter @fleet/web test` maps to `vitest run`.
+- **Run commands:** web tests `pnpm --filter @fleet/web test <file>` (e.g. `pnpm --filter @fleet/web test test/cov-chatthread.test.tsx`); web typecheck/build `pnpm --filter @fleet/web typecheck`. The runner is vitest (confirmed in `apps/web/vitest.config.ts`); `pnpm --filter @fleet/web test` maps to `vitest run`.
 
 **Files:**
 - Create: `apps/web/components/ToolCallCard.tsx` — collapsible tool_use/tool_result card.
@@ -4305,7 +4305,7 @@ This is the integration task — it depends on Tasks 1-7. It also changes the co
   `pnpm --filter @fleet/web test test/cov-chatthread.test.tsx` → 7 passing.
 
 - [ ] **Step 5: Typecheck the whole web app.**
-  `pnpm --filter @fleet/web build` → completes with no type errors. If it errors on `run.resultText` or `run.status`, confirm those fields exist on `Run` in `@fleet/shared` (they do — `useRunStream`/old `LiveTurn` used them).
+  `pnpm --filter @fleet/web typecheck` → completes with no type errors. If it errors on `run.resultText` or `run.status`, confirm those fields exist on `Run` in `@fleet/shared` (they do — `useRunStream`/old `LiveTurn` used them).
 
 - [ ] **Step 6: Wire the new props in the chat page.**
   In `apps/web/app/chat/page.tsx`, the old `ChatThread` was called as:
@@ -4319,7 +4319,7 @@ This is the integration task — it depends on Tasks 1-7. It also changes the co
   Leave the rest of `page.tsx` (the `send`/`command`/`onTurnComplete` handlers, `liveRunId` state) untouched for now — `liveRunId` is simply no longer threaded into the thread. (Unit 4 owns the broader page/session-state rewire; this step only keeps the page compiling.)
 
 - [ ] **Step 7: Build again to confirm the page compiles.**
-  `pnpm --filter @fleet/web build` → no type errors (the `liveRunId` prop is gone; `sessionId={activeId}` is `string | null`, which matches).
+  `pnpm --filter @fleet/web typecheck` → no type errors (the `liveRunId` prop is gone; `sessionId={activeId}` is `string | null`, which matches).
 
 - [ ] **Step 8: Commit.**
   `git add -A && git commit -m "feat(web): ChatThread renders full ChatGPT-grade message stream"`
@@ -4337,7 +4337,7 @@ Confirm every component test and the build pass together (no cross-file regressi
   `pnpm --filter @fleet/web test` → all passing.
 
 - [ ] **Step 3: Typecheck/build.**
-  `pnpm --filter @fleet/web build` → no errors.
+  `pnpm --filter @fleet/web typecheck` → no errors.
 
 - [ ] **Step 4: Commit (if any fixups were needed).**
   `git add -A && git commit -m "test(web): chat rendering unit test sweep green"` (skip if nothing changed).
@@ -4370,7 +4370,7 @@ export type ChatSessionState = 'live' | 'running' | 'idle' | 'killed';
 ```
 
 **Dependencies / assumptions on sibling units (reconcile at assembly):**
-- Unit F adds `state?`/`live?` to `ChatSession` and `attachments?` to `ChatMessage`/`ChatTurnRequest` in `packages/shared/src/index.ts`. **This unit's typechecks depend on those fields existing.** If Unit F hasn't landed, the web typecheck step (`pnpm --filter @fleet/web build`) will fail on `session.state`/`session.live`.
+- Unit F adds `state?`/`live?` to `ChatSession` and `attachments?` to `ChatMessage`/`ChatTurnRequest` in `packages/shared/src/index.ts`. **This unit's typechecks depend on those fields existing.** If Unit F hasn't landed, the web typecheck step (`pnpm --filter @fleet/web typecheck`) will fail on `session.state`/`session.live`.
 - The chat-scoped stream route (`GET /api/chat/sessions/:id/stream`) and the `session_state` envelope are owned by Unit 1 (server). This unit's `useChatStream` hook + tests exercise the *client* reducer against `FakeEventSource`, so they pass without a live server.
 - API helpers `api.killChatSession`, `api.resumeChatSession`, `api.renameChatSession` (rename already exists) are assumed present in `apps/web/lib/api.ts` (Unit owning `lib/api.ts` per spec §10). This unit adds **only** the ones it needs if absent (Task 6 guards), but prefer the api-layer unit to own them. **Note for assembler:** if the api-layer unit also defines `killChatSession`/`resumeChatSession`, dedupe.
 
@@ -4966,7 +4966,7 @@ This task is mostly an integration wiring; the behavioral assertion is covered b
   - Replace `<RunningAgentsPanel />` with `<RunningAgentsPanel sessionId={activeId} />`.
 
 - [ ] **Step 5: Typecheck.**
-  `pnpm --filter @fleet/web build`
+  `pnpm --filter @fleet/web typecheck`
   Expected: a successful Next build (no type errors). If it fails on `api.killChatSession`/`api.resumeChatSession`, those helpers are not yet in `lib/api.ts` — proceed to Task 6 which adds guarded fallbacks, then re-run. If it fails on `session.state`/`session.live`, Unit F's `ChatSession` change has not landed (see assembly notes).
 
 - [ ] **Step 6: Commit.**
@@ -4992,7 +4992,7 @@ The page (Task 5) and sidebar call kill/resume. The spec assigns `lib/api.ts` he
   ```
 
 - [ ] **Step 3: Typecheck.**
-  `pnpm --filter @fleet/web build`
+  `pnpm --filter @fleet/web typecheck`
   Expected: successful build. This confirms Task 5's wiring now resolves.
 
 - [ ] **Step 4: Commit.**
@@ -5064,7 +5064,7 @@ This is the spec §13 "concurrency UX" assertion, end-to-end on the client reduc
   Expected: all chat tests green — `fn-chatstate`, `fn-usechatstream`, `fn-chat-concurrency`, `cov-chatsessionlist`, `cov-runningagentspanel`, plus the pre-existing `fn-*` suites still passing.
 
 - [ ] **Step 4: Final typecheck.**
-  `pnpm --filter @fleet/web build`
+  `pnpm --filter @fleet/web typecheck`
   Expected: clean build.
 
 - [ ] **Step 5: Commit.**
@@ -5212,7 +5212,7 @@ The current `inbox.ts` only *derives* items from live runs awaiting permission/i
   `pnpm --filter @fleet/server test fn-inbox-enqueue` → 2 passing.
 - [ ] **Step 5: Typecheck (the existing `fn-inbox.test.ts` asserts `item.run` has props — confirm the optional `run` change didn't break it).**
   `pnpm --filter @fleet/server test fn-inbox` → still green (its items are all derived run items, so `run` is present).
-  `pnpm --filter @fleet/server build` → no type errors.
+  `pnpm --filter @fleet/server typecheck` → no type errors.
 - [ ] **Step 6: Commit.**
   `git commit -am "feat(server): add command-approval enqueue to the inbox queue"`
 
@@ -5449,7 +5449,7 @@ These dispatch straight to existing `registry` methods. `/agents` and `/sessions
   (`/sessions` and `/agents` intentionally share output — `/sessions` is the chat-native name in the spec's verb list, `/agents` is the existing alias. Both are kept so `listCommands()` reports the full set.)
 - [ ] **Step 4: Run it, watch it pass.**
   `pnpm --filter @fleet/server test cov-commands-registry` → safe-registry cases green.
-- [ ] **Step 5: Typecheck.** `pnpm --filter @fleet/server build`.
+- [ ] **Step 5: Typecheck.** `pnpm --filter @fleet/server typecheck`.
 - [ ] **Step 6: Commit.** `git commit -am "feat(server): add launch/resume/sessions/stop/agents/spend slash-verbs"`
 
 ---
@@ -5817,7 +5817,7 @@ These dispatch straight to existing `registry` methods. `/agents` and `/sessions
 - [ ] **Step 4: Run it, watch it pass.**
   `pnpm --filter @fleet/server test cov-commands-registry` → full-set cases green. Then run the whole file plus the inbox + legacy commands tests to confirm nothing regressed:
   `pnpm --filter @fleet/server test cov-commands-registry fn-inbox-enqueue fn-inbox cov-commands`
-- [ ] **Step 5: Typecheck.** `pnpm --filter @fleet/server build` → clean.
+- [ ] **Step 5: Typecheck.** `pnpm --filter @fleet/server typecheck` → clean.
 - [ ] **Step 6: Commit.** `git commit -am "feat(server): add reset-data/self-update danger verbs + lock full registry coverage"`
 
 ---
@@ -5849,7 +5849,7 @@ A non-test documentation task: record, in code where future authors see it, the 
    */
   ```
 - [ ] **Step 2: Verify the doc references real symbols** (no dangling names): `enqueueApproval` is exported from `inbox.ts` (Task 1), `danger` is a `CommandDef` field, `COMMANDS` is the registry array. Build to confirm the comment didn't break parsing:
-  `pnpm --filter @fleet/server build` → clean.
+  `pnpm --filter @fleet/server typecheck` → clean.
 - [ ] **Step 3: Commit.** `git commit -am "docs(server): document the NL long-tail + Inbox-gated-mutation convention"`
 
 ---
@@ -5864,7 +5864,7 @@ This unit completes Phase 6 of the chat-surface upgrade (spec §14.6, §3 D8, §
 - The canonical derived session lifecycle type is `ChatSessionState = 'live' | 'running' | 'idle' | 'killed'` and `ChatSession` carries optional derived `state?` / `live?` fields (added by Unit F in `packages/shared/src/index.ts`). Engine sessions are **never** `'live'` (spec §3.2) — `live` is always `false`/absent for them.
 - HUD design system (from `apps/web/components/ui.tsx`): `Badge({ label, color })` is the canonical pill; amber is `#ffb000`; `Btn({ variant, disabled, title })` is the canonical button. Match these — do not hand-roll.
 - Test conventions: server tests live in `apps/server/test/` named `fn-*.test.ts` (focused function/route tests) or `cov-*.test.ts` (broad coverage); web tests live in `apps/web/test/` named `fn-*.test.ts`. The runner is **vitest** (confirmed via `apps/server/vitest.config.ts` and `apps/web/vitest.config.ts`; web uses jsdom + `@testing-library/react`, setup in `apps/web/test/setup.ts`). Vitest does **not** typecheck — frames/props may be cast `as any` and asserted against the contract.
-- Run commands: server tests `pnpm --filter @fleet/server test <file>`; web tests `pnpm --filter @fleet/web test <file>`; typecheck/build `pnpm --filter @fleet/server build` and `pnpm --filter @fleet/web build`.
+- Run commands: server tests `pnpm --filter @fleet/server test <file>`; web tests `pnpm --filter @fleet/web test <file>`; typecheck/build `pnpm --filter @fleet/server typecheck` and `pnpm --filter @fleet/web typecheck`.
 
 **Files:**
 - Create: `apps/server/test/fn-chat-engine-resume.test.ts` (server: engine still 409s on resume; chat layer falls back to emulated one-shot)
@@ -6005,7 +6005,7 @@ The session-read derives `state`/`live` (Unit 4's live manager + Unit 1's route 
 
 - [ ] **Step 4: Wire it into the route + typecheck.**
   Ensure the `GET /api/chat/sessions/:id` handler (and the session-list/`session_state` SSE envelope if it carries `live`) applies `engineSafeState`. Then:
-  `pnpm --filter @fleet/server build`
+  `pnpm --filter @fleet/server typecheck`
   Expected: no TypeScript errors.
 
 - [ ] **Step 5: Commit.**
@@ -6164,7 +6164,7 @@ The session-read derives `state`/`live` (Unit 4's live manager + Unit 1's route 
   And pass them: `onKill={killSession} onResume={resumeSession}` on the `<ChatSessionList>` element.
 
 - [ ] **Step 6: Typecheck.**
-  `pnpm --filter @fleet/web build`
+  `pnpm --filter @fleet/web typecheck`
   Expected: compiles with no TypeScript errors (the new required props are satisfied).
 
 - [ ] **Step 7: Commit.**
@@ -6257,7 +6257,7 @@ The composer Stop button (spec §7) maps to `…/interrupt`, which only makes se
   In `apps/web/app/chat/page.tsx`, update the `<ChatComposer disabled={busy} onSend={send} onCommand={command} />` element to also pass `engine={session.engine} running={!!liveRunId}`. (Leave `onStop` wiring to Unit 1/2's interrupt route; passing it is optional here.)
 
 - [ ] **Step 6: Typecheck + commit.**
-  `pnpm --filter @fleet/web build` → no errors.
+  `pnpm --filter @fleet/web typecheck` → no errors.
   ```
   git add apps/web/components/ChatComposer.tsx apps/web/app/chat/page.tsx apps/web/test/fn-chatcomposer-engine.test.ts
   git commit -m "feat(chat): suppress Stop button on one-shot engine sessions"
@@ -6315,19 +6315,19 @@ This task does not write new tests; it **runs the full set the chat-surface upgr
 
 - [ ] **Step 1: Build the shared package first (server + web depend on its types).**
   ```
-  pnpm --filter @fleet/shared build
+  pnpm --filter @fleet/shared typecheck
   ```
   Expected: no errors. (If `@fleet/shared` has no `build` script, run `pnpm -r typecheck` or `pnpm --filter @fleet/shared exec tsc --noEmit` per the repo's convention — confirm by reading `packages/shared/package.json` scripts.)
 
 - [ ] **Step 2: Typecheck the server.**
   ```
-  pnpm --filter @fleet/server build
+  pnpm --filter @fleet/server typecheck
   ```
   Expected: completes with no TypeScript errors. Pay attention to `chat.ts` (`engineSafeState`, the `ChatSessionState` import) and the route serialization.
 
 - [ ] **Step 3: Typecheck the web app.**
   ```
-  pnpm --filter @fleet/web build
+  pnpm --filter @fleet/web typecheck
   ```
   Expected: `next build` compiles every route with no TypeScript errors. Pay attention to `ChatSessionList.tsx` (new required `onKill`/`onResume` props) and `ChatComposer.tsx` (new optional props), and that `apps/web/app/chat/page.tsx` passes every now-required prop.
 
@@ -6482,7 +6482,7 @@ Spec §15 lists the new decisions as D-033…D-041, but `DC.md` **already uses**
 > - **`registry.interrupt`** — still an open enhancement: v1 `/interrupt` uses `registry.stop` (kill→resumable, per spec). A keep-process-live abort can replace it later (flagged in Unit 1).
 
 **Backend Services — chat upgrade (command registry, files/find, chatLive, chat-scoped SSE/input/interrupt, attachments, route registration)**
-- DEPENDS ON UNIT F: Tasks 2/3/5/7/8/9 import canonical types from @fleet/shared — CommandDef, CommandArg, FileFindResult, ChatAttachment, ChatSessionState, and the additive optional fields attachments (on ChatMessage and ChatTurnRequest). The server `pnpm --filter @fleet/server build` typecheck steps will FAIL until Unit F has published these. If a build step fails solely on a missing import from @fleet/shared, that is the Unit F dependency, not a bug in these tasks.
+- DEPENDS ON UNIT F: Tasks 2/3/5/7/8/9 import canonical types from @fleet/shared — CommandDef, CommandArg, FileFindResult, ChatAttachment, ChatSessionState, and the additive optional fields attachments (on ChatMessage and ChatTurnRequest). The server `pnpm --filter @fleet/server typecheck` typecheck steps will FAIL until Unit F has published these. If a build step fails solely on a missing import from @fleet/shared, that is the Unit F dependency, not a bug in these tasks.
 - LaunchRequest.addDirs: Task 7 forwards an `addDirs: string[]` option to registry.launch/resume/launchEngine for @-mention folders (§6.2 --add-dir). The registry's LaunchRequest type and buildArgs/buildResumeArgs CLI translation must learn `addDirs` → `--add-dir <dir>` (repeated). This is currently OUTSIDE the files this unit edits (registry.ts buildArgs). The function-level tests mock registry so they pass regardless, but the end-to-end --add-dir behavior needs the registry/LaunchRequest change. Flag for the assembler to assign (likely Unit 4/registry owner). registry.resume's signature only accepts (runId, prompt, interactive) today, so an attachments-bearing resume turn cannot pass addDirs without a registry change.
 - registry.interrupt: Task 10 wires /interrupt to registry.stop() (kill→resumable, the spec's documented fallback). A true keep-process-live turn-abort needs a new registry method (e.g. registry.interrupt(runId)). If Unit 4 adds it, swap the stop() call in the /interrupt handler.
 - chatLive idle eviction is real (setTimeout/unref) but is NOT auto-driven by run-terminal events in v1 — eviction also fires on explicit evict()/kill. If the live process exits on its own (run completes/fails), chatLive still holds the handle until the idle timer fires; consider subscribing chatLive to registry's run-terminal signal (registry.onRunTerminal pattern used by notifier/memory/pm) so a finished live run frees its slot immediately. Out of scope for these tasks; flag for reconciliation.
@@ -6491,7 +6491,7 @@ Spec §15 lists the new decisions as D-033…D-041, but `DC.md` **already uses**
 - Test fn-chat-stream.test.ts assumes fastify inject() returns after the no-backing-run SSE path flushes its initial frames and leaves the socket open. If the installed fastify version blocks inject() on the open hijacked socket for that case, the test author must fall back to a real http.get against app.listen({port:0}) reading the first chunk (noted inline in the task). Existing board/fleet stream tests in the repo should be consulted for the canonical pattern.
 
 **Unit 2 — COMPOSER + autocomplete menus (FloatingMenu/Combobox primitive, ChatComposer rewrite, SlashMenu, MentionMenu, api/live helpers)**
-- HARD DEPENDENCY ON UNIT F (packages/shared): The web code imports `CommandDef`, `CommandArg`, `ChatAttachment`, `FileFindResult`, and `ChatSessionState` from `@fleet/shared`. As of authoring, NONE of these exist in packages/shared/src/index.ts yet (verified: only `ChatTurnRequest`/`ChatTurnResponse`/`ChatSession`/`ChatMessage` are present, without the additive attachment/state fields). Unit 2 will NOT typecheck (`pnpm --filter @fleet/web build`) until Unit F lands those exports verbatim. Vitest test BODIES do not typecheck (they cast `as any`), so the unit tests can pass before Unit F — but the build step in Tasks 6/8/11/13 is blocked on Unit F. Do not define these types locally in apps/web.
+- HARD DEPENDENCY ON UNIT F (packages/shared): The web code imports `CommandDef`, `CommandArg`, `ChatAttachment`, `FileFindResult`, and `ChatSessionState` from `@fleet/shared`. As of authoring, NONE of these exist in packages/shared/src/index.ts yet (verified: only `ChatTurnRequest`/`ChatTurnResponse`/`ChatSession`/`ChatMessage` are present, without the additive attachment/state fields). Unit 2 will NOT typecheck (`pnpm --filter @fleet/web typecheck`) until Unit F lands those exports verbatim. Vitest test BODIES do not typecheck (they cast `as any`), so the unit tests can pass before Unit F — but the build step in Tasks 6/8/11/13 is blocked on Unit F. Do not define these types locally in apps/web.
 - HARD DEPENDENCY ON UNIT 1 (server routes): The client helpers assume Unit 1 ships these exact routes/shapes: GET /api/commands → CommandDef[] (run stripped); GET /api/files/find?cwd=&q=&limit= → FileFindResult[]; POST /api/chat/sessions/:id/turn accepting { message, attachments? }; POST /api/chat/sessions/:id/input accepting { message, attachments? } (409 if not live); POST /api/chat/sessions/:id/interrupt; and a chat-scoped SSE at GET /api/chat/sessions/:id/stream emitting `{ kind:'event', event: NormalizedEvent }` frames PLUS a `{ kind:'session_state', state, live }` control envelope. If Unit 1's SSE envelope differs (e.g. wraps run events under a different `kind`, or names the control event differently than `session_state`), `useChatStream` in lib/live.ts must be adjusted to match — flagged because the spec §4/§10 only names `session_state` without pinning the exact JSON envelope.
 - useChatStream assumes the chat SSE reuses the run-stream envelope shape `{ kind:'event', event }` / `{ kind:'node' }` / etc. from StreamMessage. The existing useRunStream also handles `{ kind:'hello', run, nodes, events }` and `{ kind:'node' }` and an `{error}` terminator. I implemented the `{error}` terminator and `{ kind:'event' }` + `{ kind:'session_state' }` paths, but DID NOT implement a chat `hello` snapshot path (the transcript renders from SQLite per spec §3.1, and Unit 3 owns the ChatThread which loads history via api.chatSession). If Unit 1's chat stream sends a `hello`-style snapshot that should seed events, useChatStream needs a `hello` branch added — confirm with Unit 1.
 - KILL vs DELETE ambiguity: I implemented `api.chatKill(id)` as `DELETE /api/chat/sessions/:id` per spec §3.3 ('Kill: DELETE semantics via registry.stop'). But the EXISTING api already has `deleteChatSession(id)` → `DELETE /api/chat/sessions/:id` for session DELETION. These collide on the same verb+path. Unit 1 must disambiguate: either (a) kill is a distinct route (e.g. POST /api/chat/sessions/:id/kill) — then chatKill must change — or (b) DELETE is repurposed to kill-the-run and session deletion moves elsewhere. The composer itself only calls `chatInterrupt` (Stop button); `chatKill` is for the session-list Kill control (a different unit), so this can be reconciled without touching the composer.
@@ -6511,7 +6511,7 @@ Spec §15 lists the new decisions as D-033…D-041, but `DC.md` **already uses**
 - SearchResultCard payload is not yet wired into ChatThread's switch (no canonical search-result event type exists in NormalizedEventType — search results arrive as tool_result content today). It is built and unit-tested standalone for Unit 5 (command coverage) / NL search to consume when the search-result event/shape is finalized. Reconcile where search results enter the stream.
 
 **Session Sidebar, Scoped Panel, Page Wiring & Concurrency UX (web)**
-- Depends on Unit F's packages/shared changes: ChatSession must gain optional `state?: ChatSessionState` and `live?: boolean`, and `ChatSessionState` must be exported. Tasks 2/3/5 import `ChatSessionState` from @fleet/shared and read `session.state`/`session.live`; if Unit F hasn't landed, `pnpm --filter @fleet/web build` fails. ChatAttachment/attachments fields are NOT used by this unit (composer/thread unit owns them).
+- Depends on Unit F's packages/shared changes: ChatSession must gain optional `state?: ChatSessionState` and `live?: boolean`, and `ChatSessionState` must be exported. Tasks 2/3/5 import `ChatSessionState` from @fleet/shared and read `session.state`/`session.live`; if Unit F hasn't landed, `pnpm --filter @fleet/web typecheck` fails. ChatAttachment/attachments fields are NOT used by this unit (composer/thread unit owns them).
 - The chat-scoped SSE route `GET /api/chat/sessions/:id/stream` and the `session_state` envelope `{state,live}` are owned by Unit 1 (server). This unit only implements/test the CLIENT reducer (`useChatStream`) against FakeEventSource, so its tests pass without a running server. The exact `hello` frame shape this unit assumes — `{kind:'hello', state, live, runId, subagents:[{runId,name}]}` and `{kind:'session_state', state, live}` and `{kind:'event', event: NormalizedEvent}` — must match what Unit 1 actually emits. RECONCILE the hello/subagents payload field names with Unit 1's stream serializer.
 - API helpers `killChatSession`/`resumeChatSession` are added in Task 6 ONLY if absent (it greps first). Per spec §10 the api-layer unit owns `lib/api.ts`; if that unit also defines these, DEDUPE — keep one definition. The assumed routes are `POST /api/chat/sessions/:id/interrupt` (kill) and `POST /api/chat/sessions/:id/resume` (resume); confirm against Unit 1's actual route names (spec §3.3 names interrupt + input; a dedicated resume route may instead be the next turn auto-resuming — reconcile the kill/resume endpoint contract).
 - `RunningAgentsPanel`'s prop changed from `()` to `{ sessionId }`. Any caller other than chat/page.tsx (none found in this repo) must be updated. The fleet-wide running view is intentionally left to `/fleet`.
@@ -6540,8 +6540,8 @@ Spec §15 lists the new decisions as D-033…D-041, but `DC.md` **already uses**
 
 **Foundations notes**
 - Repo migration idiom: db.ts adds columns via a try/catch loop swallowing /duplicate column name/i (lines 169-199). For chat_messages (owned by chat.ts, NOT db.ts) I specced a PRAGMA table_info('chat_messages') existence-check guard instead — clearer for a single ALTER and equally idempotent across repeated test runs. Both are additive and safe on old DBs; either is acceptable, but the plan uses the table_info guard as the spec asked for a pragma/table-info check.
-- ALL Unit F type changes are PURELY ADDITIVE — every new field on ChatSession/ChatMessage/ChatTurnRequest is optional, so existing server + web code that constructs these without the new fields keeps compiling. Task 2 Step 9 verifies this with `pnpm --filter @fleet/server build`.
-- Pure types have no runtime, so Tasks 1-2 are TDD-verified via a throwaway `__typecheck_*.ts` assertion file that makes `pnpm --filter @fleet/shared build` fail first, then pass, then is deleted. This is the honest 'see it fail → see it pass' loop for compile-time contracts.
+- ALL Unit F type changes are PURELY ADDITIVE — every new field on ChatSession/ChatMessage/ChatTurnRequest is optional, so existing server + web code that constructs these without the new fields keeps compiling. Task 2 Step 9 verifies this with `pnpm --filter @fleet/server typecheck`.
+- Pure types have no runtime, so Tasks 1-2 are TDD-verified via a throwaway `__typecheck_*.ts` assertion file that makes `pnpm --filter @fleet/shared typecheck` fail first, then pass, then is deleted. This is the honest 'see it fail → see it pass' loop for compile-time contracts.
 - NormalizedEventType is intentionally NOT extended in Unit F. The spec's `session_state` is a chat-stream control envelope (not a run event) and belongs to Unit 1's stream route; it reuses ChatSessionState (defined here). Flagging so Unit 1 does not assume Unit F added it to the run-event union.
 - config.ts has TWO config surfaces: (a) the validated, persisted PortalConfig (maxConcurrentRuns etc., guarded by validateConfig) and (b) plain top-level env-number module constants (PORT, WEB_PORT). CHAT_LIVE_MAX / CHAT_IDLE_SUSPEND_MS are a DEDICATED chat budget separate from PortalConfig.maxConcurrentRuns by design (spec §3.2), so they are (b)-style constants — NOT added to PortalConfig/validateConfig. Do not route them through validateConfig.
 - The server test DB is the real data/fleet.db; chat-attachments.test.ts creates a throwaway session and calls chatRepo.deleteSession to clean up (matching the existing chat.test.ts convention). The migration's table_info guard is what makes re-running the suite safe.
