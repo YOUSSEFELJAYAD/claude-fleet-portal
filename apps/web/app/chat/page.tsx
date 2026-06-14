@@ -142,6 +142,7 @@ export default function ChatPage() {
               <ChatComposer
                 disabled={busy}
                 running={chatState === 'running'}
+                engine={session.engine}
                 cwd={session.cwd}
                 onSend={(message, attachments) => sendTurn(message, attachments)}
                 onCommand={(line) => runCommand(line)}

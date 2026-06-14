@@ -1,7 +1,7 @@
 'use client';
 import React, { useRef, useState, useLayoutEffect } from 'react';
 import { Btn, Textarea } from '@/components/ui';
-import type { ChatAttachment } from '@fleet/shared';
+import type { ChatAttachment, RunEngine } from '@fleet/shared';
 import { SlashMenu } from '@/components/SlashMenu';
 import { MentionMenu } from '@/components/MentionMenu';
 
@@ -34,6 +34,7 @@ export function detectTrigger(text: string, caret: number): TriggerMatch | null 
 export function ChatComposer({
   disabled,
   running,
+  engine = 'claude',
   cwd,
   onSend,
   onCommand,
@@ -42,6 +43,8 @@ export function ChatComposer({
   disabled: boolean;
   /** §7 — a turn is currently streaming; swap the send affordance for Stop. */
   running: boolean;
+  /** §12 D8 — engine type; Stop is only shown for claude (one-shot engines have no live process). */
+  engine?: RunEngine;
   /** §6 — session workspace, scopes the `@` file search. */
   cwd: string;
   /** plain message + its `@` attachments. */
@@ -178,7 +181,8 @@ export function ChatComposer({
           style={{ maxHeight: 200 }}
         />
 
-        {running ? (
+        {/* Stop maps to .../interrupt — only meaningful for a live, running Claude turn (spec §7, §12 D8). */}
+        {running && engine === 'claude' ? (
           <span data-stop>
             <Btn variant="danger" onClick={onStop} title="Stop generating">■ Stop</Btn>
           </span>
