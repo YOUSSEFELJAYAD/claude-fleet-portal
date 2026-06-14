@@ -54,15 +54,13 @@ export default function ChatPage() {
   }
   async function killSession(id: string) {
     setErr(null);
-    try {
-      await api.killChatSession(id); await refreshSessions();
-    } catch (e: any) { setErr(e.message); }
+    try { await api.killChatSession(id); await refreshSessions(); if (id === activeId) await loadSession(id); }
+    catch (e: any) { setErr(e.message); }
   }
   async function resumeSession(id: string) {
     setErr(null);
-    try {
-      await api.resumeChatSession(id); await refreshSessions();
-    } catch (e: any) { setErr(e.message); }
+    try { await api.resumeChatSession(id); await refreshSessions(); if (id === activeId) await loadSession(id); }
+    catch (e: any) { setErr(e.message); }
   }
   async function deleteSession(id: string) {
     setErr(null);
