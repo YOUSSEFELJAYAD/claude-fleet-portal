@@ -94,21 +94,23 @@ export default function ChatPage() {
   }
   // Persist the assistant reply when a turn's `result` event arrives (fix 05 — driven off the
   // per-turn result, not run-terminal, so it works for live runs that never go terminal between
-  // turns). ChatThread already dedups by the result seq; this is a belt-and-suspenders guard
-  // against any double fire. runId alone is NOT unique across turns of a live run, so the guard
-  // matches on content too.
+  // turns). ChatThread's `lastResultSeq` ref fires onTurnComplete EXACTLY ONCE per distinct result
+  // `seq` (and a reload strips events → no re-fire), which is the sole, correct dedup.
+  // fix 12 — NO (runId, content) guard here: a live-claude session reuses ONE held runId across
+  // every turn, so two turns with IDENTICAL text ('Done.', 'OK', two '(no output)' fallbacks)
+  // collide on (runId, content) and the old guard silently DROPPED the second reply. The seq
+  // guarantee already prevents double-persist; this callback now persists every result it receives.
   const onTurnComplete = useCallback(async (runId: string, finalText: string) => {
     setLiveRunId(null);
     if (!activeId) return;
     const content = finalText.trim() || '(no output)';
-    if (messages.some((m) => m.runId === runId && m.kind === 'text' && m.role === 'assistant' && m.content === content)) return;
     try {
       const msg = await api.addChatMessage(activeId, {
         role: 'assistant', kind: 'text', content, runId,
       });
       setMessages((m) => [...m, msg]);
     } catch (e: any) { setErr(e.message); }
-  }, [activeId, messages]);
+  }, [activeId]);
   // A dropped/failed live stream clears the live turn so the thread recovers from "⟳ thinking…".
   const onTurnError = useCallback((_runId: string) => {
     setLiveRunId(null);

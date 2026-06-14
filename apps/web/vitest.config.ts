@@ -9,6 +9,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, '.'),
     },
   },
+  // Use the automatic JSX runtime so Next-style components (e.g. app/chat/page.tsx) that rely on
+  // Next's transform and do NOT `import React` still render under vitest's esbuild. Backward
+  // compatible with files that DO import React (the import is simply unused at runtime).
+  esbuild: { jsx: 'automatic' },
   test: {
     environment: 'jsdom',
     globals: true,
