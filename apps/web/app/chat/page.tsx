@@ -47,7 +47,7 @@ export default function ChatPage() {
     } catch (e: any) { setErr(e.message); }
   }
 
-  async function send(message: string) {
+  async function send(message: string, _attachments: import('@fleet/shared').ChatAttachment[] = []) {
     if (!activeId) return;
     setBusy(true);
     setErr(null);
@@ -55,6 +55,10 @@ export default function ChatPage() {
       const { runId, userMessage } = await api.chatTurn(activeId, message);
       setMessages((m) => [...m, userMessage]); setLiveRunId(runId);
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  }
+  function stop() {
+    // placeholder — Unit 4/7 will wire interrupt here
+    setBusy(false);
   }
   async function command(line: string) {
     if (!activeId) return;
@@ -100,7 +104,7 @@ export default function ChatPage() {
               </div>
             )}
             <ChatThread messages={messages} liveRunId={liveRunId} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
-            <ChatComposer disabled={busy} onSend={send} onCommand={command} />
+            <ChatComposer disabled={busy} running={busy} cwd={session.cwd} onSend={send} onCommand={command} onStop={stop} />
           </>
         ) : (
           <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
