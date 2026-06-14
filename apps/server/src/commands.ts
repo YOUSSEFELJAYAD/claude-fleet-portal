@@ -290,6 +290,31 @@ const COMMANDS: CommandEntry[] = [
     resultKind: 'text',
     async run() { return ok('Open the Releases page for the current version and available updates: /releases'); },
   },
+  // ── destructive danger verbs (Inbox-gated; run() is a stub for approved replay) ──────────────
+  {
+    name: 'reset-data',
+    group: 'config',
+    description: 'Wipe all portal runs/history and reset config (destructive)',
+    usage: '/reset-data',
+    args: [],
+    resultKind: 'ack',
+    danger: true,
+    async run() {
+      return ok('Confirm the destructive reset from the Settings → Danger Zone page.');
+    },
+  },
+  {
+    name: 'self-update',
+    group: 'meta',
+    description: 'Pull and apply the latest portal release (destructive)',
+    usage: '/self-update',
+    args: [],
+    resultKind: 'ack',
+    danger: true,
+    async run() {
+      return ok('Confirm the self-update from the Releases page.');
+    },
+  },
 ];
 
 /** Wire view: the CommandDefs the GET /api/commands route serializes (run() stripped). */

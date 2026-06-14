@@ -186,3 +186,33 @@ describe('read + project verbs', () => {
     expect(String(r.text)).toMatch(/\/git/);
   });
 });
+
+describe('full registry coverage', () => {
+  const EXPECTED = [
+    'launch','resume','sessions','stop','stop-all','agents','research','search','git','files',
+    'board','task','schedule','template','memory','spend','addons','releases','help',
+    'reset-data','self-update',
+  ];
+  it('listCommands() exposes every curated verb and strips run()', () => {
+    const cmds = listCommands();
+    const names = cmds.map((c) => c.name);
+    for (const v of EXPECTED) expect(names).toContain(v);
+    expect(names.length).toBeGreaterThanOrEqual(18);
+    for (const c of cmds) expect((c as any).run).toBeUndefined();
+  });
+  it('every danger verb carries danger:true and resultKind ack', () => {
+    const cmds = listCommands();
+    for (const name of ['stop-all', 'reset-data', 'self-update']) {
+      const c = cmds.find((x) => x.name === name)!;
+      expect(c.danger).toBe(true);
+      expect(c.resultKind).toBe('ack');
+    }
+  });
+  it('/reset-data and /self-update both park approvals (never execute)', async () => {
+    enqueueSpy.mockClear();
+    await dispatchCommand('/reset-data', '/repo');
+    await dispatchCommand('/self-update', '/repo');
+    expect(enqueueSpy).toHaveBeenCalledTimes(2);
+    expect(enqueueSpy.mock.calls.map((c) => c[0].command)).toEqual(['reset-data', 'self-update']);
+  });
+});
