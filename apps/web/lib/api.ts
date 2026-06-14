@@ -472,6 +472,8 @@ export const api = {
     j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
   addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
+  /** §3.1 — explicitly kills a live/running session; the server returns the updated ChatSession. */
+  killChatSession: (id: string) => j<ChatSession>(`/api/chat/sessions/${id}/kill`, { method: 'POST' }),
   /** §3.1 — re-spawns a killed/idle session via registry.resume; the server returns the updated ChatSession. */
   resumeChatSession: (id: string) => j<ChatSession>(`/api/chat/sessions/${id}/resume`, { method: 'POST' }),
   // ── chat-surface upgrade (§5/§6) ──

@@ -36,11 +36,22 @@ export default function ChatPage() {
       await refreshSessions(); await loadSession(s.id);
     } catch (e: any) { setErr(e.message); }
   }
-  async function renameSession(id: string) {
-    const title = window.prompt('Rename session'); if (!title) return;
+  async function renameSession(id: string, title: string) {
     setErr(null);
     try {
       await api.renameChatSession(id, title); await refreshSessions();
+    } catch (e: any) { setErr(e.message); }
+  }
+  async function killSession(id: string) {
+    setErr(null);
+    try {
+      await api.killChatSession(id); await refreshSessions();
+    } catch (e: any) { setErr(e.message); }
+  }
+  async function resumeSession(id: string) {
+    setErr(null);
+    try {
+      await api.resumeChatSession(id); await refreshSessions();
     } catch (e: any) { setErr(e.message); }
   }
   async function deleteSession(id: string) {
@@ -93,7 +104,9 @@ export default function ChatPage() {
   return (
     <div className="flex h-[calc(100vh-106px)] min-h-0">
       <ChatSessionList sessions={sessions} activeId={activeId}
-        onSelect={loadSession} onNew={newSession} onRename={renameSession} onDelete={deleteSession} />
+        previews={Object.fromEntries(sessions.map((s) => [s.id, messages.find((m) => m.sessionId === s.id && m.role === 'assistant')?.content ?? '']))}
+        onSelect={loadSession} onNew={newSession} onRename={renameSession}
+        onKill={killSession} onResume={resumeSession} onDelete={deleteSession} />
       <div className="flex-1 flex flex-col min-w-0">
         {session ? (
           <>
