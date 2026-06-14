@@ -308,7 +308,7 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
           setSubagents((prev) =>
             prev.some((s) => s.runId === evt.nodeId)
               ? prev
-              : [...prev, { runId: evt.nodeId, name: String((evt.payload as any)?.name ?? evt.nodeId) }],
+              : [...prev, { runId: evt.nodeId, name: String((evt.payload as any)?.label ?? evt.nodeId) }],
           );
         }
         if (evt.type === 'assistant_partial') {

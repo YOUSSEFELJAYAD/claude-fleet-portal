@@ -41,7 +41,7 @@ describe('useChatStream', () => {
     const es = FakeEventSource.last();
     act(() => es.emitOpen());
     act(() => es.emit({ kind: 'hello', state: 'live', live: true, runId: 'run-a', subagents: [] }));
-    act(() => es.emit({ kind: 'event', event: { type: 'subagent_spawned', runId: 'run-a', nodeId: 'n1', payload: { name: 'tester' } } }));
+    act(() => es.emit({ kind: 'event', event: { type: 'subagent_spawned', runId: 'run-a', nodeId: 'n1', payload: { label: 'tester', childId: 'n1', parentId: 'run-a', tool: 'spawn_agent' } } }));
     expect(result.current.subagents).toEqual([{ runId: 'n1', name: 'tester' }]);
     // kill→resume: the backing run id changes; the stream follows it (spec §4)
     act(() => es.emit({ kind: 'event', event: { type: 'result', runId: 'run-b', nodeId: 'run-b', payload: {} } }));
