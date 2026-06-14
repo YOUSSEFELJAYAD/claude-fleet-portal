@@ -82,12 +82,13 @@ export function ChatSessionList({
                 // eslint-disable-next-line jsx-a11y/click-events-have-key-events
                 <div className="flex gap-1.5 mt-1.5" onClick={(e) => e.stopPropagation()}>
                   <Btn variant="ghost" className="text-[10px] px-2 py-1" onClick={() => startRename(s)}>rename</Btn>
-                  {/* Kill / Resume are live-process controls — meaningless for one-shot engines (spec §12, D8). */}
-                  {!isEngine && (
-                    <>
-                      <Btn variant="danger" className="text-[10px] px-2 py-1" onClick={() => onKill(s.id)}>kill</Btn>
-                      <Btn variant="amber" className="text-[10px] px-2 py-1" onClick={() => onResume(s.id)}>resume</Btn>
-                    </>
+                  {/* Kill is only relevant when a live process exists; resume only when the session is idle/killed.
+                      Both are meaningless for one-shot engines (spec §12, D8). */}
+                  {!isEngine && (s.state === 'live' || s.state === 'running') && (
+                    <Btn variant="danger" className="text-[10px] px-2 py-1" onClick={() => onKill(s.id)}>kill</Btn>
+                  )}
+                  {!isEngine && (s.state === 'idle' || s.state === 'killed') && (
+                    <Btn variant="amber" className="text-[10px] px-2 py-1" onClick={() => onResume(s.id)}>resume</Btn>
                   )}
                   <Btn variant="danger" className="text-[10px] px-2 py-1" onClick={() => onDelete(s.id)}>delete</Btn>
                 </div>

@@ -1,7 +1,8 @@
 /**
  * ChatSessionList engine degradation (spec §8, §12, D8): an engine (codex/opencode) session row
  * must NOT offer live-only controls (Kill / Resume) and must carry the honest
- * "one-shot · limited memory" badge. A claude session keeps its Kill/Resume controls.
+ * "one-shot · limited memory" badge. A claude session shows Kill only when live/running,
+ * and Resume only when idle/killed — not both at the same time.
  * Props are cast `as any` — vitest does not typecheck; the contract is what we assert.
  */
 import React from 'react';
@@ -21,27 +22,51 @@ const baseProps = {
 };
 
 describe('ChatSessionList — engine degradation', () => {
-  it('a claude session exposes Kill and Resume controls', () => {
+  it('a live claude session shows Kill but NOT Resume', () => {
     render(<ChatSessionList {...(baseProps as any)} sessions={[session({ engine: 'claude', state: 'live', live: true })] as any} />);
-    expect(screen.queryByText(/kill/i)).not.toBeNull();
-    expect(screen.queryByText(/resume/i)).not.toBeNull();
+    expect(screen.queryByText(/^kill$/i)).not.toBeNull();
+    expect(screen.queryByText(/^resume$/i)).toBeNull();
     expect(screen.queryByText(/one-shot/i)).toBeNull();
   });
 
+  it('a running claude session shows Kill but NOT Resume', () => {
+    render(<ChatSessionList {...(baseProps as any)} sessions={[session({ engine: 'claude', state: 'running', live: true })] as any} />);
+    expect(screen.queryByText(/^kill$/i)).not.toBeNull();
+    expect(screen.queryByText(/^resume$/i)).toBeNull();
+  });
+
+  it('an idle claude session shows Resume but NOT Kill', () => {
+    render(<ChatSessionList {...(baseProps as any)} sessions={[session({ engine: 'claude', state: 'idle', live: false })] as any} />);
+    expect(screen.queryByText(/^kill$/i)).toBeNull();
+    expect(screen.queryByText(/^resume$/i)).not.toBeNull();
+  });
+
+  it('a killed claude session shows Resume but NOT Kill', () => {
+    render(<ChatSessionList {...(baseProps as any)} sessions={[session({ engine: 'claude', state: 'killed', live: false })] as any} />);
+    expect(screen.queryByText(/^kill$/i)).toBeNull();
+    expect(screen.queryByText(/^resume$/i)).not.toBeNull();
+  });
+
   it('an engine session hides Kill/Resume and shows the one-shot · limited memory badge', () => {
-    render(<ChatSessionList {...(baseProps as any)} sessions={[session({ id: 's1', engine: 'codex' })] as any} />);
+    render(<ChatSessionList {...(baseProps as any)} sessions={[session({ id: 's1', engine: 'codex', state: 'live', live: true })] as any} />);
     expect(screen.queryByText(/^kill$/i)).toBeNull();
     expect(screen.queryByText(/^resume$/i)).toBeNull();
     expect(screen.queryByText(/one-shot · limited memory/i)).not.toBeNull();
   });
 
-  it('Kill / Resume on a claude row fire their callbacks with the session id', () => {
-    const onKill = vi.fn(); const onResume = vi.fn();
-    render(<ChatSessionList {...(baseProps as any)} onKill={onKill} onResume={onResume}
+  it('Kill on a live claude row fires the onKill callback with the session id', () => {
+    const onKill = vi.fn();
+    render(<ChatSessionList {...(baseProps as any)} onKill={onKill}
       sessions={[session({ engine: 'claude', state: 'live', live: true })] as any} />);
     fireEvent.click(screen.getByText(/^kill$/i));
-    fireEvent.click(screen.getByText(/^resume$/i));
     expect(onKill).toHaveBeenCalledWith('s1');
+  });
+
+  it('Resume on an idle claude row fires the onResume callback with the session id', () => {
+    const onResume = vi.fn();
+    render(<ChatSessionList {...(baseProps as any)} onResume={onResume}
+      sessions={[session({ engine: 'claude', state: 'idle', live: false })] as any} />);
+    fireEvent.click(screen.getByText(/^resume$/i));
     expect(onResume).toHaveBeenCalledWith('s1');
   });
 });
