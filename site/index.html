@@ -466,6 +466,10 @@
   .hud[data-reveal] { opacity: 0; transform: translateY(-50%); transition: opacity var(--dur-slow) var(--ease-out); }
   .hud[data-reveal].in { opacity: 1; transform: translateY(-50%); }
   @media (prefers-reduced-motion: reduce) { .hud[data-reveal] { opacity: 1 !important; transform: translateY(-50%) !important; transition: none !important; } }
+  /* how-it-works connecting line (drawn by scroll progress) */
+  .steps-line { position: absolute; left: 0; top: 50%; height: 2px; width: 0%; background: linear-gradient(90deg, var(--amber), var(--teal)); opacity: .55; transform: translateY(-50%); pointer-events: none; z-index: 0; }
+  @media (max-width: 980px) { .steps-line { left: 50%; top: 0; width: 2px; height: 0%; transform: translateX(-50%); background: linear-gradient(180deg, var(--amber), var(--teal)); } }
+  #steps .step { z-index: 1; }
 </style>
 </head>
 <body>
@@ -539,10 +543,10 @@
 <!-- ── ENGINE TRUST STRIP ───────────────────────────────────────────────── -->
 <section id="engines">
   <div class="lbl">runs your local agents</div>
-  <div class="row">
-    <span class="eng"><span class="dot" style="background:var(--amber);color:var(--amber)"></span><b>Claude&nbsp;Code</b>&nbsp;— native engine</span>
-    <span class="eng"><span class="dot" style="background:var(--teal);color:var(--teal)"></span><b>Codex</b>&nbsp;— engine add-on</span>
-    <span class="eng"><span class="dot" style="background:var(--violet);color:var(--violet)"></span><b>OpenCode</b>&nbsp;— engine add-on</span>
+  <div class="row" data-stagger="80">
+    <span class="eng" data-reveal><span class="dot" style="background:var(--amber);color:var(--amber)"></span><b>Claude&nbsp;Code</b>&nbsp;— native engine</span>
+    <span class="eng" data-reveal><span class="dot" style="background:var(--teal);color:var(--teal)"></span><b>Codex</b>&nbsp;— engine add-on</span>
+    <span class="eng" data-reveal><span class="dot" style="background:var(--violet);color:var(--violet)"></span><b>OpenCode</b>&nbsp;— engine add-on</span>
   </div>
 </section>
 
@@ -554,32 +558,33 @@
   <div class="kicker">how it works</div>
   <h2>🐙 <span class="oct">one octopus, many arms</span> — your agents under mission control</h2>
   <p class="lead">Five moves from idea to merged code. The portal drives the whole loop — watch it light up.</p>
-  <div class="steps" id="steps">
-    <div class="step" style="--accent: var(--amber)">
+  <div class="steps" id="steps" data-stagger="90">
+    <span class="steps-line" aria-hidden="true"></span>
+    <div class="step" data-reveal style="--accent: var(--amber)">
       <div class="n">STEP 01</div><div class="ico">＋</div>
       <h3>Launch</h3>
       <p>Describe the task — or start straight on any <span class="mono">/command</span>. Pick Claude, Codex or OpenCode models from one dropdown.</p>
       <div class="bar"></div>
     </div>
-    <div class="step" style="--accent: var(--coral)">
+    <div class="step" data-reveal style="--accent: var(--coral)">
       <div class="n">STEP 02</div><div class="ico">⛓</div>
       <h3>Orchestrate</h3>
       <p>The agent fans out into subagents; campaigns plan whole dependency DAGs with a worker per subtask.</p>
       <div class="bar"></div>
     </div>
-    <div class="step" style="--accent: var(--teal)">
+    <div class="step" data-reveal style="--accent: var(--teal)">
       <div class="n">STEP 03</div><div class="ico">◉</div>
       <h3>Watch live</h3>
       <p>The workflow tree, token burn and cost stream to your cockpit in real time. Steer, stop or approve at any moment.</p>
       <div class="bar"></div>
     </div>
-    <div class="step" style="--accent: var(--violet)">
+    <div class="step" data-reveal style="--accent: var(--violet)">
       <div class="n">STEP 04</div><div class="ico">⊘</div>
       <h3>Guardrails</h3>
       <p>Budgets auto-kill runaway runs; validation must pass; merge gates wait for your approve — or run full auto.</p>
       <div class="bar"></div>
     </div>
-    <div class="step" style="--accent: var(--green)">
+    <div class="step" data-reveal style="--accent: var(--green)">
       <div class="n">STEP 05</div><div class="ico">✓</div>
       <h3>Ship</h3>
       <p>The PM merges clean work into your branch (or opens the PR) — and the portal keeps itself up to date too.</p>
@@ -1616,30 +1621,26 @@ new IntersectionObserver((entries) => {
 
 <script>
 (() => {
-  const CYCLE = 2600;
   const steps = [...document.querySelectorAll('#steps .step')];
-  steps.forEach((el) => el.style.setProperty('--cycle', CYCLE + 'ms'));
-  let i = -1, timer = null, paused = false;
-  function activate(n) {
-    i = n % steps.length;
+  const line = document.querySelector('.steps-line');
+  const root = document.getElementById('steps');
+  if (!steps.length || !root) return;
+  const vertical = () => window.matchMedia('(max-width: 980px)').matches;
+  const apply = (p) => {
+    const pct = Math.max(0, Math.min(1, (p - 0.15) / 0.7));
+    if (line) line.style[vertical() ? 'height' : 'width'] = (pct * 100) + '%';
+    const active = Math.min(steps.length - 1, Math.floor(pct * steps.length));
     steps.forEach((el, k) => {
-      el.classList.toggle('active', k === i);
-      el.classList.toggle('done', k < i);
-      if (k !== i) { const b = el.querySelector('.bar'); b.style.animation = 'none'; void b.offsetWidth; b.style.animation = ''; }
+      el.classList.toggle('done', k < active || pct >= 1);
+      el.classList.toggle('active', k === active && pct > 0 && pct < 1);
     });
-  }
-  function tick() { if (!paused) activate(i + 1); }
-  steps.forEach((el, k) => {
-    el.addEventListener('click', () => { activate(k); });
-    el.addEventListener('pointerenter', () => { paused = true; });
-    el.addEventListener('pointerleave', () => { paused = false; });
-  });
-  new IntersectionObserver((entries) => {
-    for (const e of entries) {
-      if (e.isIntersecting && !timer) { activate(0); timer = setInterval(tick, CYCLE); }
-      else if (!e.isIntersecting && timer) { clearInterval(timer); timer = null; }
-    }
-  }, { threshold: 0.35 }).observe(document.getElementById('steps'));
+  };
+  // hover lets a visitor inspect a single step
+  steps.forEach((el, k) => el.addEventListener('pointerenter', () => {
+    steps.forEach((s, j) => s.classList.toggle('active', j === k));
+  }));
+  if (window.__onScrollProgress) window.__onScrollProgress(root, apply);
+  else { steps.forEach((s) => s.classList.add('done')); if (line) line.style.width = '100%'; }
 })();
 </script>
 
