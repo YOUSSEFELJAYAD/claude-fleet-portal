@@ -1,6 +1,6 @@
 'use client';
 import React, { useRef, useState, useLayoutEffect } from 'react';
-import { Btn } from '@/components/ui';
+import { Btn, Textarea } from '@/components/ui';
 import type { ChatAttachment } from '@fleet/shared';
 import { SlashMenu } from '@/components/SlashMenu';
 import { MentionMenu } from '@/components/MentionMenu';
@@ -120,8 +120,7 @@ export function ChatComposer({
             <span
               key={a.path}
               data-chip
-              className="inline-flex items-center gap-1 font-mono text-[11px] px-1.5 py-0.5 border"
-              style={{ borderColor: 'rgba(255,176,0,0.45)', color: '#ffb000', background: 'rgba(255,176,0,0.08)' }}
+              className="inline-flex items-center gap-1 font-mono text-[11px] px-1.5 py-0.5 border text-amber border-amber/45 bg-amber/8"
             >
               {a.kind === 'dir' ? '▣' : '▦'} {a.path}
               <button
@@ -157,7 +156,7 @@ export function ChatComposer({
           />
         )}
 
-        <textarea
+        <Textarea
           ref={taRef}
           rows={1}
           value={text}
@@ -175,7 +174,7 @@ export function ChatComposer({
               submit();
             }
           }}
-          className="flex-1 bg-black/40 border border-line2 text-ink font-mono text-[13px] px-2.5 py-2 focus:border-amber/70 outline-none placeholder:text-faint resize-none overflow-auto"
+          className="flex-1 resize-none overflow-auto"
           style={{ maxHeight: 200 }}
         />
 
