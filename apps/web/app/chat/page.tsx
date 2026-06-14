@@ -133,7 +133,7 @@ export default function ChatPage() {
           <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
         )}
       </div>
-      <RunningAgentsPanel />
+      <RunningAgentsPanel sessionId={activeId} />
     </div>
   );
 }
