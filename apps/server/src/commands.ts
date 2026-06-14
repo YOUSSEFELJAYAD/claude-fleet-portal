@@ -8,6 +8,7 @@ import { registry } from './registry.js';
 import { listAddonInfos, setAddonEnabledById } from './addons.js';
 import { campaigns } from './campaigns.js';
 import { enqueueApproval } from './inbox.js';
+import { statusPorcelain, gitLog } from './git.js';
 import type { ChatCommandResult, CommandDef } from '@fleet/shared';
 
 const TERMINAL = new Set(['completed', 'failed', 'killed']);
@@ -96,6 +97,30 @@ const COMMANDS: CommandEntry[] = [
     name: 'schedule', group: 'project', description: 'Open the Schedules page', usage: '/schedule',
     args: [], resultKind: 'text',
     run: async () => ok('Open the Schedules page to create or manage schedules: /schedules'),
+  },
+  {
+    name: 'git',
+    group: 'project',
+    description: 'Git status / log for the chat working directory',
+    usage: '/git status | /git log',
+    args: [{ name: 'subcommand', required: true, type: 'enum', enum: ['status', 'log'] }],
+    resultKind: 'table',
+    async run({ cwd, args }) {
+      const sub = args[0];
+      if (sub === 'status') {
+        const { entries, error } = await statusPorcelain(cwd);
+        if (error) return err(error);
+        return { ok: true, kind: 'table', columns: ['status', 'path'],
+          rows: entries.map((e) => [e.code, e.path]) };
+      }
+      if (sub === 'log') {
+        const { entries, error } = await gitLog(cwd, { max: 20 });
+        if (error) return err(error);
+        return { ok: true, kind: 'table', columns: ['hash', 'subject', 'author'],
+          rows: entries.map((c) => [c.hash.slice(0, 7), c.subject, c.author]) };
+      }
+      return err('usage: /git status | /git log');
+    },
   },
   {
     name: 'stop',

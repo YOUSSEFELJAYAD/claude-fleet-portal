@@ -27,6 +27,15 @@ vi.mock('../src/addons.js', () => ({
   setAddonEnabledById: vi.fn(async (id: string, en: boolean) => ({ id, enabled: en, status: en ? 'running' : 'disabled' })),
 }));
 vi.mock('../src/campaigns.js', () => ({ campaigns: { create: vi.fn(async () => ({ id: 'camp-1' })) } }));
+vi.mock('../src/git.js', () => ({
+  statusPorcelain: vi.fn(async () => ({ entries: [
+    { code: ' M', path: 'src/a.ts', origPath: null },
+    { code: '??', path: 'new.ts', origPath: null },
+  ] })),
+  gitLog: vi.fn(async () => ({ entries: [
+    { hash: 'abc1234def', author: 'jd', time: 1700000000, subject: 'fix thing', isMerge: false },
+  ] })),
+}));
 
 import { dispatchCommand, listCommands } from '../src/commands.js';
 
@@ -93,6 +102,26 @@ describe('safe registry verbs', () => {
   });
   it('/stop with no id errors', async () => {
     const r = await dispatchCommand('/stop', '/repo');
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe('/git', () => {
+  it('/git status renders a 2-column change table', async () => {
+    const r = await dispatchCommand('/git status', '/repo');
+    expect(r.ok).toBe(true);
+    expect(r.kind).toBe('table');
+    expect(r.columns).toEqual(['status', 'path']);
+    expect(r.rows).toEqual([[' M', 'src/a.ts'], ['??', 'new.ts']]);
+  });
+  it('/git log renders a commit table', async () => {
+    const r = await dispatchCommand('/git log', '/repo');
+    expect(r.kind).toBe('table');
+    expect(r.columns).toEqual(['hash', 'subject', 'author']);
+    expect(r.rows![0][0]).toBe('abc1234');
+  });
+  it('/git with no subcommand errors', async () => {
+    const r = await dispatchCommand('/git', '/repo');
     expect(r.ok).toBe(false);
   });
 });
