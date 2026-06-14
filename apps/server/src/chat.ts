@@ -169,7 +169,7 @@ export async function startTurn(sessionId: string, message: string, attachments?
   } else if (!session.runId) {
     run = await registry.launch({ ...baseOpts, prompt });
   } else {
-    run = await registry.resume(session.runId, prompt, undefined);
+    run = await registry.resume(session.runId, prompt, undefined, addDirs.length ? addDirs : undefined);
   }
   chatRepo.setSessionRun(sessionId, run.id);
   return { runId: run.id, userMessage };
