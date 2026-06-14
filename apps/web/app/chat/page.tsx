@@ -7,7 +7,7 @@ import { ChatSessionList } from '@/components/ChatSessionList';
 import { ChatThread } from '@/components/ChatThread';
 import { ChatComposer } from '@/components/ChatComposer';
 import { RunningAgentsPanel } from '@/components/RunningAgentsPanel';
-import { ErrorBanner, Badge } from '@/components/ui';
+import { ErrorBanner, Badge, Kicker } from '@/components/ui';
 import { chatStateMeta } from '@/lib/chatState';
 
 export default function ChatPage() {
@@ -110,43 +110,50 @@ export default function ChatPage() {
   // App-shell layout (scrolling thread + pinned composer). Height fits the shared frame
   // exactly: viewport − 58px sticky header − 48px (main p-6) so it never overflows the body.
   return (
-    <div className="flex h-[calc(100vh-106px)] min-h-0">
-      <ChatSessionList sessions={sessions} activeId={activeId} previews={previews}
-        onSelect={loadSession} onNew={newSession} onRename={renameSession}
-        onKill={killSession} onResume={resumeSession} onDelete={deleteSession} />
-      <div className="flex-1 flex flex-col min-w-0">
-        {session ? (
-          <>
-            <div className="px-4 py-2 border-b hairline text-[12px] flex items-center gap-2">
-              <span>{session.title} · {session.engine} · {session.model} · {session.cwd}</span>
-              {session.engine !== 'claude' && <span className="text-faint">(one-shot per turn · limited memory)</span>}
-              {effectiveState === 'idle' && (
-                <Badge label="RESUMABLE" color={chatStateMeta('idle').color} />
-              )}
-              {(effectiveState === 'live' || live) && (
-                <Badge label="LIVE" color={chatStateMeta('live').color} live />
-              )}
-            </div>
-            {err && (
-              <div className="px-4 pt-3">
-                <ErrorBanner onRetry={() => setErr(null)}>{err}</ErrorBanner>
-              </div>
-            )}
-            <ChatThread sessionId={activeId} messages={messages} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
-            <ChatComposer
-              disabled={busy}
-              running={chatState === 'running'}
-              cwd={session.cwd}
-              onSend={(message, attachments) => sendTurn(message, attachments)}
-              onCommand={(line) => runCommand(line)}
-              onStop={() => api.chatInterrupt(session.id)}
-            />
-          </>
-        ) : (
-          <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
-        )}
+    <div className="flex flex-col h-[calc(100vh-106px)] min-h-0">
+      <div className="mb-4 flex-none">
+        <Kicker>chat · live control</Kicker>
+        <h1 className="font-display text-[22px] tracking-wide text-ink mt-1">Chat</h1>
+        <p className="font-mono text-[11px] text-faint mt-0.5">Talk to a live Claude session — drive the fleet with / commands, attach workspace files with @.</p>
       </div>
-      <RunningAgentsPanel sessionId={activeId} />
+      <div className="flex flex-1 min-h-0 border border-line2 bg-panel">
+        <ChatSessionList sessions={sessions} activeId={activeId} previews={previews}
+          onSelect={loadSession} onNew={newSession} onRename={renameSession}
+          onKill={killSession} onResume={resumeSession} onDelete={deleteSession} />
+        <div className="flex-1 flex flex-col min-w-0 border-x border-line2">
+          {session ? (
+            <>
+              <div className="px-4 py-2.5 border-b hairline text-[12px] flex items-center gap-2">
+                <span>{session.title} · {session.engine} · {session.model} · {session.cwd}</span>
+                {session.engine !== 'claude' && <span className="text-faint">(one-shot per turn · limited memory)</span>}
+                {effectiveState === 'idle' && (
+                  <Badge label="RESUMABLE" color={chatStateMeta('idle').color} />
+                )}
+                {(effectiveState === 'live' || live) && (
+                  <Badge label="LIVE" color={chatStateMeta('live').color} live />
+                )}
+              </div>
+              {err && (
+                <div className="px-4 pt-3">
+                  <ErrorBanner onRetry={() => setErr(null)}>{err}</ErrorBanner>
+                </div>
+              )}
+              <ChatThread sessionId={activeId} messages={messages} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
+              <ChatComposer
+                disabled={busy}
+                running={chatState === 'running'}
+                cwd={session.cwd}
+                onSend={(message, attachments) => sendTurn(message, attachments)}
+                onCommand={(line) => runCommand(line)}
+                onStop={() => api.chatInterrupt(session.id)}
+              />
+            </>
+          ) : (
+            <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
+          )}
+        </div>
+        <RunningAgentsPanel sessionId={activeId} />
+      </div>
     </div>
   );
 }
