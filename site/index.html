@@ -486,11 +486,23 @@
   @media (max-width: 600px) { #fx-toasts { left: 12px; right: 12px; width: auto; bottom: 12px; } }
   @media (prefers-reduced-motion: reduce) { #fx-toasts { display: none !important; } }
 
-  /* ── fx: agent-robot scroll guide ── */
+  /* ── fx: agent-robot scroll guide + status ── */
   #fx-robot { position: fixed; top: 0; left: 0; width: 88px; height: 88px; z-index: 60; pointer-events: none;
     opacity: 0; transition: opacity .45s var(--ease-out); transform: translate3d(-200px,-200px,0); }
   #fx-robot.on { opacity: 1; }
-  #fx-robot-lottie { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px rgba(255,176,0,.28)); }
+  #fx-robot-lottie { width: 100%; height: 100%; filter: drop-shadow(0 8px 22px rgba(255,176,0,.28)); transition: filter .35s var(--ease-out); }
+  #fx-robot-chip { position: absolute; top: 90px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-family: var(--monoF); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: rgba(12,14,19,.92); border: 1px solid var(--line2); color: var(--dim); opacity: 0; transition: opacity .3s var(--ease-out), color .3s, border-color .3s; }
+  #fx-robot.on #fx-robot-chip { opacity: 1; }
+  #fx-robot[data-status="busy"] #fx-robot-lottie { filter: drop-shadow(0 8px 22px rgba(255,176,0,.45)); }
+  #fx-robot[data-status="busy"] #fx-robot-chip { color: var(--amber); border-color: rgba(255,176,0,.5); }
+  #fx-robot[data-status="ok"] #fx-robot-lottie { filter: drop-shadow(0 8px 24px rgba(84,224,138,.5)); }
+  #fx-robot[data-status="ok"] #fx-robot-chip { color: var(--green); border-color: rgba(84,224,138,.55); }
+  #fx-robot[data-status="warn"] #fx-robot-lottie { filter: drop-shadow(0 8px 24px rgba(255,93,93,.55)); }
+  #fx-robot[data-status="warn"] #fx-robot-chip { color: var(--red); border-color: rgba(255,93,93,.55); }
+  #fx-robot[data-status="teal"] #fx-robot-lottie { filter: drop-shadow(0 8px 24px rgba(57,212,207,.5)); }
+  #fx-robot[data-status="teal"] #fx-robot-chip { color: var(--teal); border-color: rgba(57,212,207,.55); }
+  #fx-robot[data-status="violet"] #fx-robot-lottie { filter: drop-shadow(0 8px 24px rgba(176,140,255,.5)); }
+  #fx-robot[data-status="violet"] #fx-robot-chip { color: var(--violet); border-color: rgba(176,140,255,.55); }
   @media (prefers-reduced-motion: reduce) { #fx-robot { display: none !important; } }
 </style>
 <script defer src="https://cdn.jsdelivr.net/npm/lottie-web@5.12.2/build/player/lottie_light.min.js" integrity="sha384-Vtbz3QbtSBqleuQry6kQy5smig1gPZCXUoTFN7RmN9QW47xpEDsV/J1w0Pw0rDJu" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
@@ -514,7 +526,7 @@
   </div>
 </nav>
 
-<div id="fx-robot" aria-hidden="true"><div id="fx-robot-lottie"></div></div>
+<div id="fx-robot" aria-hidden="true" data-status="idle"><div id="fx-robot-lottie"></div><div id="fx-robot-chip">online</div></div>
 
 <!-- ── fx: global portal-event toasts ── -->
 <div id="fx-toasts" aria-hidden="true">
@@ -1853,6 +1865,7 @@ new IntersectionObserver((entries) => {
     function showNext() {
       pops.forEach((p) => p.classList.remove('show'));
       const p = pops[i % pops.length]; i++; p.classList.add('show');
+      window.dispatchEvent(new CustomEvent('fx:event', { detail: p.id.replace('fx-pop-', '') }));
       timer = setTimeout(() => { p.classList.remove('show'); timer = setTimeout(showNext, 380); }, 2600);
     }
     function wantLive() { return !document.hidden && !ctaVis && window.scrollY > window.innerHeight * 0.6; }
@@ -1860,7 +1873,7 @@ new IntersectionObserver((entries) => {
       const live = wantLive();
       host.classList.toggle('live', live);
       if (live && !running) { running = true; showNext(); }
-      else if (!live && running) { running = false; clearTimeout(timer); timer = null; pops.forEach((p) => p.classList.remove('show')); }
+      else if (!live && running) { running = false; clearTimeout(timer); timer = null; pops.forEach((p) => p.classList.remove('show')); window.dispatchEvent(new CustomEvent('fx:event', { detail: null })); }
     }
     addEventListener('scroll', sync, { passive: true });
     document.addEventListener('visibilitychange', sync);
@@ -1870,35 +1883,56 @@ new IntersectionObserver((entries) => {
 })();
 </script>
 
-<!-- ── fx: agent-robot scroll guide ── -->
+<!-- ── fx: agent-robot scroll guide + status ── -->
 <script>
 (() => {
   const start = () => {
     const robot = document.getElementById('fx-robot');
     const mount = document.getElementById('fx-robot-lottie');
+    const chip = document.getElementById('fx-robot-chip');
     if (!robot || !mount) return;
     const reduce = window.__reduceMotion ?? matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduce) return;
     const lerp = window.__lerp || ((a,b,k)=>a+(b-a)*k);
-    let anim = null;
-    function build() { if (anim || !window.lottie || !window.__fxRobotData) return; anim = window.lottie.loadAnimation({ container: mount, renderer: 'svg', loop: true, autoplay: true, animationData: window.__fxRobotData }); }
-    (function waitL(n){ if (window.lottie && window.__fxRobotData) build(); else if (n>0) setTimeout(()=>waitL(n-1), 60); })(60);
-    document.addEventListener('visibilitychange', () => { if (!anim) return; document.hidden ? anim.pause() : anim.play(); });
+    const SEG = { loop:[0,45], success:[46,80], halt:[81,110], pulse:[111,135] };
+    const STATUS = {
+      run:{cls:'busy',chip:'executing',seg:'pulse'}, cost:{cls:'teal',chip:'compressing',seg:'pulse'},
+      merge:{cls:'ok',chip:'merged',seg:'success'}, budget:{cls:'warn',chip:'halted',seg:'halt'},
+      campaign:{cls:'violet',chip:'orchestrating',seg:'pulse'}, notify:{cls:'busy',chip:'review',seg:'pulse'},
+    };
+    let anim = null, ready = false;
+    function backToLoop(){ if(!anim) return; anim.removeEventListener('complete', backToLoop); anim.loop = true; anim.playSegments(SEG.loop, true); }
+    function build(){
+      if (anim || !window.lottie || !window.__fxRobotData) return;
+      anim = window.lottie.loadAnimation({ container: mount, renderer:'svg', loop:true, autoplay:false, animationData: window.__fxRobotData });
+      anim.addEventListener('DOMLoaded', () => { ready = true; anim.loop = true; anim.playSegments(SEG.loop, true); });
+    }
+    (function waitL(n){ if (window.lottie && window.__fxRobotData) build(); else if (n>0) setTimeout(()=>waitL(n-1),60); })(60);
+    document.addEventListener('visibilitychange', () => { if (anim) document.hidden ? anim.pause() : anim.play(); });
+    function react(seg){ if(!anim||!ready) return; anim.removeEventListener('complete', backToLoop); anim.loop=false; anim.addEventListener('complete', backToLoop); anim.playSegments(seg, true); }
+    function setStatus(key){
+      const s = STATUS[key];
+      if (!s) { robot.dataset.status='idle'; if (chip) chip.textContent='online'; return; }
+      robot.dataset.status = s.cls;
+      if (chip) chip.textContent = s.chip;
+      react(SEG[s.seg]);
+    }
+    window.addEventListener('fx:event', (e) => setStatus(e.detail));
     const flight = () => window.innerWidth >= 1200;
     let curX = window.innerWidth - 120, curY = window.innerHeight * 0.45;
-    function frame() {
+    function frame(){
       const show = flight() && window.scrollY > window.innerHeight * 0.55;
       robot.classList.toggle('on', show);
       if (!show) return false;
-      const vw = window.innerWidth, vh = window.innerHeight, sy = window.scrollY;
-      const tx = vw - 128 - 26 * Math.sin(sy / 320);
-      const ty = Math.max(96, Math.min(vh - 150, vh * 0.42 + 72 * Math.sin(sy / 260)));
+      const vw=window.innerWidth, vh=window.innerHeight, sy=window.scrollY;
+      const tx = vw - 128 - 26*Math.sin(sy/320);
+      const ty = Math.max(96, Math.min(vh-150, vh*0.42 + 72*Math.sin(sy/260)));
       curX = lerp(curX, tx, 0.12); curY = lerp(curY, ty, 0.12);
       robot.style.transform = `translate3d(${curX.toFixed(1)}px, ${curY.toFixed(1)}px, 0)`;
-      return (Math.abs(curX - tx) > 0.3 || Math.abs(curY - ty) > 0.3);
+      return (Math.abs(curX-tx)>0.3 || Math.abs(curY-ty)>0.3);
     }
     if (window.__ticker) { window.__ticker.subscribe(frame); window.__ticker.wake(); }
-    else { addEventListener('scroll', frame, { passive: true }); frame(); }
+    else { addEventListener('scroll', frame, {passive:true}); frame(); }
   };
   if (window.__ticker) start(); else addEventListener('DOMContentLoaded', start);
 })();
