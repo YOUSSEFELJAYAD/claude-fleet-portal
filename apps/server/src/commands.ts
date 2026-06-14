@@ -98,6 +98,61 @@ const COMMANDS: CommandEntry[] = [
     run: async () => ok('Open the Schedules page to create or manage schedules: /schedules'),
   },
   {
+    name: 'stop',
+    group: 'control',
+    description: 'Stop one run by id',
+    usage: '/stop <run-id>',
+    args: [{ name: 'run-id', required: true, type: 'run-id', source: 'running-runs' }],
+    resultKind: 'ack',
+    async run({ arg }) {
+      if (!arg) return err('usage: /stop <run-id>');
+      try { registry.stop(arg); return ok(`stopped ${arg}`); }
+      catch (e: any) { return err(e?.message ?? 'stop failed'); }
+    },
+  },
+  {
+    name: 'resume',
+    group: 'control',
+    description: 'Resume a finished run with an optional follow-up prompt',
+    usage: '/resume <run-id> [prompt]',
+    args: [
+      { name: 'run-id', required: true, type: 'run-id', hint: 'a finished run' },
+      { name: 'prompt', required: false, type: 'prompt' },
+    ],
+    resultKind: 'text',
+    async run({ args }) {
+      const [id, ...rest] = args;
+      if (!id) return err('usage: /resume <run-id> [prompt]');
+      try { const run = registry.resume(id, rest.join(' ') || undefined); return ok(`resumed run ${run.id}`, { runId: run.id }); }
+      catch (e: any) { return err(e?.message ?? 'resume failed'); }
+    },
+  },
+  {
+    name: 'sessions',
+    group: 'control',
+    description: 'List active runs (sessions) in the fleet',
+    usage: '/sessions',
+    args: [],
+    resultKind: 'table',
+    async run() {
+      const runs = (registry.listRuns() as any[]).filter((r) => !TERMINAL.has(r.status));
+      return { ok: true, kind: 'table', columns: ['id', 'status', 'model', 'task'],
+        rows: runs.map((r) => [r.id, r.status, r.model, String(r.task ?? '').slice(0, 60)]) };
+    },
+  },
+  {
+    name: 'spend',
+    group: 'control',
+    description: "Today's spend + active-run count",
+    usage: '/spend',
+    args: [],
+    resultKind: 'text',
+    async run() {
+      const s = registry.spend();
+      return ok(`Today: $${s.todayUsd.toFixed(2)} · ${s.activeRuns} active · ${s.totalRunsToday} run(s) today`);
+    },
+  },
+  {
     name: 'stop-all',
     group: 'control',
     description: 'Stop every running agent in the fleet',

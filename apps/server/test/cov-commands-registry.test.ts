@@ -64,3 +64,35 @@ describe('danger verbs route to the Inbox', () => {
     expect(String(r.text)).toMatch(/approv/i);
   });
 });
+
+describe('safe registry verbs', () => {
+  it('/agents returns a table of non-terminal runs', async () => {
+    const r = await dispatchCommand('/agents', '/repo');
+    expect(r.kind).toBe('table');
+    expect(r.columns).toEqual(['id', 'status', 'model', 'task']);
+  });
+  it('/spend returns a text line with today\'s spend', async () => {
+    const r = await dispatchCommand('/spend', '/repo');
+    expect(r.kind).toBe('text');
+    expect(String(r.text)).toMatch(/\$1\.50/);
+    expect(String(r.text)).toMatch(/4 run/);
+  });
+  it('/launch with no prompt errors', async () => {
+    const r = await dispatchCommand('/launch', '/repo');
+    expect(r.ok).toBe(false);
+    expect(r.kind).toBe('error');
+  });
+  it('/launch <prompt> starts a run and returns its id', async () => {
+    const r = await dispatchCommand('/launch fix the build', '/work');
+    expect(r.ok).toBe(true);
+    expect(r.runId).toBe('r1');
+  });
+  it('/stop <id> stops a single run', async () => {
+    const r = await dispatchCommand('/stop r1', '/repo');
+    expect(r.ok).toBe(true);
+  });
+  it('/stop with no id errors', async () => {
+    const r = await dispatchCommand('/stop', '/repo');
+    expect(r.ok).toBe(false);
+  });
+});
