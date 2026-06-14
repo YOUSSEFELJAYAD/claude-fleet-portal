@@ -28,7 +28,7 @@ vi.mock('../src/addons.js', () => ({
   researchConfig: vi.fn(() => ({ searxngUrl: 'http://s', maxResults: 5, engines: '', safeSearch: 1, language: 'en' })),
 }));
 vi.mock('../src/research.js', () => ({ searchWeb: vi.fn(async () => [{ title: 'T', url: 'https://x', content: 'c' }]) }));
-vi.mock('../src/planboard.js', () => ({ planboardRepo: { list: vi.fn(() => [{ id: 'd1', status: 'ready', tasks: [1, 2] }]) } }));
+vi.mock('../src/planboard.js', () => ({ planboardRepo: { list: vi.fn(() => [{ id: 'd1', status: 'ready', plan: [{ id: 't1', title: 'setup', prompt: 'do setup' }, { id: 't2', title: 'impl', prompt: 'do impl' }] }]) } }));
 vi.mock('../src/kanban.js', () => ({ kanbanRepo: { listTasks: vi.fn(() => [{ id: 'k1', column: 'Backlog', title: 'do x' }]) } }));
 vi.mock('../src/db.js', () => ({ repo: { listTemplates: vi.fn(() => [{ id: 't1', name: 'orchestrator', role: 'orchestrator' }]) } }));
 vi.mock('../src/campaigns.js', () => ({ campaigns: { create: vi.fn(async () => ({ id: 'camp-1' })) } }));
@@ -145,9 +145,12 @@ describe('read + project verbs', () => {
     expect(r.kind).toBe('table');
     expect(r.columns).toEqual(['id', 'enabled', 'status']);
   });
-  it('/board <projectId> lists plan drafts', async () => {
+  it('/board <projectId> lists plan drafts with correct task count', async () => {
     const r = await dispatchCommand('/board p1', '/repo');
     expect(r.kind).toBe('table');
+    expect(r.columns).toEqual(['id', 'status', 'tasks']);
+    // The mock returns a draft with plan: [{t1}, {t2}] — tasks column must show "2", not "0"
+    expect(r.rows![0]).toEqual(['d1', 'ready', '2']);
   });
   it('/board with no project errors', async () => {
     expect((await dispatchCommand('/board', '/repo')).ok).toBe(false);

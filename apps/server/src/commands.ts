@@ -243,8 +243,8 @@ const COMMANDS: CommandEntry[] = [
     resultKind: 'table',
     async run({ arg }) {
       if (!arg) return err('usage: /board <projectId>');
-      const drafts = planboardRepo.list(arg) as any[];
-      return { ok: true, kind: 'table', columns: ['id', 'status', 'tasks'], rows: drafts.map((d) => [d.id, String(d.status ?? ''), String(d.tasks?.length ?? 0)]) };
+      const drafts = planboardRepo.list(arg);
+      return { ok: true, kind: 'table', columns: ['id', 'status', 'tasks'], rows: drafts.map((d) => [d.id, String(d.status ?? ''), String(d.plan?.length ?? 0)]) };
     },
   },
   {
