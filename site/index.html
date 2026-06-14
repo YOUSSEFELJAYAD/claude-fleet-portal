@@ -471,6 +471,24 @@
   .steps-line { position: absolute; left: 0; top: 50%; height: 2px; width: 0%; background: linear-gradient(90deg, var(--amber), var(--teal)); opacity: .55; transform: translateY(-50%); pointer-events: none; z-index: 0; }
   @media (max-width: 980px) { .steps-line { left: 50%; top: 0; width: 2px; height: 0%; transform: translateX(-50%); background: linear-gradient(180deg, var(--amber), var(--teal)); } }
   #steps .step { z-index: 1; }
+
+  /* ── fx: control room monitor ── */
+  #control-room .cr-stage { position: relative; margin-top: var(--space-7); display: flex; justify-content: center; }
+  .cr-monitor { width: min(560px, 100%); }
+  .cr-screen { position: relative; aspect-ratio: 16 / 10; border-radius: 14px; padding: 16px; overflow: hidden;
+    background: linear-gradient(180deg, rgba(255,255,255,.03), transparent), var(--panel);
+    border: 1px solid var(--line2); box-shadow: 0 30px 80px -30px rgba(0,0,0,.8), inset 0 0 0 1px rgba(255,176,0,.06), 0 0 60px -20px rgba(255,176,0,.18); }
+  .cr-screen::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(255,255,255,.02), rgba(255,255,255,.02) 1px, transparent 1px, transparent 3px); }
+  .cr-ui-head { font-family: var(--display); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  .cr-ui-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .cr-ui-cards { display: grid; gap: 8px; margin: 14px 0; }
+  .cr-ui-card { display: flex; justify-content: space-between; align-items: center; font-family: var(--monoF); font-size: 11.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; background: rgba(0,0,0,.25); }
+  .cr-ui-card b { color: var(--amber); font-weight: 600; }
+  .cr-ui-gauge { height: 8px; border-radius: 4px; background: rgba(255,255,255,.06); overflow: hidden; }
+  .cr-ui-gauge > i { display: block; height: 100%; width: 62%; background: linear-gradient(90deg, var(--amberdeep), var(--amber)); }
+  .cr-neck { width: 14px; height: 22px; margin: 0 auto; background: var(--panel2); border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+  .cr-base { width: 120px; height: 10px; margin: 0 auto; border-radius: 0 0 8px 8px; background: var(--panel2); border: 1px solid var(--line); }
 </style>
 <script defer src="https://cdn.jsdelivr.net/npm/lottie-web@5.12.2/build/player/lottie_light.min.js" integrity="sha384-Vtbz3QbtSBqleuQry6kQy5smig1gPZCXUoTFN7RmN9QW47xpEDsV/J1w0Pw0rDJu" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script defer src="assets/lottie/robot.js"></script>
@@ -680,6 +698,36 @@
       <div class="sc-cap">Per-node timelines, a span waterfall and OTLP telemetry stream as the agent runs.</div>
     </div>
 
+  </div>
+</section>
+
+<!-- ── CONTROL ROOM — monitor streaming simulated portal events ──────────── -->
+<section id="control-room">
+  <div class="kicker" data-reveal>control room · live</div>
+  <h2 data-reveal>Your fleet, on one screen</h2>
+  <p class="lead" data-reveal>A simulated peek at what the portal streams while your agents work — runs, cost, merges, guardrails and campaigns, live.</p>
+  <div class="cr-stage" data-reveal>
+    <div id="fx-screen" class="cr-monitor">
+      <div id="fx-screen-ui" class="cr-screen">
+        <div class="cr-ui-head"><span class="cr-ui-dot"></span> fleet · mission control</div>
+        <div class="cr-ui-cards">
+          <div class="cr-ui-card"><span>run · auth refactor</span><b>opus-4.8</b></div>
+          <div class="cr-ui-card"><span>run · landing</span><b>sonnet-4.6</b></div>
+          <div class="cr-ui-card"><span>run · security audit</span><b>codex</b></div>
+        </div>
+        <div class="cr-ui-gauge"><i></i></div>
+      </div>
+      <div class="cr-neck"></div>
+      <div class="cr-base"></div>
+    </div>
+    <div id="fx-pops" class="cr-pops" aria-hidden="true">
+      <div class="fx-pop" id="fx-pop-run"><span class="fx-pop-ic">◉</span><div class="fx-pop-tx"><b>run a3f9</b><em>opus-4.8 · high · running</em></div></div>
+      <div class="fx-pop" id="fx-pop-cost"><span class="fx-pop-ic">◌</span><div class="fx-pop-tx"><b>−74% tokens</b><em>Headroom · $0.38 saved</em></div></div>
+      <div class="fx-pop ok" id="fx-pop-merge"><span class="fx-pop-ic">✓</span><div class="fx-pop-tx"><b>PM merged #128</b><em>into main</em></div></div>
+      <div class="fx-pop warn" id="fx-pop-budget"><span class="fx-pop-ic">⊘</span><div class="fx-pop-tx"><b>auto-killed</b><em>ceiling $5.00 reached</em></div></div>
+      <div class="fx-pop" id="fx-pop-campaign"><span class="fx-pop-ic">⛓</span><div class="fx-pop-tx"><b>campaign planned</b><em>6 subagents spawned</em></div></div>
+      <div class="fx-pop" id="fx-pop-notify"><span class="fx-pop-ic">🔔</span><div class="fx-pop-tx"><b>3 awaiting approval</b><em>review &amp; merge</em></div></div>
+    </div>
   </div>
 </section>
 
