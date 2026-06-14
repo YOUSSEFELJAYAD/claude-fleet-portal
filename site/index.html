@@ -472,43 +472,19 @@
   @media (max-width: 980px) { .steps-line { left: 50%; top: 0; width: 2px; height: 0%; transform: translateX(-50%); background: linear-gradient(180deg, var(--amber), var(--teal)); } }
   #steps .step { z-index: 1; }
 
-  /* ── fx: control room monitor ── */
-  #control-room .cr-stage { position: relative; margin-top: var(--space-7); display: flex; justify-content: center; }
-  @media (max-width: 980px) { #control-room .cr-stage { flex-direction: column; align-items: center; gap: 6px; } }
-  .cr-monitor { width: min(560px, 100%); }
-  .cr-screen { position: relative; aspect-ratio: 16 / 10; border-radius: 14px; padding: 16px; overflow: hidden;
-    background: linear-gradient(180deg, rgba(255,255,255,.03), transparent), var(--panel);
-    border: 1px solid var(--line2); box-shadow: 0 30px 80px -30px rgba(0,0,0,.8), inset 0 0 0 1px rgba(255,176,0,.06), 0 0 60px -20px rgba(255,176,0,.18); }
-  .cr-screen::after { content: ''; position: absolute; inset: 0; pointer-events: none;
-    background: repeating-linear-gradient(0deg, rgba(255,255,255,.02), rgba(255,255,255,.02) 1px, transparent 1px, transparent 3px); }
-  .cr-ui-head { font-family: var(--display); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--faint); display: flex; align-items: center; gap: 8px; }
-  .cr-ui-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--amber); box-shadow: 0 0 8px var(--amber); }
-  .cr-ui-cards { display: grid; gap: 8px; margin: 14px 0; }
-  .cr-ui-card { display: flex; justify-content: space-between; align-items: center; font-family: var(--monoF); font-size: 11.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; background: rgba(0,0,0,.25); }
-  .cr-ui-card b { color: var(--amber); font-weight: 600; }
-  .cr-ui-gauge { height: 8px; border-radius: 4px; background: rgba(255,255,255,.06); overflow: hidden; }
-  .cr-ui-gauge > i { display: block; height: 100%; width: 62%; background: linear-gradient(90deg, var(--amberdeep), var(--amber)); }
-  .cr-neck { width: 14px; height: 22px; margin: 0 auto; background: var(--panel2); border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
-  .cr-base { width: 120px; height: 10px; margin: 0 auto; border-radius: 0 0 8px 8px; background: var(--panel2); border: 1px solid var(--line); }
-  /* ── fx: control room popups ── */
-  .cr-pops { position: absolute; top: 6%; right: max(8px, calc(50% - 470px)); width: 230px; height: 84%; pointer-events: none; }
-  @media (max-width: 980px) { .cr-pops { position: static; width: 100%; height: auto; margin-top: 18px; } }
-  .fx-pop { position: absolute; right: 0; bottom: 0; width: 100%;
-    display: flex; align-items: center; gap: 10px; padding: 11px 13px; border-radius: 10px;
-    background: linear-gradient(180deg, rgba(255,255,255,.03), transparent), rgba(12,14,19,.92);
-    border: 1px solid var(--line2); box-shadow: 0 18px 50px -22px rgba(0,0,0,.85);
-    opacity: 0; transform: translateY(14px) scale(.96); will-change: opacity, transform;
-    transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
-  .fx-pop.show { opacity: 1; transform: none; }
+  /* ── fx: global event toasts (bottom-left, app-style) ── */
+  #fx-toasts { position: fixed; left: 20px; bottom: 20px; width: 250px; height: 64px; z-index: 55; pointer-events: none; opacity: 0; transition: opacity .5s var(--ease-out); }
+  #fx-toasts.live { opacity: 1; }
+  #fx-toasts .fx-pop { position: absolute; left: 0; bottom: 0; width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 13px; border-radius: 10px; background: linear-gradient(180deg, rgba(255,255,255,.03), transparent), rgba(12,14,19,.94); border: 1px solid var(--line2); box-shadow: 0 18px 50px -22px rgba(0,0,0,.9); opacity: 0; transform: translateY(14px) scale(.96); will-change: opacity, transform; transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
+  #fx-toasts .fx-pop.show { opacity: 1; transform: none; }
   .fx-pop-ic { font-size: 16px; color: var(--amber); flex: none; }
   .fx-pop.ok .fx-pop-ic { color: var(--green); }
   .fx-pop.warn .fx-pop-ic { color: var(--red); }
   .fx-pop-tx { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
   .fx-pop-tx b { font-family: var(--display); font-size: 13px; letter-spacing: .02em; color: var(--ink); }
-  .fx-pop-tx em { font-family: var(--monoF); font-size: 10.5px; font-style: normal; color: var(--faint); }
-  .cr-pops.static { position: static; width: 100%; height: auto; margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
-  .cr-pops.static .fx-pop { position: static; opacity: 1; transform: none; transition: none; }
-  @media (prefers-reduced-motion: reduce) { .fx-pop { transition: none; } }
+  .fx-pop-tx em { font-family: var(--monoF); font-size: 10.5px; font-style: normal; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 600px) { #fx-toasts { left: 12px; right: 12px; width: auto; bottom: 12px; } }
+  @media (prefers-reduced-motion: reduce) { #fx-toasts { display: none !important; } }
 
   /* ── fx: agent-robot scroll guide ── */
   #fx-robot { position: fixed; top: 0; left: 0; width: 88px; height: 88px; z-index: 60; pointer-events: none;
@@ -539,6 +515,16 @@
 </nav>
 
 <div id="fx-robot" aria-hidden="true"><div id="fx-robot-lottie"></div></div>
+
+<!-- ── fx: global portal-event toasts ── -->
+<div id="fx-toasts" aria-hidden="true">
+  <div class="fx-pop" id="fx-pop-run"><span class="fx-pop-ic">◉</span><div class="fx-pop-tx"><b>run a3f9</b><em>opus-4.8 · high · running</em></div></div>
+  <div class="fx-pop" id="fx-pop-cost"><span class="fx-pop-ic">◌</span><div class="fx-pop-tx"><b>−74% tokens</b><em>Headroom · $0.38 saved</em></div></div>
+  <div class="fx-pop ok" id="fx-pop-merge"><span class="fx-pop-ic">✓</span><div class="fx-pop-tx"><b>PM merged #128</b><em>into main</em></div></div>
+  <div class="fx-pop warn" id="fx-pop-budget"><span class="fx-pop-ic">⊘</span><div class="fx-pop-tx"><b>auto-killed</b><em>ceiling $5.00 reached</em></div></div>
+  <div class="fx-pop" id="fx-pop-campaign"><span class="fx-pop-ic">⛓</span><div class="fx-pop-tx"><b>campaign planned</b><em>6 subagents spawned</em></div></div>
+  <div class="fx-pop" id="fx-pop-notify"><span class="fx-pop-ic">🔔</span><div class="fx-pop-tx"><b>3 awaiting approval</b><em>review &amp; merge</em></div></div>
+</div>
 
 <!-- ── HERO with three.js fleet ─────────────────────────────────────────── -->
 <header id="hero">
@@ -727,36 +713,6 @@
       <div class="sc-cap">Per-node timelines, a span waterfall and OTLP telemetry stream as the agent runs.</div>
     </div>
 
-  </div>
-</section>
-
-<!-- ── CONTROL ROOM — monitor streaming simulated portal events ──────────── -->
-<section id="control-room">
-  <div class="kicker" data-reveal>control room · live</div>
-  <h2 data-reveal>Your fleet, on one screen</h2>
-  <p class="lead" data-reveal>A simulated peek at what the portal streams while your agents work — runs, cost, merges, guardrails and campaigns, live.</p>
-  <div class="cr-stage" data-reveal>
-    <div id="fx-screen" class="cr-monitor">
-      <div id="fx-screen-ui" class="cr-screen">
-        <div class="cr-ui-head"><span class="cr-ui-dot"></span> fleet · mission control</div>
-        <div class="cr-ui-cards">
-          <div class="cr-ui-card"><span>run · auth refactor</span><b>opus-4.8</b></div>
-          <div class="cr-ui-card"><span>run · landing</span><b>sonnet-4.6</b></div>
-          <div class="cr-ui-card"><span>run · security audit</span><b>codex</b></div>
-        </div>
-        <div class="cr-ui-gauge"><i></i></div>
-      </div>
-      <div class="cr-neck"></div>
-      <div class="cr-base"></div>
-    </div>
-    <div id="fx-pops" class="cr-pops" aria-hidden="true">
-      <div class="fx-pop" id="fx-pop-run"><span class="fx-pop-ic">◉</span><div class="fx-pop-tx"><b>run a3f9</b><em>opus-4.8 · high · running</em></div></div>
-      <div class="fx-pop" id="fx-pop-cost"><span class="fx-pop-ic">◌</span><div class="fx-pop-tx"><b>−74% tokens</b><em>Headroom · $0.38 saved</em></div></div>
-      <div class="fx-pop ok" id="fx-pop-merge"><span class="fx-pop-ic">✓</span><div class="fx-pop-tx"><b>PM merged #128</b><em>into main</em></div></div>
-      <div class="fx-pop warn" id="fx-pop-budget"><span class="fx-pop-ic">⊘</span><div class="fx-pop-tx"><b>auto-killed</b><em>ceiling $5.00 reached</em></div></div>
-      <div class="fx-pop" id="fx-pop-campaign"><span class="fx-pop-ic">⛓</span><div class="fx-pop-tx"><b>campaign planned</b><em>6 subagents spawned</em></div></div>
-      <div class="fx-pop" id="fx-pop-notify"><span class="fx-pop-ic">🔔</span><div class="fx-pop-tx"><b>3 awaiting approval</b><em>review &amp; merge</em></div></div>
-    </div>
   </div>
 </section>
 
@@ -1881,30 +1837,34 @@ new IntersectionObserver((entries) => {
   };
 })();
 </script>
-<!-- ── fx: control-room popup stream ── -->
+<!-- ── fx: global portal-event toast stream ── -->
 <script>
 (() => {
   const start = () => {
-    const host = document.getElementById('fx-pops');
-    const cr = document.getElementById('control-room');
-    if (!host || !cr) return;
+    const host = document.getElementById('fx-toasts');
+    if (!host) return;
     const pops = [...host.querySelectorAll('.fx-pop')];
     const reduce = window.__reduceMotion ?? matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduce || matchMedia('(max-width: 980px)').matches) { host.classList.add('static'); return; }
-    let i = 0, timer = null, inView = false;
-    function next() {
+    if (reduce || !pops.length) return;
+    const cta = document.getElementById('launch-cta');
+    let ctaVis = false;
+    if (cta) new IntersectionObserver((es) => { for (const e of es) ctaVis = e.isIntersecting; sync(); }, { threshold: 0 }).observe(cta);
+    let i = 0, timer = null, running = false;
+    function showNext() {
       pops.forEach((p) => p.classList.remove('show'));
-      const p = pops[i % pops.length]; i++;
-      p.classList.add('show');
-      timer = setTimeout(() => { p.classList.remove('show'); timer = setTimeout(next, 360); }, 2200);
+      const p = pops[i % pops.length]; i++; p.classList.add('show');
+      timer = setTimeout(() => { p.classList.remove('show'); timer = setTimeout(showNext, 380); }, 2600);
     }
-    new IntersectionObserver((es) => {
-      for (const e of es) {
-        inView = e.isIntersecting;
-        if (inView && !timer) next();
-        else if (!inView && timer) { clearTimeout(timer); timer = null; pops.forEach((p) => p.classList.remove('show')); }
-      }
-    }, { threshold: 0.25 }).observe(cr);
+    function wantLive() { return !document.hidden && !ctaVis && window.scrollY > window.innerHeight * 0.6; }
+    function sync() {
+      const live = wantLive();
+      host.classList.toggle('live', live);
+      if (live && !running) { running = true; showNext(); }
+      else if (!live && running) { running = false; clearTimeout(timer); timer = null; pops.forEach((p) => p.classList.remove('show')); }
+    }
+    addEventListener('scroll', sync, { passive: true });
+    document.addEventListener('visibilitychange', sync);
+    sync();
   };
   if (document.readyState !== 'loading') start(); else addEventListener('DOMContentLoaded', start);
 })();
@@ -1916,46 +1876,23 @@ new IntersectionObserver((entries) => {
   const start = () => {
     const robot = document.getElementById('fx-robot');
     const mount = document.getElementById('fx-robot-lottie');
-    const cr = document.getElementById('control-room');
     if (!robot || !mount) return;
     const reduce = window.__reduceMotion ?? matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduce) return; // CSS hides it
+    if (reduce) return;
     const lerp = window.__lerp || ((a,b,k)=>a+(b-a)*k);
-
     let anim = null;
-    function build() {
-      if (anim || !window.lottie || !window.__fxRobotData) return;
-      anim = window.lottie.loadAnimation({ container: mount, renderer: 'svg', loop: true, autoplay: true, animationData: window.__fxRobotData });
-    }
+    function build() { if (anim || !window.lottie || !window.__fxRobotData) return; anim = window.lottie.loadAnimation({ container: mount, renderer: 'svg', loop: true, autoplay: true, animationData: window.__fxRobotData }); }
     (function waitL(n){ if (window.lottie && window.__fxRobotData) build(); else if (n>0) setTimeout(()=>waitL(n-1), 60); })(60);
     document.addEventListener('visibilitychange', () => { if (!anim) return; document.hidden ? anim.pause() : anim.play(); });
-
-    const flight = () => window.innerWidth >= 1200; // enough side gutter to fly
-    let crVis = false;
-    if (cr) new IntersectionObserver((es)=>{ for (const e of es) crVis = e.isIntersecting; if (window.__ticker) window.__ticker.wake(); }, { threshold: 0.2 }).observe(cr);
-
+    const flight = () => window.innerWidth >= 1200;
     let curX = window.innerWidth - 120, curY = window.innerHeight * 0.45;
-    function targetXY() {
-      const vw = window.innerWidth, vh = window.innerHeight;
-      if (crVis && cr) {
-        if (!flight()) { // mobile: perch above the monitor's top-right, clear of the cards
-          const mon = (cr.querySelector('.cr-screen') || cr).getBoundingClientRect();
-          return [Math.max(10, Math.min(vw - 96, mon.right - 64)), Math.max(70, mon.top - 38)];
-        }
-        const r = cr.getBoundingClientRect();
-        const tx = Math.min(vw - 110, vw * 0.5 + 250);
-        const ty = Math.max(80, Math.min(vh - 150, r.top + r.height * 0.32));
-        return [tx, ty];
-      }
-      const sy = window.scrollY;
+    function frame() {
+      const show = flight() && window.scrollY > window.innerHeight * 0.55;
+      robot.classList.toggle('on', show);
+      if (!show) return false;
+      const vw = window.innerWidth, vh = window.innerHeight, sy = window.scrollY;
       const tx = vw - 128 - 26 * Math.sin(sy / 320);
       const ty = Math.max(96, Math.min(vh - 150, vh * 0.42 + 72 * Math.sin(sy / 260)));
-      return [tx, ty];
-    }
-    function frame() {
-      const show = flight() || crVis;
-      robot.classList.toggle('on', show);
-      const [tx, ty] = targetXY();
       curX = lerp(curX, tx, 0.12); curY = lerp(curY, ty, 0.12);
       robot.style.transform = `translate3d(${curX.toFixed(1)}px, ${curY.toFixed(1)}px, 0)`;
       return (Math.abs(curX - tx) > 0.3 || Math.abs(curY - ty) > 0.3);
