@@ -68,13 +68,22 @@ describe('listCommands', () => {
   });
 });
 
-describe('danger verbs route to the Inbox', () => {
-  it('/stop-all parks an approval and does NOT execute', async () => {
+describe('operational verbs execute directly', () => {
+  it('/stop-all stops every run directly (operational, NOT inbox-gated)', async () => {
     const r = await dispatchCommand('/stop-all', '/repo');
     expect(r.ok).toBe(true);
+    expect(stopAllSpy).toHaveBeenCalledTimes(1);
+    expect(enqueueSpy).not.toHaveBeenCalled();
+    expect(String(r.text)).toMatch(/stopped 3 run/);
+  });
+});
+
+describe('danger verbs route to the Inbox', () => {
+  it('/reset-data parks an approval and does NOT execute', async () => {
+    const r = await dispatchCommand('/reset-data', '/repo');
+    expect(r.ok).toBe(true);
     expect(enqueueSpy).toHaveBeenCalledTimes(1);
-    expect(enqueueSpy.mock.calls[0][0]).toMatchObject({ command: 'stop-all', cwd: '/repo' });
-    expect(stopAllSpy).not.toHaveBeenCalled();
+    expect(enqueueSpy.mock.calls[0][0]).toMatchObject({ command: 'reset-data', cwd: '/repo' });
     expect(String(r.text)).toMatch(/approv/i);
   });
 });
@@ -202,10 +211,18 @@ describe('full registry coverage', () => {
   });
   it('every danger verb carries danger:true and resultKind ack', () => {
     const cmds = listCommands();
-    for (const name of ['stop-all', 'reset-data', 'self-update']) {
+    for (const name of ['reset-data', 'self-update']) {
       const c = cmds.find((x) => x.name === name)!;
       expect(c.danger).toBe(true);
       expect(c.resultKind).toBe('ack');
+    }
+  });
+  it('operational verbs are NOT danger-gated (kill/campaign/stop/stop-all execute directly)', () => {
+    const cmds = listCommands();
+    for (const name of ['kill', 'campaign', 'stop', 'stop-all']) {
+      const c = cmds.find((x) => x.name === name)!;
+      expect(c).toBeTruthy();
+      expect(c.danger).not.toBe(true);
     }
   });
   it('/reset-data and /self-update both park approvals (never execute)', async () => {

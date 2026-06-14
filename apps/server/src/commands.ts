@@ -63,7 +63,7 @@ const COMMANDS: CommandEntry[] = [
   {
     name: 'kill', group: 'control', description: 'Stop a run', usage: '/kill <run-id>',
     args: [{ name: 'run-id', required: true, type: 'run-id', source: 'running-runs', hint: 'a running run id' }],
-    resultKind: 'ack', danger: true,
+    resultKind: 'ack',
     run: async ({ arg }) => {
       if (!arg) return err('usage: /kill <run-id>');
       try { registry.stop(arg); return ok(`stopped ${arg}`); }
@@ -86,7 +86,7 @@ const COMMANDS: CommandEntry[] = [
   {
     name: 'campaign', group: 'control', description: 'Start a campaign', usage: '/campaign <objective>',
     args: [{ name: 'objective', required: true, type: 'string', hint: 'campaign objective' }],
-    resultKind: 'ack', danger: true,
+    resultKind: 'ack',
     run: async ({ arg, cwd }) => {
       if (!arg) return err('usage: /campaign <objective>');
       try { const c = await campaigns.create({ objective: arg, cwd }); return ok(`started campaign ${c.id}`); }
@@ -208,10 +208,8 @@ const COMMANDS: CommandEntry[] = [
     usage: '/stop-all',
     args: [],
     resultKind: 'ack',
-    danger: true,
     async run() {
-      // never reached while danger:true (dispatchCommand parks it); kept for when an
-      // approved action replays the command. Returns a text ack of the count stopped.
+      // Operational (not destructive-data): stops running agents directly, as before.
       const n = registry.stopAll();
       return { ok: true, kind: 'text', text: `stopped ${n} run(s)` };
     },
@@ -349,7 +347,7 @@ export async function dispatchCommand(line: string, cwd: string): Promise<ChatCo
   const cmd = COMMANDS.find((c) => c.name === name);
   if (!cmd) return err(`unknown command: /${name} — try /help`);
   if (cmd.danger) {
-    const id = enqueueApproval({ command: cmd.name, summary: cmd.description, cwd });
+    const id = enqueueApproval({ command: cmd.name, summary: cmd.description, cwd, line });
     return { ok: true, kind: 'text', text: `Queued "/${cmd.name}" for approval (Inbox · ${id}). It will run once approved.` };
   }
   return cmd.run({ args: rest, arg: rest.join(' '), cwd });

@@ -28,10 +28,11 @@ describe('dispatchCommand', () => {
     expect(r.rows?.some((row) => row.includes('z9'))).toBe(false); // completed excluded
   });
 
-  it('/kill <id> parks an Inbox approval (danger-gated)', async () => {
+  it('/kill <id> executes directly and stops the run', async () => {
+    const { registry } = await import('../src/registry.js');
     const r = await dispatchCommand('/kill a1', '/repo');
+    expect((registry.stop as any)).toHaveBeenCalledWith('a1');
     expect(r.ok).toBe(true);
-    expect(String(r.text)).toMatch(/approv/i);
   });
 
   it('/launch <prompt> starts a run and returns its id', async () => {

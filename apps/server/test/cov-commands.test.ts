@@ -108,12 +108,25 @@ describe('dispatchCommand — /agents', () => {
 });
 
 describe('dispatchCommand — /kill', () => {
-  // /kill is danger:true — dispatchCommand parks it in the Inbox instead of executing.
-  it('parks an Inbox approval for any /kill invocation (danger-gated)', async () => {
+  // /kill is OPERATIONAL (not destructive-data) — it executes directly, as it did before.
+  it('executes directly and stops the named run', async () => {
     const r = await dispatchCommand('/kill a1', '/repo');
+    expect(registry.stop as any).toHaveBeenCalledWith('a1');
     expect(r.ok).toBe(true);
-    expect(String(r.text)).toMatch(/approv/i);
-    expect(registry.stop as any).not.toHaveBeenCalled();
+    expect(r.text).toBe('stopped a1');
+  });
+
+  it('errors with usage when no run id is given', async () => {
+    const r = await dispatchCommand('/kill', '/repo');
+    expect(r.ok).toBe(false);
+    expect(r.text).toBe('usage: /kill <run-id>');
+  });
+
+  it('returns the error message when stop throws (catch)', async () => {
+    stopBehavior.fn = () => { throw new Error('no such run'); };
+    const r = await dispatchCommand('/kill gone', '/repo');
+    expect(r.ok).toBe(false);
+    expect(r.text).toBe('no such run');
   });
 });
 
@@ -159,12 +172,26 @@ describe('dispatchCommand — /launch', () => {
 });
 
 describe('dispatchCommand — /campaign', () => {
-  // /campaign is danger:true — dispatchCommand parks it in the Inbox instead of executing.
-  it('parks an Inbox approval for any /campaign invocation (danger-gated)', async () => {
+  // /campaign is OPERATIONAL — it executes directly, creating a campaign.
+  it('executes directly and creates a campaign', async () => {
+    campaignCreateBehavior.fn = async () => ({ id: 'camp-9' });
     const r = await dispatchCommand('/campaign ship the release', '/repo');
+    expect((campaigns.create as any)).toHaveBeenCalledWith({ objective: 'ship the release', cwd: '/repo' });
     expect(r.ok).toBe(true);
-    expect(String(r.text)).toMatch(/approv/i);
-    expect((campaigns.create as any)).not.toHaveBeenCalled();
+    expect(r.text).toBe('started campaign camp-9');
+  });
+
+  it('errors with usage when no objective is given', async () => {
+    const r = await dispatchCommand('/campaign', '/repo');
+    expect(r.ok).toBe(false);
+    expect(r.text).toBe('usage: /campaign <objective>');
+  });
+
+  it('returns the error message when create throws (catch)', async () => {
+    campaignCreateBehavior.fn = async () => { throw new Error('campaign cap'); };
+    const r = await dispatchCommand('/campaign do it', '/repo');
+    expect(r.ok).toBe(false);
+    expect(r.text).toBe('campaign cap');
   });
 });
 
