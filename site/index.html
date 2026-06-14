@@ -1621,26 +1621,29 @@ new IntersectionObserver((entries) => {
 
 <script>
 (() => {
-  const steps = [...document.querySelectorAll('#steps .step')];
-  const line = document.querySelector('.steps-line');
-  const root = document.getElementById('steps');
-  if (!steps.length || !root) return;
-  const vertical = () => window.matchMedia('(max-width: 980px)').matches;
-  const apply = (p) => {
-    const pct = Math.max(0, Math.min(1, (p - 0.15) / 0.7));
-    if (line) line.style[vertical() ? 'height' : 'width'] = (pct * 100) + '%';
-    const active = Math.min(steps.length - 1, Math.floor(pct * steps.length));
-    steps.forEach((el, k) => {
-      el.classList.toggle('done', k < active || pct >= 1);
-      el.classList.toggle('active', k === active && pct > 0 && pct < 1);
-    });
+  const start = () => {
+    const steps = [...document.querySelectorAll('#steps .step')];
+    const line = document.querySelector('.steps-line');
+    const root = document.getElementById('steps');
+    if (!steps.length || !root) return;
+    const vertical = () => window.matchMedia('(max-width: 980px)').matches;
+    const apply = (p) => {
+      const pct = Math.max(0, Math.min(1, (p - 0.15) / 0.7));
+      if (line) line.style[vertical() ? 'height' : 'width'] = (pct * 100) + '%';
+      const active = Math.min(steps.length - 1, Math.floor(pct * steps.length));
+      steps.forEach((el, k) => {
+        el.classList.toggle('done', k < active || pct >= 1);
+        el.classList.toggle('active', k === active && pct > 0 && pct < 1);
+      });
+    };
+    steps.forEach((el, k) => el.addEventListener('pointerenter', () => {
+      steps.forEach((s, j) => s.classList.toggle('active', j === k));
+    }));
+    if (window.__onScrollProgress) window.__onScrollProgress(root, apply);
+    else { steps.forEach((s) => s.classList.add('done')); if (line) line.style.width = '100%'; }
   };
-  // hover lets a visitor inspect a single step
-  steps.forEach((el, k) => el.addEventListener('pointerenter', () => {
-    steps.forEach((s, j) => s.classList.toggle('active', j === k));
-  }));
-  if (window.__onScrollProgress) window.__onScrollProgress(root, apply);
-  else { steps.forEach((s) => s.classList.add('done')); if (line) line.style.width = '100%'; }
+  if (window.__onScrollProgress) start();
+  else window.addEventListener('DOMContentLoaded', start);
 })();
 </script>
 
