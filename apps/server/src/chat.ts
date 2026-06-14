@@ -14,7 +14,6 @@ import type {
   ChatTurnResponse, AddChatMessageRequest, ChatAttachment,
 } from '@fleet/shared';
 
-export { db };
 export default db;
 
 db.exec(`
