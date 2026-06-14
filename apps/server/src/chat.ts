@@ -188,6 +188,40 @@ export function deriveSessionState(session: ChatSession): { state: ChatSessionSt
   return { state: 'idle', live: false };
 }
 
+/** The chat-control envelope the chat-scoped SSE emits alongside run events (§4). Owned here; the
+ *  ChatSessionState literal is from @fleet/shared. */
+export interface SessionStateEnvelope { kind: 'session_state'; state: ChatSessionState; live: boolean; }
+
+/**
+ * §4 — chat-scoped SSE. Subscribes to the SESSION (not a run id): proxies whichever run currently
+ * backs it, so a kill→resume (run id changes underneath) and a page reload both re-attach cleanly.
+ * `mkSse` is server.ts's connection-capped SSE factory (passed in to keep the hijack plumbing there).
+ */
+export function registerChatStreamRoute(
+  app: FastifyInstance,
+  mkSse: (reply: any, req: any) => { send: (obj: unknown) => void; stop: () => void } | null,
+) {
+  app.get('/api/chat/sessions/:id/stream', (req, reply) => {
+    const id = (req.params as any).id;
+    const session = chatRepo.getSession(id);
+    if (!session) { reply.code(404).send({ error: 'not found' }); return; }
+    const s = mkSse(reply, req);
+    if (!s) return; // 503 already sent (connection cap)
+    const { send, stop } = s;
+
+    // initial chat-control frame
+    const st = deriveSessionState(session);
+    send({ kind: 'session_state', state: st.state, live: st.live } satisfies SessionStateEnvelope);
+
+    // proxy the current backing run, if any (re-resolve per connect so reload re-attaches).
+    const runId = chatLive.liveRunId(id) ?? session.runId;
+    let unsub: (() => void) | null = null;
+    if (runId) unsub = registry.subscribeRun(runId, send);
+
+    reply.raw.on('close', () => { unsub?.(); stop(); });
+  });
+}
+
 export function registerChatRoutes(app: FastifyInstance) {
   app.get('/api/chat/sessions', async () => chatRepo.listSessions());
 

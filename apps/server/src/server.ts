@@ -29,7 +29,7 @@ import { registerReleaseRoutes } from './release.js';
 import { registerBenchmarkRoutes } from './benchmarks.js'; // F4+F5 — benchmark mode + best-of-N
 import { registerAddonRoutes, resetAddonRuntimeForDataWipe } from './addons.js'; // §22 — add-on marketplace (compression/headroom)
 import { registerResearchRoutes } from './research.js'; // §28 — web research (SearXNG)
-import { registerChatRoutes } from './chat.js'; // §30 — chat dashboard
+import { registerChatRoutes, registerChatStreamRoute } from './chat.js'; // §30 — chat dashboard
 import { listCommands } from './commands.js';
 import { registerPackRoutes } from './packs.js'; // §23 — tool/skill packs (launch presets)
 import { registerSettingsRoutes } from './settings.js'; // §31 — environment & settings panel
@@ -232,6 +232,7 @@ export function buildServer() {
   registerAddonRoutes(app); // §22 — add-on marketplace + headroom compression-proxy lifecycle
   registerSettingsRoutes(app); // §31 — environment & settings panel
   registerChatRoutes(app); // §30 — chat dashboard
+  registerChatStreamRoute(app, sse); // §4 — chat-scoped SSE (proxies the backing run)
   app.get('/api/commands', async () => listCommands());
   registerResearchRoutes(app); // §28 — web research (SearXNG)
   registerPackRoutes(app); // §23 — tool/skill packs (launch presets)
