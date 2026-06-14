@@ -14,5 +14,20 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./test/setup.ts'],
     include: ['test/**/*.test.{ts,tsx}'],
+    // Exclude queueMicrotask and setImmediate from faked timers.
+    // queueMicrotask: React 18 uses it for synchronous state flush (scheduleMicrotask →
+    //   flushSyncCallbacks). Faking it defers React renders until the next clock tick.
+    // setImmediate: React 18's scheduler uses it to batch/schedule concurrent work.
+    //   Faking it causes an infinite loop inside act() when waitFor advances fake timers
+    //   (React keeps pushing work into the act queue via scheduleCallback → actQueue.push).
+    fakeTimers: {
+      toFake: [
+        'setTimeout',
+        'clearTimeout',
+        'setInterval',
+        'clearInterval',
+        'Date',
+      ],
+    },
   },
 });
