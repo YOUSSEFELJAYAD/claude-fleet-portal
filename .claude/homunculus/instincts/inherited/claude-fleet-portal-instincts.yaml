@@ -1,0 +1,431 @@
+# Instincts generated from https://github.com/YOUSSEFELJAYAD/claude-fleet-portal
+# Generated: 2026-06-14T16:48:28.761Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: claude-fleet-portal-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: feat, fix, docs
+
+## Evidence
+
+- 12 commits analyzed
+- Detected conventional commit pattern
+- Examples: docs(landing): spec for bold motion + craft redesign (starter merge), feat(landing): add spacing/type/motion design-token scales
+
+---
+id: claude-fleet-portal-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Commit Length
+
+## Action
+
+Write moderate-length commit messages (~71 characters)
+
+## Evidence
+
+- Average commit message length: 71 chars
+- Based on 12 commits
+
+---
+id: claude-fleet-portal-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Naming Files
+
+## Action
+
+Use kebab-case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: kebab-case
+
+---
+id: claude-fleet-portal-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: claude-fleet-portal-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: claude-fleet-portal-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: claude-fleet-portal-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~18x per month
+- Files: 
+
+---
+id: claude-fleet-portal-workflow-spec-plan-implement-feature
+trigger: "when doing spec plan implement feature"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Workflow Spec Plan Implement Feature
+
+## Action
+
+Follow the spec-plan-implement-feature workflow:
+1. Write a specification document describing the feature or redesign in docs/superpowers/specs/
+2. Write an implementation plan in docs/superpowers/plans/
+3. Iteratively implement the feature in site/index.html, making multiple commits for feature additions and bug fixes
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: docs/superpowers/specs/*.md, docs/superpowers/plans/*.md, site/index.html
+
+---
+id: claude-fleet-portal-workflow-iterative-feature-implementation-in-index-html
+trigger: "when doing iterative feature implementation in index html"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Workflow Iterative Feature Implementation In Index Html
+
+## Action
+
+Follow the iterative-feature-implementation-in-index-html workflow:
+1. Implement a sub-feature or design token in site/index.html
+2. Commit the change with a descriptive message
+3. Repeat for each additional sub-feature, animation, or bug fix
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~10x per month
+- Files: site/index.html
+
+---
+id: claude-fleet-portal-instinct-file-naming
+trigger: "When creating a new file"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct File Naming
+
+## Action
+
+Name the file using kebab-case (e.g., my-component.ts)
+
+## Evidence
+
+- Pattern in namingConventions.files: kebab-case
+
+---
+id: claude-fleet-portal-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Function Naming
+
+## Action
+
+Name the function using camelCase (e.g., getTokenScale)
+
+## Evidence
+
+- Pattern in namingConventions.functions: camelCase
+
+---
+id: claude-fleet-portal-instinct-class-naming
+trigger: "When defining a new class"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Class Naming
+
+## Action
+
+Name the class using PascalCase (e.g., MotionEngine)
+
+## Evidence
+
+- Pattern in namingConventions.classes: PascalCase
+
+---
+id: claude-fleet-portal-instinct-constant-naming
+trigger: "When defining a new constant"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Constant Naming
+
+## Action
+
+Name the constant using SCREAMING_SNAKE_CASE (e.g., DEFAULT_DURATION)
+
+## Evidence
+
+- Pattern in namingConventions.constants: SCREAMING_SNAKE_CASE
+
+---
+id: claude-fleet-portal-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Import Style
+
+## Action
+
+Use relative import paths (e.g., import { foo } from './foo')
+
+## Evidence
+
+- Pattern in importStyle: relative
+
+---
+id: claude-fleet-portal-instinct-export-style
+trigger: "When exporting modules or functions"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Export Style
+
+## Action
+
+Use named exports (e.g., export function foo() {})
+
+## Evidence
+
+- Pattern in exportStyle: named
+
+---
+id: claude-fleet-portal-instinct-test-location
+trigger: "When adding or updating tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Test Location
+
+## Action
+
+Place test files in a separate location from source files
+
+## Evidence
+
+- Pattern in architecture.folderStructure.testLocation: separate
+
+---
+id: claude-fleet-portal-instinct-test-after-feature
+trigger: "After implementing a new feature"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Test After Feature
+
+## Action
+
+Add or update tests for the new feature
+
+## Evidence
+
+- Workflow: feature-development commitSequence includes 'Add tests for feature'
+
+---
+id: claude-fleet-portal-instinct-commit-format
+trigger: "When making a git commit"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Commit Format
+
+## Action
+
+Format the commit message using the conventional commit style: <type>(<scope>): <description>
+
+## Evidence
+
+- Pattern in commits.type: conventional
+- Examples: 'feat(landing): ...', 'fix(landing): ...', 'docs(landing): ...'
+
+---
+id: claude-fleet-portal-instinct-commit-prefixes
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Commit Prefixes
+
+## Action
+
+Use one of the prefixes: feat, fix, docs
+
+## Evidence
+
+- Pattern in commits.prefixes: ['feat', 'fix', 'docs']
+- Examples: 'feat(landing): ...', 'fix(landing): ...', 'docs(landing): ...'
+
+---
+id: claude-fleet-portal-instinct-spec-plan-implement-workflow
+trigger: "When introducing a significant new feature or redesign"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Spec Plan Implement Workflow
+
+## Action
+
+Follow the workflow: write a spec in docs/superpowers/specs/, write an implementation plan in docs/superpowers/plans/, then iteratively implement in site/index.html
+
+## Evidence
+
+- Workflow: spec-plan-implement-feature
+- Files: docs/superpowers/specs/*.md, docs/superpowers/plans/*.md, site/index.html
+
+---
+id: claude-fleet-portal-instinct-iterative-feature-index-html
+trigger: "When developing or refining a major landing page feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: YOUSSEFELJAYAD/claude-fleet-portal
+---
+
+# Claude Fleet Portal Instinct Iterative Feature Index Html
+
+## Action
+
+Iteratively implement and commit each sub-feature or fix directly in site/index.html with descriptive commit messages
+
+## Evidence
+
+- Workflow: iterative-feature-implementation-in-index-html
+- Files: site/index.html
+
