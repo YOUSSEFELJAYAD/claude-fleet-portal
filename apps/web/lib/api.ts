@@ -39,6 +39,8 @@ import type {
   ChatTurnResponse,
   AddChatMessageRequest,
   ChatCommandResult,
+  CommandDef,
+  FileFindResult,
 } from '@fleet/shared';
 // F10 — config-as-code export/import types (defined locally to avoid cross-package imports)
 export interface ExportedSetup {
@@ -451,4 +453,10 @@ export const api = {
   chatTurn: (id: string, message: string) => j<ChatTurnResponse>(`/api/chat/sessions/${id}/turn`, { method: 'POST', body: JSON.stringify({ message }) }),
   addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
+  // ── chat-surface upgrade (§5/§6) ──
+  /** §5.3 — `/` palette catalog (server strips CommandDef.run before serializing). */
+  listCommands: () => j<CommandDef[]>('/api/commands'),
+  /** §6.1 — `@` fuzzy file/folder search scoped to the session cwd. */
+  findFiles: (cwd: string, q: string, limit?: number) =>
+    j<FileFindResult[]>('/api/files/find' + qs({ cwd, q, limit: limit != null ? String(limit) : undefined })),
 };
