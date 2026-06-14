@@ -23,6 +23,17 @@ describe('useChatStream', () => {
     expect(result.current.subagents).toEqual([{ runId: 'sub-1', name: 'reviewer' }]);
   });
 
+  it('adopts runId from a session_state frame (fix 04 — idle/resumable sessions report their backing run)', () => {
+    const { result } = renderHook(() => useChatStream('sess-1'));
+    const es = FakeEventSource.last();
+    act(() => es.emitOpen());
+    // server now carries the real backing run id on the chat-control envelope (no hello/event needed)
+    act(() => es.emit({ kind: 'session_state', state: 'idle', live: false, runId: 'run-z' }));
+    expect(result.current.runId).toBe('run-z');
+    expect(result.current.state).toBe('idle');
+    expect(result.current.live).toBe(false);
+  });
+
   it('budget exhaustion: a session_state idle envelope flips a live session to resumable (no error)', () => {
     const { result } = renderHook(() => useChatStream('sess-1'));
     const es = FakeEventSource.last();

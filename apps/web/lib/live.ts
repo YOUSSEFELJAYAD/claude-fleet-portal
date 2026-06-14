@@ -290,6 +290,9 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
       if (m.kind === 'session_state') {
         setState(m.state as ChatSessionState);
         setLive(Boolean(m.live));
+        // fix 04 — the envelope now carries the real backing run id; adopt it so idle/resumable
+        // sessions report their run (the agents panel resolves it) without waiting on hello/events.
+        if (m.runId != null) setRunId(m.runId);
         return;
       }
       if (m.kind === 'hello') {

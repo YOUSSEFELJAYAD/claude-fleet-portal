@@ -210,7 +210,7 @@ export function engineSafeState(engine: string, derived: { state?: ChatSessionSt
 
 /** The chat-control envelope the chat-scoped SSE emits alongside run events (§4). Owned here; the
  *  ChatSessionState literal is from @fleet/shared. */
-export interface SessionStateEnvelope { kind: 'session_state'; state: ChatSessionState; live: boolean; }
+export interface SessionStateEnvelope { kind: 'session_state'; state: ChatSessionState; live: boolean; runId?: string | null; }
 
 /**
  * §4 — chat-scoped SSE. Subscribes to the SESSION (not a run id): proxies whichever run currently
@@ -231,23 +231,39 @@ export function registerChatStreamRoute(
   app: FastifyInstance,
   mkSse: (reply: any, req: any) => { send: (obj: unknown) => void; stop: () => void } | null,
 ) {
-  app.get('/api/chat/sessions/:id/stream', (req, reply) => {
+  app.get('/api/chat/sessions/:id/stream', async (req, reply) => {
     const id = (req.params as any).id;
     const session = chatRepo.getSession(id);
     if (!session) { reply.code(404).send({ error: 'not found' }); return; }
+
+    // Fix 04 — for a CLAUDE session, ensure a held interactive process exists on connect (focus)
+    // BEFORE opening the SSE. This guarantees a backing run to subscribe to even for a brand-new
+    // session (no runId yet), so the FIRST turn streams immediately (sendInput hits the held proc)
+    // instead of only showing up after a reload. Engine sessions stay one-shot (never go live).
+    let ensured: { live: boolean; runId: string | null } | null = null;
+    if (session.engine === 'claude') {
+      try { ensured = await chatLive.ensureLive(session); } catch { ensured = null; }
+    }
+
     const s = mkSse(reply, req);
     if (!s) return; // 503 already sent (connection cap)
     const { send, stop } = s;
 
-    // initial chat-control frame
+    // initial chat-control frame — carry the REAL liveness + backing run id so the client's
+    // agents panel resolves the in-flight run (idle/resumable sessions report their backing run too).
     const st = engineSafeState(session.engine, deriveSessionState(session));
-    send({ kind: 'session_state', state: st.state ?? 'idle', live: st.live ?? false } satisfies SessionStateEnvelope);
+    send({
+      kind: 'session_state',
+      state: st.state ?? 'idle',
+      live: ensured?.live ?? st.live ?? false,
+      runId: ensured?.runId ?? session.runId ?? null,
+    } satisfies SessionStateEnvelope);
 
     // proxy the current backing run, if any (re-resolve per connect so reload re-attaches).
     // The run's hello snapshot carries its FULL event log = the whole transcript (the run is
     // reused across turns via --resume) — already persisted as chat_messages. stripHelloEvents
     // drops that history so the live turn never duplicates the transcript / reorders on reload.
-    const runId = chatLive.liveRunId(id) ?? session.runId;
+    const runId = ensured?.runId ?? chatLive.liveRunId(id) ?? session.runId;
     let unsub: (() => void) | null = null;
     if (runId) unsub = registry.subscribeRun(runId, (m) => send(stripHelloEvents(m)));
 
