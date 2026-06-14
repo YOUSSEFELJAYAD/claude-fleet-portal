@@ -216,6 +216,10 @@ export function useCampaign(id: string): { campaign: Campaign | null; connected:
 // vocabulary (assistant_partial/text, tool_use, tool_result, thinking,
 // permission_request, subagent_spawned, result) plus the chat-only `session_state`
 // control envelope { state, live } owned by Unit 1's stream route.
+
+/** A subagent chip surfaced from a subagent_spawned event (or the hello snapshot). */
+export interface ChatSubagent { runId: string; name: string }
+
 export interface ChatStreamState {
   run: Run | null;
   /** appended run events for this session's CURRENT backing run. */
@@ -224,6 +228,12 @@ export interface ChatStreamState {
   partials: Record<string, string>;
   /** §3 — derived session lifecycle from the latest session_state frame. */
   state: ChatSessionState;
+  /** true iff a live interactive process is held for the session (spec §3). */
+  live: boolean;
+  /** id of the run currently backing the session — changes under us across kill→resume. */
+  runId: string | null;
+  /** subagent chips from subagent_spawned events or the hello snapshot. */
+  subagents: ChatSubagent[];
   connected: boolean;
   error: string | null;
 }
@@ -236,6 +246,9 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
   const [events, setEvents] = useState<NormalizedEvent[]>([]);
   const [partials, setPartials] = useState<Record<string, string>>({});
   const [state, setState] = useState<ChatSessionState>('idle');
+  const [live, setLive] = useState(false);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [subagents, setSubagents] = useState<ChatSubagent[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const partialRef = useRef<Record<string, string>>({});
@@ -247,6 +260,9 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
     setEvents([]);
     setPartials({});
     setState('idle');
+    setLive(false);
+    setRunId(null);
+    setSubagents([]);
     setError(null);
     const es = new EventSource(`${API}/api/chat/sessions/${sessionId}/stream`);
     es.onopen = () => setConnected(true);
@@ -266,6 +282,7 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
       // chat-control envelope (Unit 1) — not a run event
       if (m.kind === 'session_state') {
         setState(m.state as ChatSessionState);
+        setLive(Boolean(m.live));
         return;
       }
       if (m.kind === 'hello') {
@@ -274,6 +291,9 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
         partialRef.current = {};
         setPartials({});
         if (m.state) setState(m.state as ChatSessionState);
+        if ('live' in m) setLive(Boolean(m.live));
+        if (m.runId != null) setRunId(m.runId);
+        if (Array.isArray(m.subagents)) setSubagents(m.subagents);
         return;
       }
       if (m.kind === 'run') {
@@ -282,6 +302,15 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
       }
       if (m.kind === 'event') {
         const evt = m.event as NormalizedEvent;
+        // follow the backing run id across kill→resume (spec §4)
+        if (evt.runId) setRunId(evt.runId);
+        if (evt.type === 'subagent_spawned') {
+          setSubagents((prev) =>
+            prev.some((s) => s.runId === evt.nodeId)
+              ? prev
+              : [...prev, { runId: evt.nodeId, name: String((evt.payload as any)?.name ?? evt.nodeId) }],
+          );
+        }
         if (evt.type === 'assistant_partial') {
           const text = String((evt.payload as any)?.text ?? '');
           const cur = partialRef.current[evt.nodeId] ?? '';
@@ -299,7 +328,7 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
     return () => es.close();
   }, [sessionId]);
 
-  return { run, events, partials, state, connected, error };
+  return { run, events, partials, state, live, runId, subagents, connected, error };
 }
 
 // ── one-shot fetch helper for client components ─────────────────────────────

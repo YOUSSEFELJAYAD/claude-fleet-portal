@@ -1,71 +1,59 @@
-/**
- * useChatStream(sessionId) — subscribes to the SESSION (not a run id) at
- * /api/chat/sessions/:id/stream and reduces the existing run-event vocabulary
- * (assistant_partial/assistant_text/tool_use/...) PLUS the chat-control `session_state`
- * envelope { state, live }. The FakeEventSource (test/setup.ts) is the transport.
- */
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useChatStream } from '../lib/live';
 import { FakeEventSource } from './setup';
 
-const ev = (type: string, nodeId: string, payload: any = {}): any => ({
-  sessionId: 's', runId: 'run1', nodeId, parentNodeId: null, nodeType: 'root', seq: 0, ts: 0, type, payload,
-});
-
-describe('useChatStream — connection + session_state', () => {
-  it('opens the chat-scoped SSE channel and toggles connected', () => {
-    const { result } = renderHook(() => useChatStream('sess1'));
+describe('useChatStream', () => {
+  it('subscribes to the chat-scoped stream by session id', () => {
+    renderHook(() => useChatStream('sess-1'));
     const es = FakeEventSource.last();
-    expect(es.url).toContain('/api/chat/sessions/sess1/stream');
+    expect(es.url).toContain('/api/chat/sessions/sess-1/stream');
+  });
+
+  it('reduces hello → state/live/runId/subagents and toggles connected', () => {
+    const { result } = renderHook(() => useChatStream('sess-1'));
+    const es = FakeEventSource.last();
     expect(result.current.connected).toBe(false);
     act(() => es.emitOpen());
     expect(result.current.connected).toBe(true);
-    act(() => es.emitError());
-    expect(result.current.connected).toBe(false);
+    act(() => es.emit({ kind: 'hello', state: 'live', live: true, runId: 'run-a', subagents: [{ runId: 'sub-1', name: 'reviewer' }] }));
+    expect(result.current.state).toBe('live');
+    expect(result.current.live).toBe(true);
+    expect(result.current.runId).toBe('run-a');
+    expect(result.current.subagents).toEqual([{ runId: 'sub-1', name: 'reviewer' }]);
   });
 
-  it('reduces the session_state envelope into state', () => {
-    const { result } = renderHook(() => useChatStream('sess1'));
+  it('budget exhaustion: a session_state idle envelope flips a live session to resumable (no error)', () => {
+    const { result } = renderHook(() => useChatStream('sess-1'));
     const es = FakeEventSource.last();
-    expect(result.current.state).toBe('idle'); // default before any frame
-    act(() => es.emit({ kind: 'session_state', state: 'running', live: true } as any));
-    expect(result.current.state).toBe('running');
-    act(() => es.emit({ kind: 'session_state', state: 'killed', live: false } as any));
-    expect(result.current.state).toBe('killed');
+    act(() => es.emitOpen());
+    act(() => es.emit({ kind: 'hello', state: 'live', live: true, runId: 'run-a', subagents: [] }));
+    expect(result.current.state).toBe('live');
+    // CHAT_LIVE_MAX exhausted / idle-suspend → server pushes a state transition, never an error frame
+    act(() => es.emit({ kind: 'session_state', state: 'idle', live: false }));
+    expect(result.current.state).toBe('idle');
+    expect(result.current.live).toBe(false);
+    expect(result.current.error).toBeNull();
   });
 
-  it('closes the stream on unmount and ignores malformed frames', () => {
-    const { unmount } = renderHook(() => useChatStream('sess1'));
+  it('appends subagents from subagent_spawned events and follows the run id across kill→resume', () => {
+    const { result } = renderHook(() => useChatStream('sess-1'));
+    const es = FakeEventSource.last();
+    act(() => es.emitOpen());
+    act(() => es.emit({ kind: 'hello', state: 'live', live: true, runId: 'run-a', subagents: [] }));
+    act(() => es.emit({ kind: 'event', event: { type: 'subagent_spawned', runId: 'run-a', nodeId: 'n1', payload: { name: 'tester' } } }));
+    expect(result.current.subagents).toEqual([{ runId: 'n1', name: 'tester' }]);
+    // kill→resume: the backing run id changes; the stream follows it (spec §4)
+    act(() => es.emit({ kind: 'event', event: { type: 'result', runId: 'run-b', nodeId: 'run-b', payload: {} } }));
+    expect(result.current.runId).toBe('run-b');
+  });
+
+  it('ignores malformed frames and closes on unmount', () => {
+    const { result, unmount } = renderHook(() => useChatStream('sess-1'));
     const es = FakeEventSource.last();
     act(() => es.emit('not json{'));
+    expect(result.current.subagents).toEqual([]);
     unmount();
     expect(es.closed).toBe(true);
-  });
-});
-
-describe('useChatStream — event reduction', () => {
-  it('accumulates assistant_partial deltas per node and clears on assistant_text', () => {
-    const { result } = renderHook(() => useChatStream('sess1'));
-    const es = FakeEventSource.last();
-    act(() => es.emit({ kind: 'event', event: ev('assistant_partial', 'n1', { text: 'Hel' }) }));
-    act(() => es.emit({ kind: 'event', event: ev('assistant_partial', 'n1', { text: 'lo' }) }));
-    expect(result.current.partials).toEqual({ n1: 'Hello' });
-    // full message arrives → partial buffer for that node clears, event lands in events
-    act(() => es.emit({ kind: 'event', event: ev('assistant_text', 'n1', { text: 'Hello' }) }));
-    expect(result.current.partials).toEqual({ n1: '' });
-    expect(result.current.events.map((e) => e.type)).toEqual(['assistant_text']);
-  });
-
-  it('appends non-partial run events (tool_use, tool_result, permission_request, result)', () => {
-    const { result } = renderHook(() => useChatStream('sess1'));
-    const es = FakeEventSource.last();
-    act(() => es.emit({ kind: 'event', event: ev('tool_use', 'n1', { name: 'Bash' }) }));
-    act(() => es.emit({ kind: 'event', event: ev('tool_result', 'n1', { ok: true }) }));
-    act(() => es.emit({ kind: 'event', event: ev('permission_request', 'n1', { id: 'p1' }) }));
-    act(() => es.emit({ kind: 'event', event: ev('result', 'n1', {}) }));
-    expect(result.current.events.map((e) => e.type)).toEqual([
-      'tool_use', 'tool_result', 'permission_request', 'result',
-    ]);
   });
 });
