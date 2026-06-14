@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import type { ChatSession } from '@fleet/shared';
-import { Btn, Dot, Input } from '@/components/ui';
+import { Btn, Dot, Input, Kicker } from '@/components/ui';
 import { chatStateMeta } from '@/lib/chatState';
 import { ago } from '@/lib/format';
 
@@ -34,9 +34,9 @@ export function ChatSessionList({
 
   return (
     <div className="w-56 shrink-0 border-r hairline flex flex-col">
-      <div className="flex items-center justify-between p-2 border-b hairline">
-        <span className="kicker">sessions</span>
-        <Btn onClick={onNew}>+ New</Btn>
+      <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+        <Kicker>sessions</Kicker>
+        <Btn variant="ghost" onClick={onNew}>+ New</Btn>
       </div>
       <div className="flex-1 overflow-auto">
         {sessions.map((s) => {
@@ -45,7 +45,7 @@ export function ChatSessionList({
           const canKill = s.state === 'live' || s.state === 'running';
           return (
             <div key={s.id}
-              className={`px-2 py-2 text-[12px] cursor-pointer border-b hairline transition-colors ${active ? 'bg-amber/[0.06]' : 'hover:bg-white/5'}`}
+              className={`px-3 py-2.5 text-[12px] cursor-pointer border-b hairline last:border-0 transition-colors ${active ? 'bg-amber/[0.06]' : 'hover:bg-white/[0.02]'}`}
               onClick={() => onSelect(s.id)}>
               <div className="flex items-center gap-1.5">
                 <Dot color={meta.color} live={meta.live} size={6} />
@@ -70,15 +70,16 @@ export function ChatSessionList({
                 <span>{ago(s.updatedAt)}</span>
               </div>
               {active && editId !== s.id && (
-                <div className="flex gap-2 mt-1.5 font-mono text-[10px]">
-                  <button className="text-faint hover:text-ink transition-colors" onClick={(e) => { e.stopPropagation(); startRename(s); }}>rename</button>
+                // eslint-disable-next-line jsx-a11y/click-events-have-key-events
+                <div className="flex gap-1.5 mt-1.5" onClick={(e) => e.stopPropagation()}>
+                  <Btn variant="ghost" className="text-[10px] px-2 py-1" onClick={() => startRename(s)}>rename</Btn>
                   {canKill && (
-                    <button className="text-faint hover:text-sig-killed transition-colors" onClick={(e) => { e.stopPropagation(); onKill(s.id); }}>kill</button>
+                    <Btn variant="danger" className="text-[10px] px-2 py-1" onClick={() => onKill(s.id)}>kill</Btn>
                   )}
                   {(s.state === 'idle' || s.state === 'killed') && (
-                    <button className="text-faint hover:text-amber transition-colors" onClick={(e) => { e.stopPropagation(); onResume(s.id); }}>resume</button>
+                    <Btn variant="amber" className="text-[10px] px-2 py-1" onClick={() => onResume(s.id)}>resume</Btn>
                   )}
-                  <button className="text-faint hover:text-sig-failed transition-colors" onClick={(e) => { e.stopPropagation(); onDelete(s.id); }}>delete</button>
+                  <Btn variant="danger" className="text-[10px] px-2 py-1" onClick={() => onDelete(s.id)}>delete</Btn>
                 </div>
               )}
             </div>
