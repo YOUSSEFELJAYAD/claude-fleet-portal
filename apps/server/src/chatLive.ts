@@ -21,6 +21,17 @@ export interface EnsureResult { live: boolean; runId: string | null; }
 class ChatLiveManager {
   private handles = new Map<string, LiveHandle>();
 
+  constructor() {
+    // Learn when a held process dies on its own (crash / complete / external kill) so isLive
+    // stops lying before idle-suspend. The run is already terminal → drop the handle WITHOUT
+    // calling registry.stop again (use dropHandle, not evict).
+    registry.onRunTerminal((run) => {
+      for (const [sessionId, h] of this.handles) {
+        if (h.runId === run.id) { this.dropHandle(sessionId); break; }
+      }
+    });
+  }
+
   /** A session is "live" iff a held interactive process is tracked for it. */
   isLive(sessionId: string): boolean { return this.handles.has(sessionId); }
 
@@ -36,7 +47,7 @@ class ChatLiveManager {
     if (existing) { this.touch(session.id); return { live: true, runId: existing.runId }; }
     if (this.handles.size >= CHAT_LIVE_MAX) return { live: false, runId: null };
     const run = await registry.launch({
-      prompt: session.title || 'Chat session',
+      prompt: '', // held process waits on stdin; turns arrive via sendInput (no spurious turn-1)
       cwd: session.cwd,
       model: session.model,
       effort: session.effort,
@@ -58,9 +69,17 @@ class ChatLiveManager {
   evict(sessionId: string): void {
     const h = this.handles.get(sessionId);
     if (!h) return;
+    this.dropHandle(sessionId);
+    try { registry.stop(h.runId); } catch { /* already terminal */ }
+  }
+
+  /** Clear the idle timer + forget the handle WITHOUT stopping the run. Used when the backing
+   *  run reached a terminal state on its own (calling registry.stop again would be redundant). */
+  private dropHandle(sessionId: string): void {
+    const h = this.handles.get(sessionId);
+    if (!h) return;
     if (h.idleTimer) clearTimeout(h.idleTimer);
     this.handles.delete(sessionId);
-    try { registry.stop(h.runId); } catch { /* already terminal */ }
   }
 
   private arm(sessionId: string): void {
