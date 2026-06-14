@@ -4,6 +4,26 @@
  * shape (CommandDef) omits it. Commands inherit the permission posture of the calls they make
  * (DC §D-031); destructive verbs are flagged danger:true and route through the Inbox queue.
  */
+
+/**
+ * NL LONG-TAIL CONVENTION (spec §5.2 / D-036)
+ * ------------------------------------------------------------------------------
+ * The curated CommandDef[] below is the TYPED, autocomplete-backed verb set (~18).
+ * Every OTHER portal capability (~100 routes) is intentionally NOT a slash verb:
+ * the chat agent invokes those routes as natural-language tool-calls at runtime.
+ *
+ * MUTATION GATING — the invariant that keeps this safe:
+ *   • A read (GET-shaped) long-tail call may run directly.
+ *   • A MUTATION long-tail call (delete project, reset-data, self-update, file-commit,
+ *     …) MUST route through the SAME Inbox approval queue these danger verbs use —
+ *     i.e. it parks an approval via inbox.enqueueApproval() and only executes once an
+ *     operator approves it. No mutation gets a new privileged surface (preserves DC D-031).
+ *
+ * So: a slash verb with danger:true and a long-tail mutation are two doors into ONE
+ * approval queue. New destructive capability ⇒ add danger:true here OR enqueueApproval()
+ * at the call site; never a direct unapproved mutation from chat.
+ * ------------------------------------------------------------------------------
+ */
 import { registry } from './registry.js';
 import { listAddonInfos, setAddonEnabledById, researchConfig } from './addons.js';
 import { searchWeb } from './research.js';
