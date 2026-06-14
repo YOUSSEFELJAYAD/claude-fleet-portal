@@ -31,6 +31,9 @@ browser live — with full controls to stop, steer, resume, and approve.
   and merges. Conflict resolution by a dedicated agent; GitHub PR mode included.
 - **Campaigns** — give an orchestrator one objective; it plans a dependency DAG and the portal
   spawns a real worker agent per subtask, then a synthesizer merges the results.
+- **Loops** — define a Manager (triage) or Worker loop with a six-field contract; the portal runs
+  it on a schedule, grades every run against its own evaluation rubric, and ramps from dry-run to
+  apply as it earns trust — board or GitHub control plane.
 - **Agent library** — 12 built-in agent profiles (Debugger, Test Writer, Security Auditor,
   Frontend Builder, …) with tuned working methods; every profile is editable, and skills attach
   with real effect on the spawned agent.

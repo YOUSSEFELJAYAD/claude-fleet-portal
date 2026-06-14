@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Kicker, Panel, Empty, Btn, Field, Input, Toggle, Select, Dot } from '@/components/ui';
+import { Kicker, Panel, Empty, Btn, Field, Input, Toggle, Select, Dot, ErrorBanner } from '@/components/ui';
 import { MultiPicker } from '@/components/MultiPicker';
 import { ago } from '@/lib/format';
 
@@ -106,7 +106,10 @@ const blankForm = (): Omit<Channel, 'id' | 'lastError' | 'lastOkAt'> => ({
 
 export default function NotificationsPage() {
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // Set true on (re)mount, not just false on cleanup: under StrictMode/HMR the effect is
+  // unmounted then remounted, and a cleanup-only ref would stay false — silently gating out
+  // every post-fetch setState and wedging the page on "loading…".
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const [items, setItems] = useState<Notification[]>([]);
   const [cfg, setCfg] = useState<NotifConfig | null>(null);
@@ -309,9 +312,7 @@ export default function NotificationsPage() {
       </div>
 
       {error && (
-        <div className="mb-4 border border-sig-failed/40 bg-sig-failed/8 text-sig-failed font-mono text-[12px] px-3 py-2">
-          {error}
-        </div>
+        <ErrorBanner className="mb-4" onRetry={loadList}>{error}</ErrorBanner>
       )}
 
       <div className="grid gap-5" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
@@ -453,9 +454,7 @@ export default function NotificationsPage() {
               {/* body */}
               <div className="p-4 space-y-4">
                 {chError && (
-                  <div className="border border-sig-failed/40 bg-sig-failed/8 text-sig-failed font-mono text-[11px] px-3 py-2">
-                    {chError}
-                  </div>
+                  <ErrorBanner onRetry={loadChannels}>{chError}</ErrorBanner>
                 )}
 
                 {chLoading ? (

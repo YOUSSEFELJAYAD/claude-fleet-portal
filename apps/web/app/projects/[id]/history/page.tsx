@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { API } from '@/lib/api';
 import type { Project } from '@fleet/shared';
-import { Kicker, Panel } from '@/components/ui';
+import { Kicker, Panel, ErrorBanner } from '@/components/ui';
 import { GitLog, type GitLogEntry } from '@/components/GitLog';
 import { DiffView } from '@/components/DiffView';
 
@@ -123,9 +123,7 @@ export default function ProjectHistoryPage({ params }: { params: { id: string } 
           {logLoading && entries === null ? (
             <div className="font-mono text-[12px] text-faint">reading git log…</div>
           ) : logErr ? (
-            <div className="font-mono text-[12px] text-sig-failed border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">
-              {logErr} · <button onClick={loadLog} className="underline">retry</button>
-            </div>
+            <ErrorBanner onRetry={loadLog}>{logErr}</ErrorBanner>
           ) : (
             <div className="overflow-auto" style={{ maxHeight: 600 }}>
               <GitLog entries={entries ?? []} selected={selected} onSelect={selectCommit} />

@@ -872,9 +872,27 @@
   <div class="release-timeline">
     <div class="release-entry current">
       <div class="release-head">
+        <span class="release-title">Consistent Mission-Control UI &amp; Autonomous Loops</span>
+        <span class="release-tag">v0.5.0</span>
+        <span class="release-date">current</span>
+      </div>
+      <div class="release-body">
+        <ul>
+          <li>Loop engineering — Manager (triage) and Worker loops defined by a six-field contract, run on a schedule, graded against their own evaluation rubric, ramping from dry-run to apply as they earn trust (board or GitHub control plane)</li>
+          <li>Unified engine pages — Orchestrate, Loops, Scheduler and Learning now share one Mission-Control layout: stacked panels, status cards, and consistent section headers</li>
+          <li>Settings page — live portal config, managed <span class="mono">.env</span> integration keys, and skill-learning thresholds in one place</li>
+          <li>Design-system pass — a single shared error banner plus normalized headers and color tokens across every page</li>
+          <li>Scroll fixes — the sidebar nav scrolls independently so the live spend gauge stays pinned on any screen height, and the Chat workspace fits the frame exactly</li>
+          <li>Skill auto-learning surface and loop-run evaluation grading</li>
+          <li>100% exported-function test coverage and 92% logic coverage; two latent bugs fixed along the way</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="release-entry">
+      <div class="release-head">
         <span class="release-title">Approval Inbox, Run Archive & Data Reset</span>
         <span class="release-tag">v0.4.5</span>
-        <span class="release-date">current</span>
       </div>
       <div class="release-body">
         <ul>

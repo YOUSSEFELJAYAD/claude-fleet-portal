@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Kicker, Panel, Empty, Btn, Stat, Dot } from '@/components/ui';
+import { Kicker, Panel, Empty, Btn, Stat, Dot, ErrorBanner } from '@/components/ui';
 import { ago, clock } from '@/lib/format';
 import { loopsApi, type Loop } from '@/lib/loops';
 
@@ -95,7 +95,7 @@ export default function LoopDetailPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {error && <div className="mb-3 border border-sig-failed/40 bg-sig-failed/8 text-sig-failed font-mono text-[11px] px-3 py-2">{error}</div>}
+      {error && <ErrorBanner className="mb-4" onRetry={load}>{error}</ErrorBanner>}
 
       <div className="grid gap-5" style={{ gridTemplateColumns: 'minmax(0,1fr) 340px' }}>
         <div className="grid gap-4">

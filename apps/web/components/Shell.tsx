@@ -140,7 +140,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <nav className="flex-1 py-3">
+        <nav className="flex-1 min-h-0 overflow-y-auto py-3">
           {navItems.map((n) => {
             const on =
               n.href === '/'

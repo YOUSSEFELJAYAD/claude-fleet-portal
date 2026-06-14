@@ -2,7 +2,7 @@
 import React, { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Panel, Kicker, Empty, StatusBadge, Btn, Input, Field } from '@/components/ui';
+import { Panel, Kicker, Empty, StatusBadge, Btn, Input, Field, ErrorBanner } from '@/components/ui';
 import { usd, tokens, dur } from '@/lib/format';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
@@ -285,7 +285,7 @@ function SideHeader({ label, side }: { label: string; side: Side }) {
       {side.loading ? (
         <div className="font-mono text-faint text-[12px]">loading…</div>
       ) : side.error ? (
-        <div className="font-mono text-sig-failed text-[12px]">⚠ {side.error}</div>
+        <ErrorBanner>{side.error}</ErrorBanner>
       ) : side.run ? (
         <div className="min-w-0">
           <Link

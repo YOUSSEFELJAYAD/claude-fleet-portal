@@ -59,8 +59,10 @@ export default function ChatPage() {
     setMessages((m) => [...m, msg]);
   }, [activeId]);
 
+  // App-shell layout (scrolling thread + pinned composer). Height fits the shared frame
+  // exactly: viewport − 58px sticky header − 48px (main p-6) so it never overflows the body.
   return (
-    <div className="flex h-[calc(100vh-0px)]">
+    <div className="flex h-[calc(100vh-106px)] min-h-0">
       <ChatSessionList sessions={sessions} activeId={activeId}
         onSelect={loadSession} onNew={newSession} onRename={renameSession} onDelete={deleteSession} />
       <div className="flex-1 flex flex-col min-w-0">

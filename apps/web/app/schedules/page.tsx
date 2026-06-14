@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Kicker, Panel, Empty, Btn, Field, Input, Select, Textarea, Toggle, Dot } from '@/components/ui';
+import { Kicker, Panel, Empty, Btn, Field, Input, Select, Textarea, Toggle, Dot, ErrorBanner } from '@/components/ui';
 import { ModelSelect, customModelEngine, modelEngine } from '@/components/ModelSelect';
 import { clock, ago, dur } from '@/lib/format';
 import type { ModelInfo, RunEngine } from '@fleet/shared';
@@ -85,6 +85,46 @@ function nextFireLabel(s: Schedule): string {
   const d = s.nextFireAt - Date.now();
   if (d <= 0) return 'due now';
   return `in ${dur(d)} · ${clock(s.nextFireAt)}`;
+}
+
+/** A schedule card — same shape/treatment as orchestrate's CampaignRow (inset status bar,
+ *  dot+status, title, meta, footer with next-fire + actions) so Scheduler reads like Campaigns. */
+function ScheduleCard({
+  s, onToggle, onRun, onRemove,
+}: { s: Schedule; onToggle: (s: Schedule) => void; onRun: (s: Schedule) => void; onRemove: (s: Schedule) => void }) {
+  const color = s.enabled ? '#54e08a' : '#5b626d';
+  return (
+    <Panel className="p-4" style={{ boxShadow: `inset 2px 0 0 ${color}` }}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <Dot color={color} live={s.enabled} />
+          <span className="font-display text-[10px] uppercase tracking-wider" style={{ color }}>{s.enabled ? 'active' : 'paused'}</span>
+        </div>
+        <span className="font-mono text-[10px] text-amber/80">{recurrenceLabel(s)}</span>
+      </div>
+      <div className="font-display text-[13px] tracking-wide text-ink mt-2 leading-snug line-clamp-1">{s.name}</div>
+      <div className="mt-1.5 flex items-center gap-2 font-mono text-[10px] text-faint min-w-0">
+        {s.template && (
+          <span className="text-sig-completed/70 text-[9px] border border-sig-completed/30 px-1 shrink-0">{s.template}</span>
+        )}
+        <span className="truncate">{s.launchRequest?.prompt}</span>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2 font-mono text-[11px]">
+        <span className="flex items-center gap-1.5 min-w-0" style={{ color: s.enabled ? '#9aa1ab' : '#5b626d' }}>
+          <Dot color={s.enabled ? '#54e08a' : '#5b626d'} size={5} />
+          <span className="truncate">{nextFireLabel(s)}</span>
+          {s.lastRunId && (
+            <Link href={`/runs/${s.lastRunId}`} className="text-amber/80 hover:text-amber shrink-0">· ran {ago(s.lastFiredAt)}</Link>
+          )}
+        </span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Toggle on={s.enabled} onChange={() => onToggle(s)} />
+          <Btn variant="ghost" onClick={() => onRun(s)} title="run now" className="!px-2 !py-1">run</Btn>
+          <Btn variant="danger" onClick={() => onRemove(s)} title="delete" className="!px-2 !py-1">✕</Btn>
+        </div>
+      </div>
+    </Panel>
+  );
 }
 
 export default function SchedulesPage() {
@@ -285,90 +325,43 @@ export default function SchedulesPage() {
   const selectedEngine = modelEngine(models, model);
   const efforts = meta?.efforts ?? ['low', 'medium', 'high', 'xhigh', 'max'];
 
+  const active = schedules.filter((s) => s.enabled);
+  const paused = schedules.filter((s) => !s.enabled);
+
   return (
     <div>
       <Kicker>automation</Kicker>
-      <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-5">Scheduler</h1>
+      <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-1">Scheduler</h1>
+      <p className="font-mono text-[11px] text-faint mb-5">
+        Launch agents on a recurring or daily schedule — every-N-minutes, daily, or weekly, optionally applying an agent template at fire time.
+      </p>
 
-      <div className="grid gap-5" style={{ gridTemplateColumns: 'minmax(0,1fr) 360px' }}>
-        {/* ── schedule list ─────────────────────────────────────── */}
-        <div>
-          {error && (
-            <div className="mb-3 border border-sig-failed/40 bg-sig-failed/8 text-sig-failed font-mono text-[11px] px-3 py-2">
-              {error}
+      <div className="space-y-5">
+        {/* ── block 1 · new schedule ─────────────────────────────────────────── */}
+        <Panel ticked>
+          <div className="px-4 py-3 border-b hairline">
+            <Kicker>new schedule</Kicker>
+          </div>
+          <form onSubmit={create} className="p-5 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="name">
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="nightly digest" />
+              </Field>
+              {templates.length > 0 && (
+                <Field label="template" hint="optional — profile applied at fire time">
+                  <Select value={templateName} onChange={(e) => setTemplateName(e.target.value)}>
+                    <option value="">— none —</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.name}>{t.name}</option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
             </div>
-          )}
-
-          {loading ? (
-            <div className="font-mono text-faint text-[12px]">loading schedules…</div>
-          ) : schedules.length === 0 ? (
-            <Empty>No schedules yet — create one to launch agents on a recurring or daily schedule.</Empty>
-          ) : (
-            <div className="panel overflow-hidden">
-              <div className="grid grid-cols-[1fr_90px_160px_100px_110px] gap-3 px-4 py-2.5 border-b hairline kicker">
-                <span>name / recurrence</span>
-                <span>enabled</span>
-                <span>next fire</span>
-                <span>last run</span>
-                <span className="text-right">actions</span>
-              </div>
-              <div className="divide-y divide-white/[0.04]">
-                {schedules.map((s) => (
-                  <div key={s.id} className="grid grid-cols-[1fr_90px_160px_100px_110px] gap-3 px-4 py-3 items-center">
-                    <div className="min-w-0">
-                      <div className="text-ink text-[13px] truncate">{s.name}</div>
-                      <div className="text-faint font-mono text-[10px] mt-0.5 flex items-center gap-2">
-                        <span className="text-amber/80">{recurrenceLabel(s)}</span>
-                        {s.template && (
-                          <span className="text-sig-completed/70 text-[9px] border border-sig-completed/30 px-1 rounded">
-                            {s.template}
-                          </span>
-                        )}
-                        <span className="truncate">{s.launchRequest?.prompt}</span>
-                      </div>
-                    </div>
-                    <div>
-                      <Toggle on={s.enabled} onChange={() => toggle(s)} label={s.enabled ? 'on' : 'off'} />
-                    </div>
-                    <div className="font-mono text-[10px] flex items-center gap-1.5" style={{ color: s.enabled ? '#9aa1ab' : '#5b626d' }}>
-                      <Dot color={s.enabled ? '#54e08a' : '#5b626d'} live={false} size={5} />
-                      {nextFireLabel(s)}
-                    </div>
-                    <div className="font-mono text-[10px]">
-                      {s.lastRunId ? (
-                        <Link href={`/runs/${s.lastRunId}`} className="text-amber/80 hover:text-amber">
-                          {ago(s.lastFiredAt)}
-                        </Link>
-                      ) : (
-                        <span className="text-faint">never</span>
-                      )}
-                    </div>
-                    <div className="flex justify-end gap-1.5">
-                      <Btn variant="ghost" onClick={() => runNow(s)} title="run now" className="!px-2 !py-1">
-                        run
-                      </Btn>
-                      <Btn variant="danger" onClick={() => remove(s)} title="delete" className="!px-2 !py-1">
-                        ✕
-                      </Btn>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── create form ───────────────────────────────────────── */}
-        <Panel className="p-4 self-start">
-          <Kicker>new schedule</Kicker>
-          <form onSubmit={create} className="mt-3 grid gap-3.5">
-            <Field label="name">
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="nightly digest" />
-            </Field>
 
             {/* F2: recurrence picker */}
             <Field label="recurrence">
-              <div className="grid grid-cols-4 gap-1 mb-2">
+              <div className="grid grid-cols-4 gap-1 mb-2 max-w-md">
                 {(['one-shot', 'every', 'daily', 'weekly'] as RecurrenceKind[]).map((k) => (
                   <button
                     key={k}
@@ -388,79 +381,40 @@ export default function SchedulesPage() {
 
               {recurrenceKind === 'every' && (
                 <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    min={15}
-                    max={10080}
-                    value={everyMin}
-                    onChange={(e) => setEveryMin(e.target.value)}
-                    className="w-24"
-                  />
+                  <Input type="number" min={15} max={10080} value={everyMin} onChange={(e) => setEveryMin(e.target.value)} className="w-24" />
                   <span className="font-mono text-[11px] text-faint">min (15–10080)</span>
                 </div>
               )}
-
               {recurrenceKind === 'daily' && (
                 <div className="flex items-center gap-2">
-                  <Input
-                    type="time"
-                    value={dailyAt}
-                    onChange={(e) => setDailyAt(e.target.value)}
-                    className="w-32"
-                  />
+                  <Input type="time" value={dailyAt} onChange={(e) => setDailyAt(e.target.value)} className="w-32" />
                   <span className="font-mono text-[11px] text-faint">local time</span>
                 </div>
               )}
-
               {recurrenceKind === 'weekly' && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 max-w-md">
                   <Select value={weeklyDay} onChange={(e) => setWeeklyDay(e.target.value)} className="flex-1">
                     {DAYS.map((d, i) => (
                       <option key={i} value={String(i)}>{d}</option>
                     ))}
                   </Select>
-                  <Input
-                    type="time"
-                    value={weeklyTime}
-                    onChange={(e) => setWeeklyTime(e.target.value)}
-                    className="w-28"
-                  />
+                  <Input type="time" value={weeklyTime} onChange={(e) => setWeeklyTime(e.target.value)} className="w-28" />
                 </div>
               )}
             </Field>
-
-            {/* F2: template select */}
-            {templates.length > 0 && (
-              <Field label="template" hint="optional — profile applied at fire time">
-                <Select value={templateName} onChange={(e) => setTemplateName(e.target.value)}>
-                  <option value="">— none —</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.name}>
-                      {t.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            )}
 
             <div className="border-t hairline pt-3">
               <Kicker>launch request</Kicker>
             </div>
 
             <Field label="prompt">
-              <Textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={3}
-                placeholder="what should the agent do…"
-              />
+              <Textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} placeholder="what should the agent do…" />
             </Field>
 
-            <Field label="cwd" hint="absolute path">
-              <Input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="/Users/you/project" />
-            </Field>
-
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Field label="cwd" hint="absolute path">
+                <Input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="/Users/you/project" />
+              </Field>
               <Field label="model">
                 <ModelSelect
                   models={models}
@@ -475,9 +429,7 @@ export default function SchedulesPage() {
               <Field label="effort">
                 <Select value={effort} onChange={(e) => setEffort(e.target.value)}>
                   {efforts.map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
+                    <option key={f} value={f}>{f}</option>
                   ))}
                 </Select>
               </Field>
@@ -485,10 +437,55 @@ export default function SchedulesPage() {
 
             {formErr && <div className="text-sig-failed font-mono text-[11px]">{formErr}</div>}
 
-            <Btn type="submit" variant="solid" disabled={submitting} className="w-full justify-center">
-              {submitting ? 'creating…' : '＋ Create Schedule'}
-            </Btn>
+            <div className="pt-1">
+              <Btn type="submit" variant="solid" disabled={submitting}>
+                {submitting ? 'creating…' : '＋ Create Schedule'}
+              </Btn>
+            </div>
           </form>
+        </Panel>
+
+        {error && <ErrorBanner onRetry={load}>{error}</ErrorBanner>}
+
+        {/* ── block 2 · active ───────────────────────────────────────────────── */}
+        <Panel ticked>
+          <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+            <span className="flex items-center gap-2">
+              <Dot color="#54e08a" live={active.length > 0} size={6} />
+              <Kicker>active</Kicker>
+            </span>
+            <span className="font-mono tnum text-[12px] text-amber">{String(active.length).padStart(2, '0')}</span>
+          </div>
+          <div className="p-4">
+            {loading ? (
+              <div className="font-mono text-[11px] text-faint">loading schedules…</div>
+            ) : active.length === 0 ? (
+              <div className="font-mono text-[11px] text-faint">nothing scheduled — create one above</div>
+            ) : (
+              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {active.map((s) => <ScheduleCard key={s.id} s={s} onToggle={toggle} onRun={runNow} onRemove={remove} />)}
+              </div>
+            )}
+          </div>
+        </Panel>
+
+        {/* ── block 3 · paused ───────────────────────────────────────────────── */}
+        <Panel>
+          <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+            <Kicker>paused</Kicker>
+            <span className="font-mono tnum text-[12px] text-dim">{String(paused.length).padStart(2, '0')}</span>
+          </div>
+          <div className="p-4 overflow-auto" style={{ maxHeight: '60vh' }}>
+            {!loading && schedules.length === 0 ? (
+              <Empty>No schedules yet — create one above to launch agents on a recurring or daily schedule.</Empty>
+            ) : paused.length === 0 ? (
+              <div className="font-mono text-[11px] text-faint">no paused schedules</div>
+            ) : (
+              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {paused.map((s) => <ScheduleCard key={s.id} s={s} onToggle={toggle} onRun={runNow} onRemove={remove} />)}
+              </div>
+            )}
+          </div>
         </Panel>
       </div>
     </div>

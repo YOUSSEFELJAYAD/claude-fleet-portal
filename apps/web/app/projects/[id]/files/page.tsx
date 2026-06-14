@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { API } from '@/lib/api';
 import type { Project } from '@fleet/shared';
-import { Kicker, Panel, Empty } from '@/components/ui';
+import { Kicker, Panel, Empty, ErrorBanner } from '@/components/ui';
 import { FileTree } from '@/components/FileTree';
 import { FileViewer } from '@/components/FileViewer';
 import { DiffView } from '@/components/DiffView';
@@ -140,9 +140,7 @@ export default function ProjectFilesPage({ params }: { params: { id: string } })
       </div>
 
       {projErr && (
-        <div className="font-mono text-[12px] text-sig-failed border border-sig-failed/30 bg-sig-failed/5 px-3 py-2 mb-4">
-          {projErr}
-        </div>
+        <ErrorBanner className="mb-4">{projErr}</ErrorBanner>
       )}
 
       <div className="flex gap-2 mb-4">
@@ -204,9 +202,7 @@ export default function ProjectFilesPage({ params }: { params: { id: string } })
           {statusLoading && status === null ? (
             <div className="font-mono text-[12px] text-faint">scanning working tree…</div>
           ) : statusErr ? (
-            <div className="font-mono text-[12px] text-sig-failed border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">
-              {statusErr} · <button onClick={loadStatus} className="underline">retry</button>
-            </div>
+            <ErrorBanner onRetry={loadStatus}>{statusErr}</ErrorBanner>
           ) : !status || status.length === 0 ? (
             <Empty>Working tree clean — no uncommitted changes.</Empty>
           ) : (

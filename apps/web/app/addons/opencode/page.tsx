@@ -110,8 +110,8 @@ export default function OpencodePage() {
     return (
       <div>
         <Kicker>add-on</Kicker>
-        <h1 className="font-display text-[22px] text-ink tracking-wide mt-1 mb-4">OpenCode Engine</h1>
-        <div className="font-mono text-[12px] text-sig-failed border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">{err}</div>
+        <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-4">OpenCode Engine</h1>
+        <ErrorBanner onRetry={load}>{err}</ErrorBanner>
       </div>
     );
   }
@@ -126,7 +126,7 @@ export default function OpencodePage() {
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
           <Kicker>add-on · built-in · engine</Kicker>
-          <h1 className="font-display text-[22px] text-ink tracking-wide mt-1">OpenCode Engine</h1>
+          <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">OpenCode Engine</h1>
           <div className="font-mono text-[11px] text-faint mt-1">
             Open-source multi-provider CLI ·{' '}
             <a href={a.docsUrl ?? '#'} target="_blank" rel="noreferrer" className="underline hover:text-amber">

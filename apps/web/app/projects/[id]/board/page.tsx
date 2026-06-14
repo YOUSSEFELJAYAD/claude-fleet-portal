@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { KanbanTask, KanbanColumn, KanbanBoardMessage, Project, ModelInfo, RunEngine } from '@fleet/shared';
 import { API } from '@/lib/api';
-import { Kicker, Panel, Btn, Field, Input, Textarea, Select, Empty } from '@/components/ui';
+import { Kicker, Panel, Btn, Field, Input, Textarea, Select, Empty, ErrorBanner } from '@/components/ui';
 import { KanbanBoard } from '@/components/KanbanBoard';
 import { DiffView } from '@/components/DiffView';
 import { ModelSelect, modelEngine } from '@/components/ModelSelect';
@@ -257,7 +257,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
       </div>
 
       {project?.paused && (
-        <div className="font-mono text-[11px] border border-amber/30 bg-amber/5 px-3 py-2 mb-3" style={{ color: '#ffb000' }}>
+        <div className="font-mono text-[11px] border border-amber/30 bg-amber/5 px-3 py-2 mb-3 text-amber">
           Project is paused — the PM will not pick up Ready cards until resumed.
         </div>
       )}
@@ -351,9 +351,7 @@ export default function BoardPage({ params }: { params: { id: string } }) {
       )}
 
       {error ? (
-        <div className="font-mono text-sig-failed text-[12px] border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">
-          Board stream error: {error}
-        </div>
+        <ErrorBanner>Board stream error: {error}</ErrorBanner>
       ) : tasks.length === 0 ? (
         <Empty>No cards yet. Create one to get started.</Empty>
       ) : (

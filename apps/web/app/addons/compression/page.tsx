@@ -171,8 +171,8 @@ export default function CompressionPage() {
     return (
       <div>
         <Kicker>add-on</Kicker>
-        <h1 className="font-display text-[22px] text-ink tracking-wide mt-1 mb-4">Compression</h1>
-        <div className="font-mono text-[12px] text-sig-failed border border-sig-failed/30 bg-sig-failed/5 px-3 py-2">{err}</div>
+        <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-4">Compression</h1>
+        <ErrorBanner className="mb-4" onRetry={load}>{err}</ErrorBanner>
       </div>
     );
   }
@@ -188,7 +188,7 @@ export default function CompressionPage() {
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
           <Kicker>add-on · built-in</Kicker>
-          <h1 className="font-display text-[22px] text-ink tracking-wide mt-1">Compression</h1>
+          <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">Compression</h1>
           <div className="font-mono text-[11px] text-faint mt-1">
             Headroom transparent proxy ·{' '}
             <a href={a.docsUrl ?? '#'} target="_blank" rel="noreferrer" className="underline hover:text-amber">

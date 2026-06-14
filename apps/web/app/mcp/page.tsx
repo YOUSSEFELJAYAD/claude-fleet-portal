@@ -1,6 +1,6 @@
 'use client';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Kicker, Empty, Dot, Btn, Panel } from '@/components/ui';
+import { Kicker, Empty, Dot, Btn, Panel, ErrorBanner } from '@/components/ui';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
@@ -77,11 +77,9 @@ export default function McpHealthPage() {
       </div>
 
       {fetchError && (
-        <Panel className="mb-4 !border-sig-failed/40">
-          <div className="px-4 py-3 font-mono text-[12px] text-sig-failed">
-            control plane unreachable — {fetchError}
-          </div>
-        </Panel>
+        <ErrorBanner className="mb-4" onRetry={load}>
+          control plane unreachable — {fetchError}
+        </ErrorBanner>
       )}
 
       {error && (

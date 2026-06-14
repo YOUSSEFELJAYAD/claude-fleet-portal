@@ -173,7 +173,7 @@ function PermissionCard({ item, onAction }: { item: InboxItem; onAction: () => v
           No pending request captured. Open the run timeline before deciding.
         </div>
       )}
-      {err && <div className="font-mono text-[11px] mt-3 text-sig-failed">{err}</div>}
+      {err && <ErrorBanner className="mt-3">{err}</ErrorBanner>}
     </CardShell>
   );
 }
@@ -233,7 +233,7 @@ function InputCard({ item, onAction }: { item: InboxItem; onAction: () => void }
           </div>
         </div>
       </div>
-      {err && <div className="font-mono text-[11px] mt-3 text-sig-failed">{err}</div>}
+      {err && <ErrorBanner className="mt-3">{err}</ErrorBanner>}
     </CardShell>
   );
 }
@@ -318,7 +318,7 @@ export default function InboxPage() {
         <div className="flex items-start justify-between gap-5 flex-wrap">
           <div className="max-w-3xl">
             <Kicker>Approval Inbox</Kicker>
-            <h1 className="font-display text-[28px] tracking-wide text-ink mt-1">Human Gate</h1>
+            <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">Human Gate</h1>
             <p className="mt-2 font-mono text-[11px] text-faint leading-relaxed">
               One place for every run blocked on your approval or next instruction. Permission decisions reuse the run control channel;
               input replies continue the interactive session.
@@ -389,7 +389,7 @@ export default function InboxPage() {
           </Panel>
 
           {err && (
-            <ErrorBanner>{err}</ErrorBanner>
+            <ErrorBanner onRetry={() => loadInbox(true)}>{err}</ErrorBanner>
           )}
 
           {loading && !err && (

@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import type { AgentTemplate, Campaign } from '@fleet/shared';
 import { campaignStatusColor } from '@/lib/status';
 import { usd, ago } from '@/lib/format';
-import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn, Empty, Dot } from '@/components/ui';
+import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn, Empty, Dot, ErrorBanner } from '@/components/ui';
 
 /** campaign states that are still consuming budget / spawning workers */
 const LIVE_CAMPAIGN_STATUSES = ['planning', 'spawning', 'running', 'synthesizing'];
@@ -138,9 +138,9 @@ export default function OrchestratePage() {
                 </div>
               </div>
             </div>
+            {err && <ErrorBanner className="mb-4">{err}</ErrorBanner>}
             <div className="flex items-center gap-3 pt-1">
               <Btn variant="solid" onClick={launch} disabled={busy}>{busy ? 'Launching…' : '⛓ Orchestrate'}</Btn>
-              {err && <span className="font-mono text-[11px]" style={{ color: '#ff5d5d' }}>{err}</span>}
             </div>
           </div>
         </Panel>
