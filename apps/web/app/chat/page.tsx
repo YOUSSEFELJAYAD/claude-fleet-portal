@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ChatSession, ChatMessage } from '@fleet/shared';
 import { api } from '@/lib/api';
+import { useChatStream } from '@/lib/live';
 import { ChatSessionList } from '@/components/ChatSessionList';
 import { ChatThread } from '@/components/ChatThread';
 import { ChatComposer } from '@/components/ChatComposer';
@@ -16,6 +17,9 @@ export default function ChatPage() {
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // §3 — chat-scoped SSE for session lifecycle state; sessionId may be '' when none active.
+  const { state: chatState } = useChatStream(activeId ?? '');
 
   const refreshSessions = useCallback(async () => { setSessions(await api.chatSessions()); }, []);
   const loadSession = useCallback(async (id: string) => {
@@ -47,18 +51,17 @@ export default function ChatPage() {
     } catch (e: any) { setErr(e.message); }
   }
 
-  async function send(message: string, _attachments: import('@fleet/shared').ChatAttachment[] = []) {
+  async function sendTurn(message: string, attachments: import('@fleet/shared').ChatAttachment[] = []) {
     if (!activeId) return;
     setBusy(true);
     setErr(null);
     try {
-      const { runId, userMessage } = await api.chatTurn(activeId, message);
+      const { runId, userMessage } = await api.chatTurn(activeId, message, attachments);
       setMessages((m) => [...m, userMessage]); setLiveRunId(runId);
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   }
-  function stop() {
-    // placeholder — Unit 4/7 will wire interrupt here
-    setBusy(false);
+  function runCommand(line: string) {
+    void command(line);
   }
   async function command(line: string) {
     if (!activeId) return;
@@ -104,7 +107,14 @@ export default function ChatPage() {
               </div>
             )}
             <ChatThread messages={messages} liveRunId={liveRunId} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
-            <ChatComposer disabled={busy} running={busy} cwd={session.cwd} onSend={send} onCommand={command} onStop={stop} />
+            <ChatComposer
+              disabled={busy}
+              running={chatState === 'running'}
+              cwd={session.cwd}
+              onSend={(message, attachments) => sendTurn(message, attachments)}
+              onCommand={(line) => runCommand(line)}
+              onStop={() => api.chatInterrupt(session.id)}
+            />
           </>
         ) : (
           <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
