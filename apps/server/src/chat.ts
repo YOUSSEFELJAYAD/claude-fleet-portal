@@ -284,4 +284,38 @@ export function registerChatRoutes(app: FastifyInstance) {
     chatRepo.addMessage({ sessionId: id, role: 'system', kind: result.ok ? 'command-result' : 'error', content: result.text ?? JSON.stringify(result), runId: result.runId ?? null });
     return result;
   });
+
+  // §3.3 — mid-turn input / permission decisions, written to the live process stdin. 409 if not live.
+  app.post('/api/chat/sessions/:id/input', async (req, reply) => {
+    const id = (req.params as any).id;
+    const session = chatRepo.getSession(id);
+    if (!session) return reply.code(404).send({ error: 'not found' });
+    const text = (req.body as any)?.text;
+    if (typeof text !== 'string' || text.length === 0) return reply.code(400).send({ error: 'text must be a non-empty string' });
+    const runId = chatLive.liveRunId(id) ?? session.runId;
+    if (!runId) return reply.code(409).send({ error: 'session is not live; send a normal turn instead' });
+    try {
+      registry.sendInput(runId, text);
+      chatLive.touch(id);
+      return { ok: true };
+    } catch (e: any) {
+      return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'input failed' });
+    }
+  });
+
+  // §3.3 — stop the current turn. Keeps the held process live where possible; else the stop marks it
+  // killed (the session stays resumable either way). No backing run → a harmless ack.
+  app.post('/api/chat/sessions/:id/interrupt', async (req, reply) => {
+    const id = (req.params as any).id;
+    const session = chatRepo.getSession(id);
+    if (!session) return reply.code(404).send({ error: 'not found' });
+    const runId = chatLive.liveRunId(id) ?? session.runId;
+    if (!runId) return { ok: true };
+    try {
+      registry.stop(runId);
+      return { ok: true };
+    } catch (e: any) {
+      return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'interrupt failed' });
+    }
+  });
 }
