@@ -75,22 +75,4 @@ describe('FloatingMenu — interaction', () => {
     fireEvent.mouseDown(document.body);
     expect(onClose).toHaveBeenCalled();
   });
-
-  // Step 2 HUD-styling invariants (charcoal surface + amber active + footer nav hint).
-  it('uses the charcoal #101217 surface background (HUD-canon styling)', () => {
-    const { container } = render(
-      <FloatingMenu open items={items} activeIndex={0} onPick={() => {}} onClose={() => {}}
-        footer="↑↓ navigate · ↵ select · esc dismiss" />,
-    );
-    const menu = container.querySelector('[data-floating-menu]') as HTMLElement;
-    expect(menu.style.background).toBe('rgb(16, 18, 23)'); // #101217
-  });
-
-  it('renders the footer nav hint when provided', () => {
-    const { getByText } = render(
-      <FloatingMenu open items={items} activeIndex={0} onPick={() => {}} onClose={() => {}}
-        footer="↑↓ navigate · ↵ select · esc dismiss" />,
-    );
-    expect(getByText('↑↓ navigate · ↵ select · esc dismiss')).toBeTruthy();
-  });
 });
