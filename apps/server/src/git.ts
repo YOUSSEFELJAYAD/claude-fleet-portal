@@ -333,6 +333,27 @@ export async function lsTree(root: string, rev: string, dir: string): Promise<{ 
   return { entries };
 }
 
+/**
+ * Git toplevel for an arbitrary directory (the `@`-mention workspace resolver, SPEC §6.1).
+ * Returns the absolute repo root, or null when `dir` is not inside a git work tree. Never throws.
+ */
+export async function repoRoot(dir: string): Promise<string | null> {
+  const r = await gitExec(dir, ['-C', dir, 'rev-parse', '--show-toplevel']);
+  if (!r.ok) return null;
+  const top = r.stdout.trim();
+  return top ? top : null;
+}
+
+/**
+ * Tracked files of a repo, repo-root-relative, '/'-separated (the fast `@`-mention path source).
+ * Uses `ls-files -z` so paths with spaces/newlines survive. Never throws; [] on failure.
+ */
+export async function lsFiles(root: string): Promise<string[]> {
+  const r = await gitExec(root, ['-C', root, 'ls-files', '-z']);
+  if (!r.ok) return [];
+  return r.stdout.split('\0').filter((p) => p.length > 0);
+}
+
 export type ShowFileResult =
   | { binary: true; content?: undefined; truncated?: undefined; size: number | null; isImage: boolean; ext: string; error?: string }
   | { binary: false; content: string; truncated: boolean; size: number; isImage: false; ext: string; error?: string };
