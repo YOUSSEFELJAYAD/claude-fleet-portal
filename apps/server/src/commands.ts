@@ -52,7 +52,7 @@ const COMMANDS: CommandEntry[] = [
     run: async ({ arg, cwd }) => {
       if (!arg) return err('usage: /launch <prompt>');
       try {
-        const run = await registry.launch({ prompt: arg, cwd, model: 'claude-opus-4-8', effort: 'high', permissionMode: 'default' } as any);
+        const run = await registry.launch({ prompt: arg, cwd, model: 'claude-opus-4-8', effort: 'high', permissionMode: 'default' });
         return ok(`launched run ${run.id}`, { runId: run.id });
       } catch (e: any) { return err(e?.message ?? 'launch failed'); }
     },
