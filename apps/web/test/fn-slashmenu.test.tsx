@@ -64,3 +64,24 @@ describe('SlashMenu', () => {
     expect(onPick).toHaveBeenCalledWith('memory');
   });
 });
+
+describe('SlashMenu — keyboard nav', () => {
+  it('ArrowDown/ArrowUp move the active row and Enter picks it', async () => {
+    const onPick = vi.fn();
+    const { container } = render(<SlashMenu query="" cwd="/work" onPick={onPick} onClose={() => {}} />);
+    await waitFor(() => expect(container.querySelectorAll('[data-menu-item]').length).toBe(5));
+    fireEvent.keyDown(document, { key: 'ArrowDown' });
+    fireEvent.keyDown(document, { key: 'ArrowDown' });
+    fireEvent.keyDown(document, { key: 'ArrowUp' });
+    fireEvent.keyDown(document, { key: 'Enter' });
+    // started at 0, +1 +1 -1 = index 1 → the second catalog row ('kill')
+    expect(onPick).toHaveBeenCalledWith('kill');
+  });
+  it('Escape calls onClose', async () => {
+    const onClose = vi.fn();
+    const { container } = render(<SlashMenu query="" cwd="/work" onPick={() => {}} onClose={onClose} />);
+    await waitFor(() => expect(container.querySelectorAll('[data-menu-item]').length).toBe(5));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalled();
+  });
+});

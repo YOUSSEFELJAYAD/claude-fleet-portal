@@ -49,3 +49,15 @@ describe('MentionMenu', () => {
     expect(findFiles).toHaveBeenLastCalledWith('/work', 'abc', expect.any(Number));
   });
 });
+
+describe('MentionMenu — keyboard nav', () => {
+  it('ArrowDown + Enter picks the highlighted result', async () => {
+    const onPick = vi.fn();
+    const { container } = render(<MentionMenu query="a" cwd="/work" onPick={onPick} onClose={() => {}} />);
+    await vi.advanceTimersByTimeAsync(200);
+    await waitFor(() => expect(container.querySelectorAll('[data-menu-item]').length).toBe(2));
+    fireEvent.keyDown(document, { key: 'ArrowDown' });
+    fireEvent.keyDown(document, { key: 'Enter' });
+    expect(onPick).toHaveBeenCalledWith({ path: 'src/', kind: 'dir' });
+  });
+});
