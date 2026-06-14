@@ -17,7 +17,6 @@ export function PermissionCard({
   const [decision, setDecision] = useState<'allow' | 'deny' | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const purple = '#b08cff';
 
   async function decide(d: 'allow' | 'deny') {
     setBusy(true); setErr(null);
@@ -32,10 +31,10 @@ export function PermissionCard({
   }
 
   return (
-    <div className="border my-2 px-3 py-2.5" style={{ borderColor: `${purple}55`, background: `${purple}10` }}>
+    <div className="border border-sig-awaiting/40 bg-sig-awaiting/8 my-2 px-3 py-2.5">
       <div className="flex items-center gap-2 mb-2">
-        <Dot color={purple} live={decision == null} size={7} />
-        <span className="font-display uppercase tracking-wider text-[10px]" style={{ color: purple }}>permission request</span>
+        <Dot color="#b08cff" live={decision == null} size={7} />
+        <span className="font-display uppercase tracking-wider text-[10px] text-sig-awaiting">permission request</span>
         <span className="font-mono text-[11px] text-ink">{toolName}</span>
       </div>
       <div className="font-mono text-[11px] text-dim mb-2.5 break-words">{summarize(input)}</div>
@@ -43,7 +42,7 @@ export function PermissionCard({
         <Btn variant="amber" disabled={busy || decision != null} onClick={() => decide('allow')}>allow</Btn>
         <Btn variant="danger" disabled={busy || decision != null} onClick={() => decide('deny')}>deny</Btn>
         {decision && (
-          <span className="font-display uppercase tracking-wider text-[10px] ml-1" style={{ color: decision === 'allow' ? '#54e08a' : '#ff5d5d' }}>
+          <span className={`font-display uppercase tracking-wider text-[10px] ml-1 ${decision === 'allow' ? 'text-sig-completed' : 'text-sig-failed'}`}>
             {decision === 'allow' ? 'allowed' : 'denied'}
           </span>
         )}
