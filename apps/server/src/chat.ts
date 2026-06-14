@@ -4,11 +4,13 @@
  * session/message persistence, turn orchestration, and the HTTP routes.
  */
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import db from './db.js';
 import { registry } from './registry.js';
 import { dispatchCommand } from './commands.js';
 import { chatLive } from './chatLive.js';
+import { safePath, repoRoot } from './git.js';
 import type {
   ChatSession, ChatMessage, ChatRole, ChatMessageKind,
   CreateChatSessionRequest, RunEngine, EffortLevel, PermissionMode,
@@ -140,6 +142,43 @@ export function buildEnginePrompt(history: Array<{ role: string; content: string
   return (body + tail).trimStart();
 }
 
+/**
+ * Fix 07 (security) — containment-check @-attachment paths against a SERVER-TRUSTED workspace
+ * `root` before they reach `--add-dir`. Each path is resolved through git.ts's realpath-containment
+ * `safePath` guard (the same one fileview.ts uses): a path that stays inside `root` is KEPT as its
+ * resolved ABSOLUTE path; a `..`-traversal, an absolute path, or a symlink that escapes `root` is
+ * DROPPED. `root` MUST come from server state (never the client). Absolute attachment paths are
+ * rebased onto `root` (a bare absolute path is treated as host-escape and dropped unless it lives
+ * inside the root). Returns the contained absolute dirs, de-duplicated, order-preserved.
+ */
+export async function containDirs(root: string, paths: string[]): Promise<string[]> {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const absRoot = path.resolve(root);
+  for (const p of paths ?? []) {
+    if (typeof p !== 'string' || !p) continue;
+    // safePath rejects absolute `rel` outright; for an absolute attachment that genuinely lives
+    // inside the root, re-express it root-relative so a contained absolute path is still accepted.
+    let rel = p;
+    if (path.isAbsolute(p)) {
+      const r = path.relative(absRoot, path.resolve(p));
+      if (r === '' || r.startsWith('..') || path.isAbsolute(r)) continue; // outside root → drop
+      rel = r;
+    }
+    const safe = await safePath(absRoot, rel);
+    if (!safe || seen.has(safe)) continue;
+    seen.add(safe);
+    out.push(safe);
+  }
+  return out;
+}
+
+/** Resolve a session's server-trusted workspace root for containment: the git toplevel of its cwd
+ *  when in a repo, else the raw cwd. NEVER derived from client input (mirrors fileview.ts §6.1). */
+async function sessionRoot(cwd: string): Promise<string> {
+  return (await repoRoot(cwd)) ?? cwd;
+}
+
 /** Run one chat turn. Persists the user message, then launches (turn 1) or resumes (turn N) for
  *  Claude, or launches a fresh engine one-shot with a reconstructed prompt for engines.
  *  §6 — files in `attachments` become path-reference tokens in the prompt; dirs become --add-dir. */
@@ -151,8 +190,13 @@ export async function startTurn(sessionId: string, message: string, attachments?
   const userMessage = chatRepo.addMessage({ sessionId, role: 'user', kind: 'text', content: message, runId: null, attachments });
 
   // §6.2 — files become path-reference tokens in the prompt; dirs become --add-dir for this turn.
+  // Fix 07 (security) — dir attachments are containment-checked against the session's SERVER-TRUSTED
+  // workspace root (git toplevel of session.cwd, else the raw cwd) before they reach --add-dir, so a
+  // crafted /turn body can't grant the agent arbitrary host dirs (`/`, `~/.ssh`, `../escape`). Paths
+  // that escape the root are dropped; only resolved, contained absolute paths survive.
+  const root = await sessionRoot(session.cwd);
   const files = (attachments ?? []).filter((a) => a.kind === 'file').map((a) => a.path);
-  const addDirs = (attachments ?? []).filter((a) => a.kind === 'dir').map((a) => a.path);
+  const addDirs = await containDirs(root, (attachments ?? []).filter((a) => a.kind === 'dir').map((a) => a.path));
   const refSuffix = files.length ? `\n\nReferenced files:\n${files.map((f) => `- ${f}`).join('\n')}` : '';
   const prompt = message + refSuffix;
 

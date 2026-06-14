@@ -1,9 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.FLEET_DATA_DIR = mkdtempSync(join(tmpdir(), 'fleet-test-chat-attach-'));
+
+// Fix 07 — dir attachments are now containment-checked against the session's server-trusted
+// workspace root before reaching --add-dir, so the session cwd must be a REAL directory that
+// contains the attached folder; an in-root `src/` resolves and survives as its absolute path.
+const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'fleet-test-chat-ws-')));
+mkdirSync(join(workspace, 'src'));
+writeFileSync(join(workspace, 'src', 'x.ts'), 'x');
 
 vi.mock('../src/registry.js', () => ({
   registry: {
@@ -31,7 +38,7 @@ describe('startTurn with attachments', () => {
   it('appends file path-references to the prompt and passes dirs as addDirs', async () => {
     const { registry } = await import('../src/registry.js');
     const { chatRepo, startTurn } = await import('../src/chat.js');
-    const s = chatRepo.createSession({ cwd: '/tmp/a' });
+    const s = chatRepo.createSession({ cwd: workspace });
     const t = await startTurn(s.id, 'review this', [
       { path: 'src/x.ts', kind: 'file' },
       { path: 'src', kind: 'dir' },
@@ -39,7 +46,8 @@ describe('startTurn with attachments', () => {
     const launchArg = (registry.launch as any).mock.calls.at(-1)[0];
     expect(launchArg.prompt).toContain('review this');
     expect(launchArg.prompt).toContain('src/x.ts'); // file → path reference in the prompt
-    expect(launchArg.addDirs).toContain('src'); // dir → --add-dir set
+    // Fix 07 — the in-root dir survives containment as its RESOLVED ABSOLUTE path.
+    expect(launchArg.addDirs).toContain(join(workspace, 'src'));
     // persisted on the user message
     expect(t.userMessage.attachments).toEqual([
       { path: 'src/x.ts', kind: 'file' },
