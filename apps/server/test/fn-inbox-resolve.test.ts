@@ -31,8 +31,12 @@ describe('resolveApproval', () => {
     const out = await inbox.resolveApproval(id, 'approve');
     expect(out.ran).toBeTruthy();
     expect(out.ran!.ok).toBe(true);
-    // the entry is gone from the inbox after resolution
-    expect(inbox.getInboxItems().some((i) => i.kind === 'command' && i.approval?.id === id)).toBe(false);
+    // The parked command's REAL run() executed — assert its deterministic side-effect text,
+    // not merely ok===true (the old "Queued for approval" re-enqueue message also returns ok).
+    expect(out.ran!.text).toMatch(/Confirm the destructive reset/);
+    // No command item remains: approving must DRAIN the queue, not re-populate it with a
+    // fresh duplicate (which would carry a new id and falsely pass an id-only check).
+    expect(inbox.getInboxItems().filter((i) => i.kind === 'command')).toHaveLength(0);
   });
 
   it('deny removes the entry WITHOUT executing the parked command', async () => {

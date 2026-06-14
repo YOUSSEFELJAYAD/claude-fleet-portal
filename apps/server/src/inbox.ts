@@ -92,8 +92,10 @@ export async function resolveApproval(
   const [approval] = pendingApprovals.splice(idx, 1);
   if (decision === 'deny') return {};
   // Dynamic import avoids a static import cycle (commands.ts imports enqueueApproval).
+  // force:true bypasses the danger gate so the APPROVED command actually runs — without
+  // it the danger verb would re-enqueue itself and never reach its run().
   const { dispatchCommand } = await import('./commands.js');
-  const ran = await dispatchCommand(approval.line, approval.cwd);
+  const ran = await dispatchCommand(approval.line, approval.cwd, { force: true });
   return { ran };
 }
 

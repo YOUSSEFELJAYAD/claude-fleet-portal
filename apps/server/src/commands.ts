@@ -340,13 +340,20 @@ export function listCommands(): CommandDef[] {
   return COMMANDS.map(({ run, ...wire }) => wire);
 }
 
-/** Parse and run one slash-command line. `cwd` is the chat session's working dir. */
-export async function dispatchCommand(line: string, cwd: string): Promise<ChatCommandResult> {
+/** Parse and run one slash-command line. `cwd` is the chat session's working dir.
+ *  `force` bypasses the danger gate and runs the command directly — it is the replay
+ *  path used by inbox.resolveApproval() AFTER an operator has approved the parked
+ *  command. Without it, a danger verb would re-enqueue itself forever and never run. */
+export async function dispatchCommand(
+  line: string,
+  cwd: string,
+  opts: { force?: boolean } = {},
+): Promise<ChatCommandResult> {
   const trimmed = line.trim().replace(/^\//, '');
   const [name, ...rest] = trimmed.split(/\s+/);
   const cmd = COMMANDS.find((c) => c.name === name);
   if (!cmd) return err(`unknown command: /${name} — try /help`);
-  if (cmd.danger) {
+  if (cmd.danger && !opts.force) {
     const id = enqueueApproval({ command: cmd.name, summary: cmd.description, cwd, line });
     return { ok: true, kind: 'text', text: `Queued "/${cmd.name}" for approval (Inbox · ${id}). It will run once approved.` };
   }
