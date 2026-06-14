@@ -73,7 +73,7 @@ export default function LoopDetailPage({ params }: { params: { id: string } }) {
   if (!loop) return (
     <div>
       <Link href="/loops" className="font-mono text-[11px] text-faint hover:text-amber">← loops</Link>
-      <div className="mt-3 font-mono text-sig-failed text-[12px]">{error ?? 'loop not found'}</div>
+      <ErrorBanner className="mt-3" onRetry={load}>{error ?? 'loop not found'}</ErrorBanner>
     </div>
   );
 

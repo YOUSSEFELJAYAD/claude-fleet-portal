@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SettingValue } from '@fleet/shared';
 import { api } from '@/lib/api';
-import { Kicker, Panel, Btn, Input, ErrorBanner } from '@/components/ui';
+import { Kicker, Panel, Btn, Input, Toggle, Dot, Empty, ErrorBanner } from '@/components/ui';
 
 const CATS: { id: SettingValue['category']; label: string }[] = [
   { id: 'derived', label: 'Live · read-only' },
@@ -14,8 +14,17 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingValue[]>([]);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(async () => { setSettings((await api.settings()).settings); }, []);
+  const refresh = useCallback(async () => {
+    try {
+      setSettings((await api.settings()).settings);
+    } catch (e: any) {
+      setErr(e?.message ?? 'failed to load settings');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
   async function save(s: SettingValue, clear = false) {
@@ -37,15 +46,11 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-3xl">
-      <div className="flex items-end justify-between mb-5">
-        <div>
-          <Kicker>environment</Kicker>
-          <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">Settings</h1>
-        </div>
-        <div className="text-right font-mono text-[11px] text-faint">
-          <span className="text-ink tnum">{settings.length}</span> fields
-        </div>
-      </div>
+      <Kicker>environment</Kicker>
+      <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-1">Settings</h1>
+      <p className="font-mono text-[11px] text-faint mb-5">
+        Live environment, integration keys and feature gates for the portal — some apply immediately, others on next launch.
+      </p>
 
       {err && <ErrorBanner className="mb-4">{err}</ErrorBanner>}
 
@@ -54,10 +59,15 @@ export default function SettingsPage() {
           const rows = settings.filter((s) => s.category === cat.id);
           if (rows.length === 0) return null;
           return (
-            <div key={cat.id}>
-              <Kicker className="mb-2 block">{cat.label}</Kicker>
-              <Panel className="overflow-hidden">
-                <div className="divide-y divide-white/[0.04]">
+            <Panel ticked className="overflow-hidden" key={cat.id}>
+              <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+                <span className="flex items-center gap-2">
+                  <Dot color="#ffb000" size={6} />
+                  <Kicker>{cat.label}</Kicker>
+                </span>
+                <span className="font-mono tnum text-[12px] text-dim">{String(rows.length).padStart(2, '0')}</span>
+              </div>
+              <div className="divide-y divide-white/[0.04]">
                   {rows.map((s) => (
                     <div key={s.key} className="flex items-center gap-2 text-[13px] px-4 py-2.5">
                       <div className="w-48 shrink-0 text-dim">
@@ -68,9 +78,9 @@ export default function SettingsPage() {
                       {!s.editable ? (
                         <span className="font-mono text-faint">{s.value ?? '—'}</span>
                       ) : s.control === 'toggle' ? (
-                        <Btn disabled={!s.gatedOn} variant={s.value === 'true' ? 'solid' : 'ghost'} onClick={() => toggle(s)}>
-                          {s.value === 'true' ? '● ON' : '○ OFF'}
-                        </Btn>
+                        <span className={s.gatedOn ? '' : 'opacity-35'}>
+                          <Toggle on={s.value === 'true'} onChange={() => s.gatedOn && toggle(s)} label={s.value === 'true' ? 'on' : 'off'} />
+                        </span>
                       ) : s.secret ? (
                         <>
                           <span className="font-mono text-faint">{s.set ? '••••set' : '(unset)'}</span>
@@ -99,9 +109,9 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </Panel>
-            </div>
           );
         })}
+        {!loading && settings.length === 0 && <Empty>No settings available.</Empty>}
       </div>
 
       <div className="mt-5 font-mono text-[10px] text-faint leading-relaxed">

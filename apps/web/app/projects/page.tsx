@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Project, CreateProjectRequest, MergeMode, GitHealth } from '@fleet/shared';
-import { Panel, Kicker, Field, Input, Select, Toggle, Btn, Empty, ErrorBanner } from '@/components/ui';
+import { Panel, Kicker, Field, Input, Select, Toggle, Btn, Empty, Dot, ErrorBanner } from '@/components/ui';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
@@ -115,28 +115,28 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
   }
 
   return (
-    <Panel ticked className="p-5 mb-6">
-      <Kicker>attach a git repo</Kicker>
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr_140px] gap-4 mt-3">
-        <Field label="name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Web" />
-        </Field>
-        <Field label="root dir" hint="absolute path · must be a git repo">
-          <Input value={rootDir} onChange={(e) => setRootDir(e.target.value)} placeholder="/Users/you/code/acme" />
-        </Field>
-        <Field label="default branch" hint="blank → auto-detect">
-          <Input value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} placeholder="auto-detect" />
-        </Field>
+    <Panel ticked>
+      <div className="px-4 py-3 border-b hairline">
+        <Kicker>attach a git repo</Kicker>
       </div>
-      <div className="mt-4 flex items-center gap-3">
-        <Btn variant="solid" onClick={create} disabled={busy}>
-          {busy ? 'Creating…' : '＋ Create Project'}
-        </Btn>
-        {err && (
-          <span className="font-mono text-[11px] text-sig-failed">
-            {err}
-          </span>
-        )}
+      <div className="p-5 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr_140px] gap-4">
+          <Field label="name">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Web" />
+          </Field>
+          <Field label="root dir" hint="absolute path · must be a git repo">
+            <Input value={rootDir} onChange={(e) => setRootDir(e.target.value)} placeholder="/Users/you/code/acme" />
+          </Field>
+          <Field label="default branch" hint="blank → auto-detect">
+            <Input value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} placeholder="auto-detect" />
+          </Field>
+        </div>
+        <div className="flex items-center gap-3">
+          <Btn variant="solid" onClick={create} disabled={busy}>
+            {busy ? 'Creating…' : '＋ Create Project'}
+          </Btn>
+        </div>
+        {err && <ErrorBanner>{err}</ErrorBanner>}
       </div>
     </Panel>
   );
@@ -237,7 +237,7 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
   }
 
   return (
-    <Panel className="p-4" style={{ borderLeft: `2px solid ${p.paused ? '#ff7a45' : '#54e08a'}` }}>
+    <Panel className={`p-4 border-l-2 ${p.paused ? 'border-sig-killed' : 'border-sig-completed'}`}>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2.5">
@@ -336,10 +336,7 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
               </div>
             </div>
             {mergeMode === 'pr' && !pushEnabled && (
-              <div
-                className="mt-2 font-mono text-[10px] leading-snug border px-2 py-1.5"
-                style={{ color: '#ff7a45', borderColor: '#ff7a4540', background: 'rgba(255,122,69,0.06)' }}
-              >
+              <div className="mt-2 font-mono text-[10px] leading-snug border px-2 py-1.5 text-sig-killed border-sig-killed/40 bg-sig-killed/[0.06]">
                 ⚠ PR mode requires push to be enabled — turn on “push enabled” before saving.
               </div>
             )}
@@ -348,7 +345,7 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
                 {healthBusy ? 'Checking…' : '⟳ Check git readiness'}
               </Btn>
               {health && (
-                <span className="font-mono text-[10px]" style={{ color: health.remoteResolves && health.ghInstalled && health.ghAuthOk ? '#54e08a' : '#ff7a45' }}>
+                <span className={`font-mono text-[10px] ${health.remoteResolves && health.ghInstalled && health.ghAuthOk ? 'text-sig-completed' : 'text-sig-killed'}`}>
                   remote {health.remoteResolves ? `✓ ${health.remoteUrl ?? 'resolves'}` : '✕ unresolved'} ·{' '}
                   gh {health.ghInstalled ? '✓ installed' : '✕ missing'} ·{' '}
                   auth {health.ghAuthOk ? '✓ ok' : '✕ not authenticated'} ·{' '}
@@ -425,12 +422,8 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
                 saved
               </span>
             )}
-            {err && (
-              <span className="font-mono text-[11px] text-sig-failed">
-                {err}
-              </span>
-            )}
           </div>
+          {err && <ErrorBanner className="mt-3">{err}</ErrorBanner>}
         </div>
       )}
     </Panel>
@@ -467,26 +460,39 @@ export default function ProjectsPage() {
         </p>
       </div>
 
-      <CreateForm onCreated={reload} />
+      <div className="space-y-5">
+        <CreateForm onCreated={reload} />
 
-      {error ? (
-        <ErrorBanner onRetry={reload}>{error}</ErrorBanner>
-      ) : loading ? (
-        <div className="font-mono text-faint text-[12px]">loading projects…</div>
-      ) : projects.length === 0 ? (
-        <Empty>No projects yet. Attach a git repo above to get started.</Empty>
-      ) : (
-        <div className="grid gap-3">
-          {projects.map((p) => (
-            <ProjectRow
-              key={p.id}
-              p={p}
-              onChanged={(next) => setProjects((prev) => prev.map((x) => (x.id === next.id ? next : x)))}
-              onDeleted={reload}
-            />
-          ))}
-        </div>
-      )}
+        <Panel ticked>
+          <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+            <span className="flex items-center gap-2">
+              <Dot color="#ffb000" size={6} />
+              <Kicker>projects</Kicker>
+            </span>
+            <span className="font-mono tnum text-[12px] text-dim">{String(projects.length).padStart(2, '0')}</span>
+          </div>
+          <div className="p-4">
+            {error ? (
+              <ErrorBanner onRetry={reload}>{error}</ErrorBanner>
+            ) : loading ? (
+              <div className="font-mono text-faint text-[12px]">loading projects…</div>
+            ) : projects.length === 0 ? (
+              <Empty>No projects yet. Attach a git repo above to get started.</Empty>
+            ) : (
+              <div className="grid gap-3">
+                {projects.map((p) => (
+                  <ProjectRow
+                    key={p.id}
+                    p={p}
+                    onChanged={(next) => setProjects((prev) => prev.map((x) => (x.id === next.id ? next : x)))}
+                    onDeleted={reload}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </Panel>
+      </div>
     </div>
   );
 }

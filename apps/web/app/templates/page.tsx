@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import type { AgentTemplate, EffortLevel, PermissionMode } from '@fleet/shared';
-import { Panel, Kicker, Field, Input, Textarea, Select, Btn, Empty, ErrorBanner } from '@/components/ui';
+import { Panel, Kicker, Field, Input, Textarea, Select, Btn, Empty, Dot, ErrorBanner } from '@/components/ui';
 
 const ROLE_COLOR: Record<string, string> = {
   orchestrator: '#b08cff',
@@ -45,7 +45,7 @@ function TemplateCard({ t, onDelete }: { t: AgentTemplate; onDelete: () => void 
         <div className="mt-2 font-mono text-[10px] text-faint truncate">tools: {t.allowedTools.join(', ')}</div>
       )}
       {t.skills.length > 0 && (
-        <div className="mt-1 font-mono text-[10px] truncate" style={{ color: '#39d4cf' }}>skills: {t.skills.join(', ')}</div>
+        <div className="mt-1 font-mono text-[10px] truncate" style={{ color: ROLE_COLOR.worker }}>skills: {t.skills.join(', ')}</div>
       )}
     </Panel>
   );
@@ -54,9 +54,18 @@ function TemplateCard({ t, onDelete }: { t: AgentTemplate; onDelete: () => void 
 export default function TemplatesPage() {
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [open, setOpen] = useState(false);
-  // delete failures surface here (the create-form `err` is hidden when the form is closed)
+  const [loading, setLoading] = useState(true);
+  // delete failures + load failures surface here (the create-form `err` is hidden when the form is closed)
   const [listErr, setListErr] = useState<string | null>(null);
-  const reload = () => api.templates().then(setTemplates).catch(() => {});
+  const reload = () =>
+    api
+      .templates()
+      .then((ts) => {
+        setTemplates(ts);
+        setListErr(null);
+      })
+      .catch((e: any) => setListErr(e?.message || 'failed to load templates'))
+      .finally(() => setLoading(false));
   useEffect(() => {
     reload();
   }, []);
@@ -72,8 +81,9 @@ export default function TemplatesPage() {
   const [budget, setBudget] = useState('3');
   const [err, setErr] = useState<string | null>(null);
 
-  // export/import state
+  // export/import state — successes use the neutral info treatment, failures route through ErrorBanner
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [importErr, setImportErr] = useState<string | null>(null);
   const importFileRef = React.useRef<HTMLInputElement>(null);
 
   async function create() {
@@ -107,6 +117,7 @@ export default function TemplatesPage() {
   }
 
   async function handleExport() {
+    setImportErr(null);
     try {
       const setup = await api.exportSetup();
       const blob = new Blob([JSON.stringify(setup, null, 2)], { type: 'application/json' });
@@ -117,11 +128,12 @@ export default function TemplatesPage() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {
-      setImportMsg(`Export failed: ${e.message}`);
+      setImportErr(`Export failed: ${e.message}`);
     }
   }
 
   async function handleImport(file: File) {
+    setImportErr(null);
     try {
       const text = await file.text();
       const setup = JSON.parse(text);
@@ -133,7 +145,7 @@ export default function TemplatesPage() {
       setImportMsg(msg);
       reload();
     } catch (e: any) {
-      setImportMsg(`Import failed: ${e.message}`);
+      setImportErr(`Import failed: ${e.message}`);
     }
   }
 
@@ -153,64 +165,89 @@ export default function TemplatesPage() {
         </div>
       </div>
 
-      {open && (
-        <Panel ticked className="p-5 mb-5">
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="My Worker" /></Field>
-            <Field label="role">
-              <Select value={role} onChange={(e) => setRole(e.target.value)}>
-                {['worker', 'orchestrator', 'synthesizer', 'reviewer'].map((r) => <option key={r} value={r}>{r}</option>)}
-              </Select>
-            </Field>
-            <div className="col-span-2"><Field label="description"><Input value={description} onChange={(e) => setDescription(e.target.value)} /></Field></div>
-            <div className="col-span-2"><Field label="system prompt" hint="appended via --append-system-prompt"><Textarea rows={3} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} /></Field></div>
-            <Field label="effort"><Select value={effort} onChange={(e) => setEffort(e.target.value as EffortLevel)}>{['low', 'medium', 'high', 'xhigh', 'max'].map((x) => <option key={x} value={x}>{x}</option>)}</Select></Field>
-            <Field label="permission mode"><Select value={permissionMode} onChange={(e) => setPermissionMode(e.target.value as PermissionMode)}>{['default', 'acceptEdits', 'auto', 'dontAsk', 'plan', 'bypassPermissions'].map((x) => <option key={x} value={x}>{x}</option>)}</Select></Field>
-            <Field label="allowed tools" hint="comma-sep"><Input value={allowedTools} onChange={(e) => setAllowedTools(e.target.value)} placeholder="Read, Grep, Edit" /></Field>
-            <Field label="budget USD"><Input type="number" step="0.5" value={budget} onChange={(e) => setBudget(e.target.value)} /></Field>
+      <div className="space-y-5">
+        {open && (
+          <Panel ticked>
+            <div className="px-4 py-3 border-b hairline">
+              <Kicker>new template</Kicker>
+            </div>
+            <div className="p-5">
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="My Worker" /></Field>
+                <Field label="role">
+                  <Select value={role} onChange={(e) => setRole(e.target.value)}>
+                    {['worker', 'orchestrator', 'synthesizer', 'reviewer'].map((r) => <option key={r} value={r}>{r}</option>)}
+                  </Select>
+                </Field>
+                <div className="col-span-2"><Field label="description"><Input value={description} onChange={(e) => setDescription(e.target.value)} /></Field></div>
+                <div className="col-span-2"><Field label="system prompt" hint="appended via --append-system-prompt"><Textarea rows={3} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} /></Field></div>
+                <Field label="effort"><Select value={effort} onChange={(e) => setEffort(e.target.value as EffortLevel)}>{['low', 'medium', 'high', 'xhigh', 'max'].map((x) => <option key={x} value={x}>{x}</option>)}</Select></Field>
+                <Field label="permission mode"><Select value={permissionMode} onChange={(e) => setPermissionMode(e.target.value as PermissionMode)}>{['default', 'acceptEdits', 'auto', 'dontAsk', 'plan', 'bypassPermissions'].map((x) => <option key={x} value={x}>{x}</option>)}</Select></Field>
+                <Field label="allowed tools" hint="comma-sep"><Input value={allowedTools} onChange={(e) => setAllowedTools(e.target.value)} placeholder="Read, Grep, Edit" /></Field>
+                <Field label="budget USD"><Input type="number" step="0.5" value={budget} onChange={(e) => setBudget(e.target.value)} /></Field>
+              </div>
+              {err && <ErrorBanner className="mb-3 mt-4">{err}</ErrorBanner>}
+              <div className="mt-4 flex items-center gap-3">
+                <Btn variant="solid" onClick={create}>Create Template</Btn>
+              </div>
+            </div>
+          </Panel>
+        )}
+
+        {importErr && (
+          <ErrorBanner className="mb-3" onRetry={() => setImportErr(null)}>{importErr}</ErrorBanner>
+        )}
+
+        {importMsg && (
+          <div className="text-amber border border-amber/30 bg-amber/5 font-mono text-[12px] px-3 py-2 mb-3">
+            {importMsg}
           </div>
-          <div className="mt-4 flex items-center gap-3">
-            <Btn variant="solid" onClick={create}>Create Template</Btn>
-            {err && <span className="font-mono text-[11px] text-sig-failed">{err}</span>}
+        )}
+
+        {listErr && (
+          <ErrorBanner className="mb-3" onRetry={reload}>{listErr}</ErrorBanner>
+        )}
+
+        {/* ── templates list ─────────────────────────────────────────── */}
+        <Panel ticked>
+          <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+            <span className="flex items-center gap-2">
+              <Dot color="#ffb000" size={6} />
+              <Kicker>templates</Kicker>
+            </span>
+            <span className="font-mono tnum text-[12px] text-dim">{String(templates.length).padStart(2, '0')}</span>
+          </div>
+          <div className="p-4">
+            {loading && templates.length === 0 ? (
+              <div className="font-mono text-[11px] text-faint">loading…</div>
+            ) : templates.length === 0 ? (
+              <Empty>No templates.</Empty>
+            ) : (
+              <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+                {templates.map((t) => (
+                  <TemplateCard
+                    key={t.id}
+                    t={t}
+                    onDelete={() =>
+                      api.deleteTemplate(t.id).then(
+                        () => {
+                          setListErr(null);
+                          reload();
+                        },
+                        (e: any) => {
+                          // 404 = stale list (deleted elsewhere) — reloading IS the recovery
+                          if (e?.status === 404) reload();
+                          else setListErr(e?.message || 'failed to delete template');
+                        },
+                      )
+                    }
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </Panel>
-      )}
-
-      {listErr && (
-        <ErrorBanner className="mb-3">{listErr}</ErrorBanner>
-      )}
-
-      {importMsg && (
-        <div className="text-amber border border-amber/30 bg-amber/5 font-mono text-[12px] px-3 py-2 mb-3">
-          {importMsg}
-        </div>
-      )}
-
-      {templates.length === 0 ? (
-        <Empty>No templates.</Empty>
-      ) : (
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
-          {templates.map((t) => (
-            <TemplateCard
-              key={t.id}
-              t={t}
-              onDelete={() =>
-                api.deleteTemplate(t.id).then(
-                  () => {
-                    setListErr(null);
-                    reload();
-                  },
-                  (e: any) => {
-                    // 404 = stale list (deleted elsewhere) — reloading IS the recovery
-                    if (e?.status === 404) reload();
-                    else setListErr(e?.message || 'failed to delete template');
-                  },
-                )
-              }
-            />
-          ))}
-        </div>
-      )}
+      </div>
     </div>
   );
 }

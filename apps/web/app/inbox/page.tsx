@@ -2,7 +2,7 @@
 import React, { useDeferredValue, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import { Panel, Kicker, Btn, Input, Textarea, Dot, ErrorBanner } from '@/components/ui';
+import { Panel, Kicker, Btn, Input, Textarea, Dot, Badge, Tab, Empty, ErrorBanner } from '@/components/ui';
 import { usd, ago } from '@/lib/format';
 
 const POLL_MS = 4000;
@@ -40,23 +40,14 @@ function formatPayload(value: unknown, max = 900) {
   return text.length > max ? text.slice(0, max) + '\n…' : text;
 }
 
-function queueLabel(kind: InboxItem['kind']) {
-  return kind === 'permission'
-    ? { label: 'permission', color: '#ffb000', bg: 'rgba(255,176,0,0.1)', border: 'rgba(255,176,0,0.28)' }
-    : { label: 'input needed', color: '#39d4cf', bg: 'rgba(57,212,207,0.1)', border: 'rgba(57,212,207,0.28)' };
-}
+const queueMeta = (kind: InboxItem['kind']) =>
+  kind === 'permission'
+    ? { label: 'permission', color: '#ffb000' }
+    : { label: 'input needed', color: '#39d4cf' };
 
 function QueueBadge({ kind }: { kind: InboxItem['kind'] }) {
-  const q = queueLabel(kind);
-  return (
-    <span
-      className="font-display text-[10px] uppercase tracking-widest px-2 py-1 inline-flex items-center gap-1.5"
-      style={{ color: q.color, background: q.bg, border: `1px solid ${q.border}` }}
-    >
-      <Dot color={q.color} live size={6} />
-      {q.label}
-    </span>
-  );
+  const q = queueMeta(kind);
+  return <Badge label={q.label} color={q.color} live />;
 }
 
 function RunHeader({ item }: { item: InboxItem }) {
@@ -256,6 +247,12 @@ function matches(item: InboxItem, query: string) {
   return haystack.includes(query);
 }
 
+const FILTERS: { key: FilterKey; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'permission', label: 'Permissions' },
+  { key: 'input', label: 'Input' },
+];
+
 export default function InboxPage() {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -311,145 +308,83 @@ export default function InboxPage() {
   const inputItems = items.filter((i) => i.kind === 'input');
   const filtered = items.filter((i) => (filter === 'all' || i.kind === filter) && matches(i, deferredQ));
 
+  const counts: Record<FilterKey, number> = { all: items.length, permission: permItems.length, input: inputItems.length };
+
   return (
-    <div className="max-w-7xl mx-auto flex flex-col gap-6">
-      <Panel ticked className="p-5 overflow-hidden relative">
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber/60 to-transparent" />
-        <div className="flex items-start justify-between gap-5 flex-wrap">
-          <div className="max-w-3xl">
-            <Kicker>Approval Inbox</Kicker>
-            <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">Human Gate</h1>
-            <p className="mt-2 font-mono text-[11px] text-faint leading-relaxed">
-              One place for every run blocked on your approval or next instruction. Permission decisions reuse the run control channel;
-              input replies continue the interactive session.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Btn onClick={() => loadInbox(true)} disabled={refreshing}>
-              {refreshing ? 'refreshing…' : 'Refresh'}
-            </Btn>
-            <Link href="/" className="font-display uppercase tracking-wider text-[11px] px-3 py-1.5 border border-line2 text-dim hover:text-amber hover:border-amber/60">
-              Fleet
-            </Link>
-          </div>
-        </div>
+    <div>
+      <Kicker>approval inbox</Kicker>
+      <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-1">Human Gate</h1>
+      <p className="font-mono text-[11px] text-faint mb-5">
+        One place for every run blocked on your approval or next instruction — permission decisions reuse the run control channel; input replies continue the interactive session.
+      </p>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
-          <div className="border border-line2 bg-black/25 p-3">
-            <Kicker>waiting</Kicker>
-            <div className="font-mono tnum text-[24px] text-ink mt-1">{items.length}</div>
-          </div>
-          <div className="border border-line2 bg-black/25 p-3">
-            <Kicker>permissions</Kicker>
-            <div className="font-mono tnum text-[24px] text-amber mt-1">{permItems.length}</div>
-          </div>
-          <div className="border border-line2 bg-black/25 p-3">
-            <Kicker>inputs</Kicker>
-            <div className="font-mono tnum text-[24px] mt-1" style={{ color: '#39d4cf' }}>{inputItems.length}</div>
-          </div>
-          <div className="border border-line2 bg-black/25 p-3">
-            <Kicker>poll</Kicker>
-            <div className="font-mono text-[13px] text-dim mt-2">
-              {POLL_MS / 1000}s
-              {lastLoadedAt && <span className="block text-[10px] text-faint mt-1">last {ago(lastLoadedAt)}</span>}
-            </div>
-          </div>
-        </div>
-      </Panel>
+      {err && <ErrorBanner className="mb-5" onRetry={() => loadInbox(true)}>{err}</ErrorBanner>}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="flex flex-col gap-4">
-          <Panel className="p-3 flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex gap-1 flex-wrap">
-              {([
-                ['all', `All (${items.length})`],
-                ['permission', `Permissions (${permItems.length})`],
-                ['input', `Input (${inputItems.length})`],
-              ] as const).map(([key, label]) => (
-                <button
-                  key={key}
-                  onClick={() => setFilter(key)}
-                  className="font-display text-[11px] uppercase tracking-wider px-3 py-1.5 border transition-colors"
-                  style={{
-                    borderColor: filter === key ? '#ffb000' : 'rgba(255,255,255,0.075)',
-                    color: filter === key ? '#ffb000' : '#9aa1ab',
-                    background: filter === key ? 'rgba(255,176,0,0.08)' : 'transparent',
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="search task, cwd, tool…"
-              className="w-full sm:w-[280px] !py-1.5 !text-[12px]"
-            />
-          </Panel>
-
-          {err && (
-            <ErrorBanner onRetry={() => loadInbox(true)}>{err}</ErrorBanner>
-          )}
-
-          {loading && !err && (
-            <Panel className="p-8 font-mono text-[11px] text-faint">
-              Loading approval queue…
-            </Panel>
-          )}
-
-          {!loading && filtered.length === 0 && (
-            <Panel className="p-10 text-center">
-              <div className="font-display text-[13px] uppercase tracking-widest text-ink">
-                {items.length === 0 ? 'Nothing waiting on you' : 'No matching inbox items'}
+      <div className="space-y-5">
+        {/* ── block 1 · queue ────────────────────────────────────────────────── */}
+        <Panel ticked>
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b hairline flex-wrap">
+            <span className="flex items-center gap-2">
+              <Dot color="#ffb000" live={items.length > 0} size={6} />
+              <Kicker>waiting</Kicker>
+              <span className="font-mono tnum text-[12px] text-amber ml-1">{String(items.length).padStart(2, '0')}</span>
+              <span className="font-mono text-[10px] text-faint ml-1">
+                {permItems.length} perm · {inputItems.length} input · {POLL_MS / 1000}s poll{lastLoadedAt && ` · last ${ago(lastLoadedAt)}`}
+              </span>
+            </span>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex gap-1">
+                {FILTERS.map((f) => (
+                  <Tab key={f.key} active={filter === f.key} onClick={() => setFilter(f.key)}>
+                    {f.label} {counts[f.key]}
+                  </Tab>
+                ))}
               </div>
-              <p className="font-mono text-[11px] text-faint mt-2">
-                {items.length === 0
-                  ? 'Runs that need permission or interactive input will appear here automatically.'
-                  : 'Try a different filter or search term.'}
-              </p>
-            </Panel>
-          )}
-
-          {filtered.length > 0 && (
-            <div className="flex flex-col gap-4">
-              {filtered.map((item) =>
-                item.kind === 'permission' ? (
-                  <PermissionCard key={`${item.run.id}:permission`} item={item} onAction={() => loadInbox(true)} />
-                ) : (
-                  <InputCard key={`${item.run.id}:input`} item={item} onAction={() => loadInbox(true)} />
-                ),
-              )}
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="search task, cwd, tool…" className="w-[220px] !py-1" />
+              <Btn onClick={() => loadInbox(true)} disabled={refreshing}>{refreshing ? 'refreshing…' : 'Refresh'}</Btn>
             </div>
-          )}
-        </div>
+          </div>
+          <div className="p-4">
+            {loading && !err ? (
+              <div className="font-mono text-[11px] text-faint">Loading approval queue…</div>
+            ) : filtered.length === 0 ? (
+              <Empty>
+                {items.length === 0
+                  ? 'Nothing waiting on you — runs that need permission or interactive input appear here automatically.'
+                  : 'No matching inbox items — try a different filter or search term.'}
+              </Empty>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {filtered.map((item) =>
+                  item.kind === 'permission' ? (
+                    <PermissionCard key={`${item.run.id}:permission`} item={item} onAction={() => loadInbox(true)} />
+                  ) : (
+                    <InputCard key={`${item.run.id}:input`} item={item} onAction={() => loadInbox(true)} />
+                  ),
+                )}
+              </div>
+            )}
+          </div>
+        </Panel>
 
-        <aside className="flex flex-col gap-4">
-          <Panel className="p-4">
+        {/* ── block 2 · queue rules ──────────────────────────────────────────── */}
+        <Panel>
+          <div className="px-4 py-3 border-b hairline">
             <Kicker>queue rules</Kicker>
-            <div className="mt-3 space-y-3 font-mono text-[11px] text-dim leading-relaxed">
+          </div>
+          <div className="p-4 grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 font-mono text-[11px] text-dim leading-relaxed">
               <p><span className="text-amber">Permission</span> items are latest tool-use gates captured from the run event stream.</p>
               <p><span style={{ color: '#39d4cf' }}>Input</span> items are interactive runs waiting for the next user message.</p>
-              <p>There is no separate inbox database: clearing a blocker happens by advancing the run.</p>
+              <p>There is no separate inbox database: clearing a blocker happens by advancing the run. The page refreshes every {POLL_MS / 1000}s; run pages stream in real time, so use them for full context before deciding.</p>
             </div>
-          </Panel>
-
-          <Panel className="p-4">
-            <Kicker>before approving</Kicker>
-            <div className="mt-3 grid gap-2 font-mono text-[11px] text-faint">
+            <div className="grid gap-2 font-mono text-[11px] text-faint">
               <div className="border border-line2 p-2">Check the target path and command payload.</div>
               <div className="border border-line2 p-2">Open the run when the request payload is missing or unclear.</div>
               <div className="border border-line2 p-2">Deny if the tool is outside the task scope.</div>
             </div>
-          </Panel>
-
-          <Panel className="p-4">
-            <Kicker>live link</Kicker>
-            <p className="mt-3 font-mono text-[11px] text-faint leading-relaxed">
-              The page refreshes every {POLL_MS / 1000}s. Run pages stream in real time, so use them for full context before sending a decision.
-            </p>
-          </Panel>
-        </aside>
+          </div>
+        </Panel>
       </div>
     </div>
   );

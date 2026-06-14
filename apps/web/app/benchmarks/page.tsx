@@ -3,7 +3,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api, type Benchmark, type BenchmarkDetail, type BenchmarkVariant, type CreateBenchmarkRequest } from '@/lib/api';
 import { usd, ago, dur } from '@/lib/format';
-import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn, Empty, Dot } from '@/components/ui';
+import { Panel, Kicker, Field, Input, Textarea, Select, Toggle, Btn, Empty, Dot, ErrorBanner } from '@/components/ui';
+import { benchmarkStatusColor, benchmarkRunStatusColor } from '@/lib/status';
 import { ModelSelect, customModelEngine, customModelValue, modelEngine } from '@/components/ModelSelect';
 import type { AgentTemplate, ModelInfo, RunEngine } from '@fleet/shared';
 
@@ -39,22 +40,12 @@ const ENGINE_THINKING_LEVELS: Record<string, Array<{ value: string; label: strin
 
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+// Status colors are sourced from the canonical token helpers in '@/lib/status'
+// (benchmarkStatusColor / benchmarkRunStatusColor) so they cannot drift from the
+// shared palette (killed → #ff7a45, fallback → #7b828c).
 
-function statusColor(s: string): string {
-  if (s === 'completed') return '#54e08a';
-  if (s === 'running' || s === 'judging') return '#ffb000';
-  if (s === 'failed') return '#ff5d5d';
-  if (s === 'killed') return '#9aa1ab';
-  return '#5b626d';
-}
-
-function runStatusColor(s: string): string {
-  if (s === 'completed') return '#54e08a';
-  if (s === 'running' || s === 'starting' || s === 'orchestrating') return '#ffb000';
-  if (s === 'failed') return '#ff5d5d';
-  if (s === 'killed') return '#9aa1ab';
-  return '#5b626d';
-}
+const statusColor = benchmarkStatusColor;
+const runStatusColor = benchmarkRunStatusColor;
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
@@ -424,9 +415,9 @@ export default function BenchmarksPage() {
               </div>
             </div>
 
+            {err && <ErrorBanner className="mb-4">{err}</ErrorBanner>}
             <div className="flex items-center gap-3 pt-1">
               <Btn variant="solid" onClick={launch} disabled={busy}>{busy ? 'Launching…' : '⚗ Run Benchmark'}</Btn>
-              {err && <span className="font-mono text-[11px] text-sig-failed">{err}</span>}
             </div>
           </div>
         </Panel>

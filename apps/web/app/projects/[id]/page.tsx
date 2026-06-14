@@ -213,7 +213,7 @@ function TriggersPanel({ projectId }: TriggersPanelProps) {
         <div className="flex flex-wrap gap-2 items-end">
           {/* kind */}
           <div className="flex flex-col gap-1 w-[120px]">
-            <span className="font-mono text-[10px] text-faint uppercase tracking-wider">kind</span>
+            <Kicker>kind</Kicker>
             <Select
               value={addKind}
               onChange={(e) => setAddKind(e.target.value as 'issue-label' | 'pr-opened')}
@@ -226,7 +226,7 @@ function TriggersPanel({ projectId }: TriggersPanelProps) {
 
           {/* repo */}
           <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
-            <span className="font-mono text-[10px] text-faint uppercase tracking-wider">repo (owner/name)</span>
+            <Kicker>repo (owner/name)</Kicker>
             <Input
               value={addRepo}
               onChange={(e) => setAddRepo(e.target.value)}
@@ -238,7 +238,7 @@ function TriggersPanel({ projectId }: TriggersPanelProps) {
           {/* label (only for issue-label) */}
           {addKind === 'issue-label' && (
             <div className="flex flex-col gap-1 w-[120px]">
-              <span className="font-mono text-[10px] text-faint uppercase tracking-wider">label</span>
+              <Kicker>label</Kicker>
               <Input
                 value={addLabel}
                 onChange={(e) => setAddLabel(e.target.value)}
@@ -250,7 +250,7 @@ function TriggersPanel({ projectId }: TriggersPanelProps) {
 
           {/* action */}
           <div className="flex flex-col gap-1 w-[100px]">
-            <span className="font-mono text-[10px] text-faint uppercase tracking-wider">action</span>
+            <Kicker>action</Kicker>
             <Select
               value={addAction}
               onChange={(e) => setAddAction(e.target.value as 'card' | 'run')}
@@ -264,7 +264,7 @@ function TriggersPanel({ projectId }: TriggersPanelProps) {
           {/* template (only for run) */}
           {addAction === 'run' && (
             <div className="flex flex-col gap-1 w-[140px]">
-              <span className="font-mono text-[10px] text-faint uppercase tracking-wider">template</span>
+              <Kicker>template</Kicker>
               <Select
                 value={addTemplate}
                 onChange={(e) => setAddTemplate(e.target.value)}
@@ -283,11 +283,7 @@ function TriggersPanel({ projectId }: TriggersPanelProps) {
           </Btn>
         </div>
 
-        {addErr && (
-          <div className="mt-2 font-mono text-[11px] text-sig-failed">
-            {addErr}
-          </div>
-        )}
+        {addErr && <ErrorBanner className="mt-2">{addErr}</ErrorBanner>}
       </div>
     </Panel>
   );
@@ -424,7 +420,7 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
             href="/projects"
             className="font-display uppercase tracking-wider text-[11px] px-3 py-1.5 border border-line2 text-dim hover:text-ink hover:border-amber/60 hover:bg-amber/5 inline-flex items-center"
           >
-            ⚙ Edit settings
+            ⚙ Manage projects
           </Link>
         </div>
       </Panel>

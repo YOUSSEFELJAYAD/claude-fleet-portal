@@ -27,6 +27,7 @@ export default function RunDetail({ params }: { params: { id: string } }) {
   const [resumeText, setResumeText] = useState('');
   const [showResume, setShowResume] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const [, force] = useState(0);
   // F3 — retrieve retriedBy (the run that retried this one, if any)
   const [retriedBy, setRetriedBy] = useState<string | null>(null);
@@ -47,12 +48,15 @@ export default function RunDetail({ params }: { params: { id: string } }) {
   const selectedNode = nodes.find((n) => n.id === selected);
   const elapsed = run ? (run.endedAt ?? Date.now()) - run.startedAt : 0;
 
+  const lastAction = React.useRef<(() => Promise<unknown>) | null>(null);
   async function act(fn: () => Promise<unknown>) {
+    lastAction.current = fn;
+    setActionErr(null);
     setBusy(true);
     try {
       await fn();
     } catch (e: any) {
-      alert(e.message);
+      setActionErr(e.message);
     } finally {
       setBusy(false);
     }
@@ -182,6 +186,12 @@ export default function RunDetail({ params }: { params: { id: string } }) {
         </div>
       </div>
 
+      {actionErr && (
+        <ErrorBanner className="mb-4" onRetry={lastAction.current ? () => act(lastAction.current!) : undefined}>
+          {actionErr}
+        </ErrorBanner>
+      )}
+
       {showResume && !live && !isEngineRun && (
         <Panel className="p-3 mb-4 flex gap-2 items-center">
           <Input value={resumeText} onChange={(e) => setResumeText(e.target.value)} placeholder="follow-up instruction for the resumed session…" className="flex-1" />
@@ -249,9 +259,7 @@ export default function RunDetail({ params }: { params: { id: string } }) {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {live && <span className="font-mono text-[9px] text-sig-running animate-pulseGlow">● LIVE</span>}
-              <button onClick={() => setRaw((r) => !r)} className={`font-mono text-[10px] px-2 py-1 border border-line2 hover:border-amber/50 ${raw ? 'text-amber' : 'text-dim'}`}>
-                raw
-              </button>
+              <Btn variant={raw ? 'amber' : 'ghost'} onClick={() => setRaw((r) => !r)}>raw</Btn>
             </div>
           </div>
           <div className="px-4 py-2 max-h-[560px] overflow-y-auto">

@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Kicker, Panel, Empty, Btn, Field, Input, Toggle, Select, Dot, ErrorBanner } from '@/components/ui';
+import { Kicker, Panel, Empty, Btn, Field, Input, Toggle, Select, Dot, Badge, ErrorBanner } from '@/components/ui';
 import { MultiPicker } from '@/components/MultiPicker';
 import { ago } from '@/lib/format';
 
@@ -64,23 +64,7 @@ const KIND_COLOR: Record<string, string> = {
 const kindColor = (k: string) => KIND_COLOR[k] ?? '#9aa1ab';
 
 function KindBadge({ kind }: { kind: string }) {
-  const color = kindColor(kind);
-  return (
-    <span
-      className="font-display inline-flex items-center gap-1.5 uppercase tracking-wider"
-      style={{
-        color,
-        fontSize: 9.5,
-        border: `1px solid ${color}40`,
-        background: `${color}12`,
-        padding: '2px 6px',
-        letterSpacing: '0.12em',
-      }}
-    >
-      <Dot color={color} size={6} />
-      {kind}
-    </span>
-  );
+  return <Badge label={kind} color={kindColor(kind)} />;
 }
 
 // ── url masking helper ────────────────────────────────────────────────────────
@@ -300,22 +284,17 @@ export default function NotificationsPage() {
 
   return (
     <div>
-      <div className="flex items-end justify-between mb-5">
-        <div>
-          <Kicker>alerts</Kicker>
-          <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">Notifications</h1>
-        </div>
-        <div className="text-right font-mono text-[11px] text-faint">
-          <span className="text-amber tnum">{unread}</span> unread ·{' '}
-          <span className="text-ink tnum">{items.length}</span> total
-        </div>
-      </div>
+      <Kicker>alerts</Kicker>
+      <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-1">Notifications</h1>
+      <p className="font-mono text-[11px] text-faint mb-5">
+        Run-terminal alerts and delivery channels — failures, cost / duration thresholds and spend gates, pushed to Slack, Discord or generic webhooks.
+      </p>
 
       {error && (
         <ErrorBanner className="mb-4" onRetry={loadList}>{error}</ErrorBanner>
       )}
 
-      <div className="grid gap-5" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
+      <div className="space-y-5">
         {/* ── feed ── */}
         <div>
           <div className="flex items-center justify-between mb-3">

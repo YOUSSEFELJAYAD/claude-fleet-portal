@@ -3,19 +3,23 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { API } from '@/lib/api';
 import type { TeamView, TeamTask } from '@fleet/shared';
-import { Panel, Kicker, Empty } from '@/components/ui';
+import { Panel, Kicker, Empty, Dot, ErrorBanner } from '@/components/ui';
+import { taskStatusColor } from '@/lib/status';
 import { clock } from '@/lib/format';
 
-const STATUS_COL: { key: string; label: string; color: string }[] = [
-  { key: 'pending', label: 'Pending', color: '#7b828c' },
-  { key: 'in_progress', label: 'In Progress', color: '#39d4cf' },
-  { key: 'completed', label: 'Completed', color: '#54e08a' },
+const STATUS_COL: { key: string; label: string }[] = [
+  { key: 'pending', label: 'Pending' },
+  { key: 'in_progress', label: 'In Progress' },
+  { key: 'completed', label: 'Completed' },
 ];
+
+/** map a kanban column key to the shared status-token color */
+const colColor = (key: string) => taskStatusColor(key === 'in_progress' ? 'running' : key);
 
 function TaskCard({ task }: { task: TeamTask }) {
   const col = STATUS_COL.find((c) => c.key === task.status) ?? STATUS_COL[0];
   return (
-    <div className="panel p-3" style={{ borderLeft: `2px solid ${col.color}` }}>
+    <div className="panel p-3" style={{ borderLeft: `2px solid ${colColor(col.key)}` }}>
       <div className="flex items-center justify-between">
         <span className="font-mono text-[10px] text-faint">#{task.id}</span>
         {task.owner && <span className="font-mono text-[10px] text-amber">@{task.owner}</span>}
@@ -39,11 +43,24 @@ export default function TeamDetail({ params }: { params: { id: string } }) {
   const { id } = params;
   const [view, setView] = useState<TeamView | null>(null);
   const [connected, setConnected] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [epoch, setEpoch] = useState(0);
+
+  const reconnect = () => {
+    setErr(null);
+    setEpoch((e) => e + 1);
+  };
 
   useEffect(() => {
     const es = new EventSource(`${API}/api/teams/${id}/stream`);
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
+    es.onopen = () => {
+      setConnected(true);
+      setErr(null);
+    };
+    es.onerror = () => {
+      setConnected(false);
+      setErr('connection to team stream lost');
+    };
     es.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data);
@@ -53,7 +70,7 @@ export default function TeamDetail({ params }: { params: { id: string } }) {
       }
     };
     return () => es.close();
-  }, [id]);
+  }, [id, epoch]);
 
   return (
     <div>
@@ -61,13 +78,15 @@ export default function TeamDetail({ params }: { params: { id: string } }) {
       <Kicker>team</Kicker>
       <div className="flex items-center gap-3 mt-1 mb-1">
         <span className="text-amber">⧉</span>
-        <h1 className="font-display text-[22px] tracking-wide text-ink">{view?.name ?? id.slice(0, 8)}</h1>
+        <h1 className="font-display text-[26px] tracking-wide text-ink">{view?.name ?? id.slice(0, 8)}</h1>
         {connected && <span className="font-mono text-[9px] text-sig-completed animate-pulseGlow">● watching</span>}
       </div>
-      <div className="font-mono text-[10px] text-faint mb-5 truncate">{view?.taskDir ?? id}</div>
+      <div className="font-mono text-[11px] text-faint mb-5 truncate">{view?.taskDir ?? id}</div>
+
+      {err && <ErrorBanner className="mb-3" onRetry={reconnect}>{err}</ErrorBanner>}
 
       {!view ? (
-        <div className="font-mono text-faint text-[12px]">loading task list…</div>
+        err ? null : <div className="font-mono text-faint text-[12px]">loading task list…</div>
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -78,9 +97,9 @@ export default function TeamDetail({ params }: { params: { id: string } }) {
               return (
                 <div key={col.key}>
                   <div className="flex items-center gap-2 mb-2.5">
-                    <span style={{ width: 7, height: 7, borderRadius: 999, background: col.color, display: 'inline-block' }} />
+                    <Dot color={colColor(col.key)} live={col.key === 'in_progress'} size={6} />
                     <Kicker>{col.label}</Kicker>
-                    <span className="font-mono text-[10px] text-faint tnum">{all.length}</span>
+                    <span className="font-mono tnum text-[12px] text-faint">{String(all.length).padStart(2, '0')}</span>
                   </div>
                   <div className="space-y-2.5">
                     {all.length === 0 ? <div className="text-faint font-mono text-[11px] py-3">—</div> : all.map((t) => <TaskCard key={t.id} task={t} />)}

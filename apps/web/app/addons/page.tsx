@@ -3,19 +3,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, type ApiError } from '@/lib/api';
 import type { AddonInfo } from '@fleet/shared';
+import { addonStatusColor } from '@/lib/status';
 import { Panel, Kicker, Btn, Dot, ErrorBanner } from '@/components/ui';
 
 /** §22 — Add-on Marketplace: optional capabilities toggled at runtime. Enabling an
  *  add-on unlocks its dedicated page (it appears in the nav rail under Add-ons). */
-
-const STATUS_COLOR: Record<AddonInfo['status'], string> = {
-  running: '#54e08a',
-  starting: '#ffb000',
-  stopped: '#ffb000',
-  error: '#ff5d5d',
-  disabled: '#5b626d',
-  'not-installed': '#e8704a',
-};
 
 const STATUS_LABEL: Record<AddonInfo['status'], string> = {
   running: 'running',
@@ -115,8 +107,8 @@ export default function AddonsPage() {
                     <span className="font-mono text-[9.5px] uppercase tracking-wider px-1.5 py-0.5 border text-dim border-line">built-in</span>
                   )}
                 </div>
-                <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider" style={{ color: STATUS_COLOR[a.status] }}>
-                  <Dot color={STATUS_COLOR[a.status]} live={a.status === 'running' || a.status === 'starting'} size={6} />
+                <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider" style={{ color: addonStatusColor(a.status) }}>
+                  <Dot color={addonStatusColor(a.status)} live={a.status === 'running' || a.status === 'starting'} size={6} />
                   {STATUS_LABEL[a.status]}
                 </span>
               </div>

@@ -186,12 +186,14 @@ export default function HistoryPage() {
   return (
     <div>
       <Kicker>archive</Kicker>
-      <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-4">History &amp; Replay</h1>
+      <h1 className="font-display text-[26px] tracking-wide text-ink mt-1 mb-1">History &amp; Replay</h1>
+      <p className="font-mono text-[11px] text-faint mb-5">Search, replay and export every past run — full-transcript deep search included.</p>
 
+      <div className="space-y-5">
       {/* F7 — deep search input */}
-      <div className="panel mb-4">
+      <Panel ticked>
         <div className="px-4 py-3 border-b hairline flex items-center gap-2">
-          <span className="kicker">deep search</span>
+          <Kicker>deep search</Kicker>
           <span className="text-faint font-mono text-[10px] ml-1">· full transcripts</span>
         </div>
         <div className="p-4">
@@ -256,9 +258,9 @@ export default function HistoryPage() {
             ) : null}
           </div>
         )}
-      </div>
+      </Panel>
 
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2">
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -274,16 +276,13 @@ export default function HistoryPage() {
             <option key={s} value={s}>{s}</option>
           ))}
         </Select>
-        <a
-          href={csvHref}
-          className="font-display uppercase tracking-wider text-[10px] px-3 py-2 border border-line2 text-faint hover:text-amber hover:border-amber/60 inline-flex items-center"
-        >
-          ↓ CSV
+        <a href={csvHref}>
+          <Btn variant="ghost">↓ CSV</Btn>
         </a>
       </div>
 
       {/* A8 — saved searches */}
-      <div className="flex gap-2 mb-4 items-center flex-wrap">
+      <div className="flex gap-2 items-center flex-wrap">
         {saved.map((s) => (
           <span key={s.id} className="inline-flex items-center gap-1 border border-line2 text-[10px] font-mono">
             <button
@@ -314,7 +313,11 @@ export default function HistoryPage() {
       ) : runs.length === 0 ? (
         <Empty>No runs match.</Empty>
       ) : (
-        <div className="panel overflow-hidden">
+        <Panel ticked className="overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+            <Kicker>runs</Kicker>
+            <span className="font-mono tnum text-[12px] text-dim">{String(runs.length).padStart(2, '0')}</span>
+          </div>
           <div className="grid grid-cols-[120px_1fr_90px_90px_90px_120px_34px] gap-3 px-4 py-2.5 border-b hairline kicker">
             <span>status</span>
             <span>task</span>
@@ -334,7 +337,7 @@ export default function HistoryPage() {
                     {m.label}
                   </span>
                   <span className="text-ink text-[12px] truncate">{r.task}</span>
-                  <span className="text-right font-mono tnum text-[11px]" style={{ color: r.budgetUsd && r.costUsd / r.budgetUsd >= 0.8 ? '#ff5d5d' : '#e9e7df' }}>{usd(r.costUsd)}</span>
+                  <span className={`text-right font-mono tnum text-[11px] ${r.budgetUsd && r.costUsd / r.budgetUsd >= 0.8 ? 'text-sig-failed' : 'text-ink'}`}>{usd(r.costUsd)}</span>
                   <span className="text-right font-mono tnum text-[11px] text-dim">{tokens(r.tokensOut)}</span>
                   <span className="text-right font-mono tnum text-[11px] text-dim">{dur((r.endedAt ?? r.startedAt) - r.startedAt)}</span>
                   <span className="text-right font-mono text-[10px] text-faint">{clock(r.startedAt)}</span>
@@ -364,12 +367,11 @@ export default function HistoryPage() {
               );
             })}
           </div>
-        </div>
+        </Panel>
       ))}
 
       {/* F9 — fleet memory panel */}
-      <div className="mt-8">
-        <Panel>
+      <Panel ticked>
           <div className="px-4 py-3 border-b hairline flex items-center justify-between">
             <div>
               <Kicker>fleet memory</Kicker>
@@ -417,9 +419,7 @@ export default function HistoryPage() {
                 </Btn>
               </div>
             </Field>
-            {memErr && (
-              <div className="font-mono text-[11px] text-sig-failed">{memErr}</div>
-            )}
+            {memErr && <ErrorBanner>{memErr}</ErrorBanner>}
             {memStats && (
               <div className="font-mono text-[11px] text-faint">
                 {memStats.entries} {memStats.entries === 1 ? 'entry' : 'entries'} ·{' '}

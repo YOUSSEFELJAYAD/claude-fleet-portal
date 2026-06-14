@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import type { FleetStatus } from '@/lib/api';
 import type { FleetConfig } from '@fleet/shared';
-import { Panel, Kicker, Field, Input, Btn, Stat, Dot, ErrorBanner } from '@/components/ui';
+import { Panel, Kicker, Field, Input, Btn, Stat, Dot, Empty, ErrorBanner } from '@/components/ui';
 import { usd } from '@/lib/format';
 
 const POLL_MS = 5000;
@@ -114,11 +114,11 @@ export default function FleetSchedulerPage() {
                   workers draw from the reserved slots. A null ceiling means no fleet-wide daily spend gate. Project{' '}
                   <span className="text-dim">priority</span> (which weights the fair-share split) is set per-project on the Projects page.
                 </p>
+                {cfgErr && <ErrorBanner className="mt-4" onRetry={save}>{cfgErr}</ErrorBanner>}
                 <div className="flex items-center gap-3 pt-3">
                   <Btn variant="solid" onClick={save} disabled={busy || !cfg}>
                     {busy ? 'saving…' : '⚙ Save Fleet Config'}
                   </Btn>
-                  {cfgErr && <span className="font-mono text-[11px] text-sig-failed">{cfgErr}</span>}
                 </div>
               </>
             )}
@@ -175,8 +175,8 @@ export default function FleetSchedulerPage() {
               <tbody>
                 {status && status.projects.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center font-mono text-[12px] text-faint">
-                      no projects
+                    <td colSpan={7} className="p-4">
+                      <Empty>no projects yet</Empty>
                     </td>
                   </tr>
                 )}

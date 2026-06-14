@@ -3,7 +3,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { API } from '@/lib/api';
 import type { Project } from '@fleet/shared';
-import { Kicker, Panel, Empty, ErrorBanner } from '@/components/ui';
+import { Kicker, Panel, Empty, ErrorBanner, Tab } from '@/components/ui';
+import { codeStatusColor } from '@/lib/status';
 import { FileTree } from '@/components/FileTree';
 import { FileViewer } from '@/components/FileViewer';
 import { DiffView } from '@/components/DiffView';
@@ -29,12 +30,14 @@ interface ChangedDiff {
 
 function codeLabel(code: string): { text: string; color: string } {
   const c = code.trim();
-  if (c === '??') return { text: 'new', color: '#54e08a' };
-  if (c.includes('A')) return { text: 'added', color: '#54e08a' };
-  if (c.includes('D')) return { text: 'deleted', color: '#ff5d5d' };
-  if (c.includes('R')) return { text: 'renamed', color: '#ffb000' };
-  if (c.includes('M')) return { text: 'modified', color: '#ffb000' };
-  return { text: c || '·', color: '#9aa0a8' };
+  let text: string;
+  if (c === '??') text = 'new';
+  else if (c.includes('A')) text = 'added';
+  else if (c.includes('D')) text = 'deleted';
+  else if (c.includes('R')) text = 'renamed';
+  else if (c.includes('M')) text = 'modified';
+  else text = c || '·';
+  return { text, color: codeStatusColor(text) };
 }
 
 export default function ProjectFilesPage({ params }: { params: { id: string } }) {
@@ -133,7 +136,7 @@ export default function ProjectFilesPage({ params }: { params: { id: string } })
       <div className="flex items-center justify-between mb-4">
         <div>
           <Kicker>project · files</Kicker>
-          <h1 className="font-display text-[24px] tracking-wide text-ink mt-1">{project?.name ?? 'Files'}</h1>
+          <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">{project?.name ?? 'Files'}</h1>
           {project && <div className="font-mono text-[10px] text-faint mt-0.5">{project.rootDir}</div>}
         </div>
         <ProjectTabs id={id} active="files" />
@@ -144,12 +147,12 @@ export default function ProjectFilesPage({ params }: { params: { id: string } })
       )}
 
       <div className="flex gap-2 mb-4">
-        <SubTab on={tab === 'browse'} onClick={() => setTab('browse')}>
+        <Tab active={tab === 'browse'} onClick={() => setTab('browse')}>
           Browse
-        </SubTab>
-        <SubTab on={tab === 'changes'} onClick={() => setTab('changes')}>
+        </Tab>
+        <Tab active={tab === 'changes'} onClick={() => setTab('changes')}>
           Changed files
-        </SubTab>
+        </Tab>
       </div>
 
       {tab === 'browse' ? (
@@ -271,18 +274,5 @@ function ProjectTabs({ id, active }: { id: string; active: 'board' | 'files' | '
         </Link>
       ))}
     </div>
-  );
-}
-
-function SubTab({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`font-display uppercase tracking-wider text-[10px] px-3 py-1.5 border transition-colors ${
-        on ? 'border-amber/60 text-amber bg-amber/8' : 'border-line2 text-faint hover:text-ink hover:border-amber/40'
-      }`}
-    >
-      {children}
-    </button>
   );
 }

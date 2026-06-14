@@ -435,7 +435,7 @@ export default function SchedulesPage() {
               </Field>
             </div>
 
-            {formErr && <div className="text-sig-failed font-mono text-[11px]">{formErr}</div>}
+            {formErr && <ErrorBanner className="mb-4">{formErr}</ErrorBanner>}
 
             <div className="pt-1">
               <Btn type="submit" variant="solid" disabled={submitting}>

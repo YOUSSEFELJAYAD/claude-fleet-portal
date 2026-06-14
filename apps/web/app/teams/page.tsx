@@ -4,10 +4,10 @@ import Link from 'next/link';
 import { api } from '@/lib/api';
 import { useAsync } from '@/lib/live';
 import { ago } from '@/lib/format';
-import { Panel, Kicker, Empty } from '@/components/ui';
+import { Panel, Kicker, Empty, ErrorBanner } from '@/components/ui';
 
 export default function TeamsPage() {
-  const { data: teams, loading } = useAsync(() => api.teams(), []);
+  const { data: teams, error, loading, reload } = useAsync(() => api.teams(), []);
 
   return (
     <div>
@@ -17,7 +17,9 @@ export default function TeamsPage() {
         Shared task lists watched from <span className="text-dim">~/.claude/tasks/</span> — task ownership, dependencies, peer messages.
       </p>
 
-      {loading ? (
+      {error && <ErrorBanner className="mb-4" onRetry={reload}>{error}</ErrorBanner>}
+
+      {error ? null : loading ? (
         <div className="font-mono text-faint text-[12px]">scanning task directories…</div>
       ) : !teams || teams.length === 0 ? (
         <Empty>No team task-lists found in ~/.claude/tasks/</Empty>

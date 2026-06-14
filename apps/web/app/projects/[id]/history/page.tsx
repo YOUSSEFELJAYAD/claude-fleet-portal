@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { API } from '@/lib/api';
 import type { Project } from '@fleet/shared';
-import { Kicker, Panel, ErrorBanner } from '@/components/ui';
+import { Kicker, Panel, ErrorBanner, Btn } from '@/components/ui';
 import { GitLog, type GitLogEntry } from '@/components/GitLog';
 import { DiffView } from '@/components/DiffView';
 
@@ -106,47 +106,57 @@ export default function ProjectHistoryPage({ params }: { params: { id: string } 
       <div className="flex items-center justify-between mb-4">
         <div>
           <Kicker>project · history</Kicker>
-          <h1 className="font-display text-[24px] tracking-wide text-ink mt-1">{project?.name ?? 'History'}</h1>
+          <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">{project?.name ?? 'History'}</h1>
           {project && <div className="font-mono text-[10px] text-faint mt-0.5">{project.rootDir}</div>}
         </div>
         <ProjectTabs id={id} active="history" />
       </div>
 
       <div className="grid grid-cols-[420px_1fr] gap-3" style={{ minHeight: 560 }}>
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="kicker">commits</span>
-            <button onClick={loadLog} className="font-mono text-[10px] text-faint hover:text-amber underline">
-              refresh
-            </button>
+        <Panel>
+          <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+            <Kicker>commits</Kicker>
+            <span className="flex items-center gap-3">
+              <span className="font-mono tnum text-[12px] text-dim">{String(entries?.length ?? 0).padStart(2, '0')}</span>
+              <Btn variant="ghost" onClick={loadLog}>refresh</Btn>
+            </span>
           </div>
-          {logLoading && entries === null ? (
-            <div className="font-mono text-[12px] text-faint">reading git log…</div>
-          ) : logErr ? (
-            <ErrorBanner onRetry={loadLog}>{logErr}</ErrorBanner>
-          ) : (
-            <div className="overflow-auto" style={{ maxHeight: 600 }}>
-              <GitLog entries={entries ?? []} selected={selected} onSelect={selectCommit} />
-            </div>
-          )}
-        </div>
-
-        <Panel className="overflow-auto" style={{ maxHeight: 640 }}>
-          {!selected ? (
-            <div className="font-mono text-[12px] text-faint h-full flex items-center justify-center">
-              Select a commit to view its diff.
-            </div>
-          ) : showLoading ? (
-            <div className="font-mono text-[12px] text-faint p-4">loading commit {selected.slice(0, 8)}…</div>
-          ) : (
-            <div className="p-3">
-              <div className="font-mono text-[10px] text-faint mb-2">
-                commit <span className="text-dim">{selected.slice(0, 12)}</span>
-                {show?.truncated && <span className="text-amber"> · truncated</span>}
+          <div className="p-4">
+            {logLoading && entries === null ? (
+              <div className="font-mono text-[12px] text-faint">reading git log…</div>
+            ) : logErr ? (
+              <ErrorBanner onRetry={loadLog}>{logErr}</ErrorBanner>
+            ) : (
+              <div className="overflow-auto" style={{ maxHeight: 600 }}>
+                <GitLog entries={entries ?? []} selected={selected} onSelect={selectCommit} />
               </div>
-              <DiffView diff={show?.text ?? ''} truncated={show?.truncated} error={show?.error} />
-            </div>
-          )}
+            )}
+          </div>
+        </Panel>
+
+        <Panel>
+          <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+            <Kicker>commit diff</Kicker>
+            {selected && (
+              <span className="font-mono tnum text-[12px] text-dim">
+                {selected.slice(0, 12)}
+                {show?.truncated && <span className="text-amber"> · truncated</span>}
+              </span>
+            )}
+          </div>
+          <div className="overflow-auto" style={{ maxHeight: 600 }}>
+            {!selected ? (
+              <div className="font-mono text-[12px] text-faint h-full flex items-center justify-center p-4">
+                Select a commit to view its diff.
+              </div>
+            ) : showLoading ? (
+              <div className="font-mono text-[12px] text-faint p-4">loading commit {selected.slice(0, 8)}…</div>
+            ) : (
+              <div className="p-3">
+                <DiffView diff={show?.text ?? ''} truncated={show?.truncated} error={show?.error} />
+              </div>
+            )}
+          </div>
         </Panel>
       </div>
     </div>

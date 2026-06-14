@@ -152,7 +152,7 @@ export default function LearningPage() {
         Skill Learning
         <span className="inline-flex items-center gap-1.5" title={enabled ? 'autonomous learning is ON' : 'disabled'}>
           <Dot color={enabled ? '#54e08a' : '#5b626d'} live={enabled} size={7} />
-          <span className="font-mono text-[11px]" style={{ color: enabled ? '#54e08a' : '#5b626d' }}>
+          <span className={enabled ? 'font-mono text-[11px] text-sig-completed' : 'font-mono text-[11px] text-faint'}>
             {enabled ? 'live' : 'off'}
           </span>
         </span>
@@ -218,22 +218,25 @@ export default function LearningPage() {
               <Dot color="#54e08a" live={okCount > 0} size={6} />
               <Kicker>learned skills</Kicker>
             </span>
-            <span className="font-mono text-[11px] text-faint">
-              <span className="text-sig-completed tnum">{okCount}</span> learned ·{' '}
-              <span className="text-ink tnum">{skills.length}</span> attempts · → attachable in Templates
-            </span>
+            <span className="font-mono tnum text-[12px] text-sig-completed">{String(okCount).padStart(2, '0')}</span>
           </div>
-          <div className="p-4">
+          <div className="p-4 overflow-auto" style={{ maxHeight: '60vh' }}>
             {loading ? (
               <div className="font-mono text-faint text-[12px]">loading…</div>
             ) : skills.length === 0 ? (
               <Empty>No skills learned yet. Enable the loop, then complete a complex run.</Empty>
             ) : (
-              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
-                {skills.map((s) => (
-                  <SkillCard key={s.id} s={s} onDelete={removeSkill} deleting={deletingId === s.id} />
-                ))}
-              </div>
+              <>
+                <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {skills.map((s) => (
+                    <SkillCard key={s.id} s={s} onDelete={removeSkill} deleting={deletingId === s.id} />
+                  ))}
+                </div>
+                <div className="font-mono text-[10px] text-faint mt-3">
+                  <span className="text-sig-completed tnum">{okCount}</span> learned ·{' '}
+                  <span className="text-ink tnum">{skills.length}</span> attempts · → attachable in Templates
+                </div>
+              </>
             )}
           </div>
         </Panel>

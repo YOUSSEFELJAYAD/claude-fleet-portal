@@ -263,12 +263,9 @@ export default function BoardPage({ params }: { params: { id: string } }) {
       )}
 
       {actionError && (
-        <div className="font-mono text-sig-failed text-[11px] border border-sig-failed/30 bg-sig-failed/5 px-3 py-2 mb-3 flex items-center justify-between">
-          <span>{actionError}</span>
-          <button onClick={() => setActionError(null)} className="text-faint hover:text-ink">
-            ✕
-          </button>
-        </div>
+        <ErrorBanner className="mb-3" onRetry={() => setActionError(null)}>
+          {actionError}
+        </ErrorBanner>
       )}
 
       {/* create-card form */}

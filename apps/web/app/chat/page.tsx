@@ -6,6 +6,7 @@ import { ChatSessionList } from '@/components/ChatSessionList';
 import { ChatThread } from '@/components/ChatThread';
 import { ChatComposer } from '@/components/ChatComposer';
 import { RunningAgentsPanel } from '@/components/RunningAgentsPanel';
+import { ErrorBanner } from '@/components/ui';
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -14,6 +15,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const refreshSessions = useCallback(async () => { setSessions(await api.chatSessions()); }, []);
   const loadSession = useCallback(async (id: string) => {
@@ -24,40 +26,60 @@ export default function ChatPage() {
   useEffect(() => { refreshSessions(); }, [refreshSessions]);
 
   async function newSession() {
-    const s = await api.createChatSession({ cwd: process.env.NEXT_PUBLIC_DEFAULT_CWD || '.' });
-    await refreshSessions(); await loadSession(s.id);
+    setErr(null);
+    try {
+      const s = await api.createChatSession({ cwd: process.env.NEXT_PUBLIC_DEFAULT_CWD || '.' });
+      await refreshSessions(); await loadSession(s.id);
+    } catch (e: any) { setErr(e.message); }
   }
   async function renameSession(id: string) {
     const title = window.prompt('Rename session'); if (!title) return;
-    await api.renameChatSession(id, title); await refreshSessions();
+    setErr(null);
+    try {
+      await api.renameChatSession(id, title); await refreshSessions();
+    } catch (e: any) { setErr(e.message); }
   }
   async function deleteSession(id: string) {
-    await api.deleteChatSession(id); await refreshSessions();
-    if (id === activeId) { setActiveId(null); setSession(null); setMessages([]); }
+    setErr(null);
+    try {
+      await api.deleteChatSession(id); await refreshSessions();
+      if (id === activeId) { setActiveId(null); setSession(null); setMessages([]); }
+    } catch (e: any) { setErr(e.message); }
   }
 
   async function send(message: string) {
     if (!activeId) return;
     setBusy(true);
+    setErr(null);
     try {
       const { runId, userMessage } = await api.chatTurn(activeId, message);
       setMessages((m) => [...m, userMessage]); setLiveRunId(runId);
-    } finally { setBusy(false); }
+    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   }
   async function command(line: string) {
     if (!activeId) return;
-    await api.chatCommand(activeId, line);
-    await loadSession(activeId); // re-pull persisted command + result messages
+    setErr(null);
+    try {
+      await api.chatCommand(activeId, line);
+      await loadSession(activeId); // re-pull persisted command + result messages
+    } catch (e: any) { setErr(e.message); }
   }
   // Persist the assistant reply when the live run finishes, so it survives a reload (plan note 1).
   const onTurnComplete = useCallback(async (runId: string, finalText: string) => {
     setLiveRunId(null);
     if (!activeId) return;
-    const msg = await api.addChatMessage(activeId, {
-      role: 'assistant', kind: 'text', content: finalText.trim() || '(no output)', runId,
-    });
-    setMessages((m) => [...m, msg]);
+    try {
+      const msg = await api.addChatMessage(activeId, {
+        role: 'assistant', kind: 'text', content: finalText.trim() || '(no output)', runId,
+      });
+      setMessages((m) => [...m, msg]);
+    } catch (e: any) { setErr(e.message); }
   }, [activeId]);
+  // A dropped/failed live stream clears the live turn so the thread recovers from "⟳ thinking…".
+  const onTurnError = useCallback((_runId: string) => {
+    setLiveRunId(null);
+    setErr('the live run stream was lost — the reply may not have been saved');
+  }, []);
 
   // App-shell layout (scrolling thread + pinned composer). Height fits the shared frame
   // exactly: viewport − 58px sticky header − 48px (main p-6) so it never overflows the body.
@@ -72,7 +94,12 @@ export default function ChatPage() {
               {session.title} · {session.engine} · {session.model} · {session.cwd}
               {session.engine !== 'claude' && <span className="ml-2 text-faint">(one-shot per turn · limited memory)</span>}
             </div>
-            <ChatThread messages={messages} liveRunId={liveRunId} onTurnComplete={onTurnComplete} />
+            {err && (
+              <div className="px-4 pt-3">
+                <ErrorBanner onRetry={() => setErr(null)}>{err}</ErrorBanner>
+              </div>
+            )}
+            <ChatThread messages={messages} liveRunId={liveRunId} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
             <ChatComposer disabled={busy} onSend={send} onCommand={command} />
           </>
         ) : (

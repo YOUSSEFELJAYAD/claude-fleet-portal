@@ -319,7 +319,7 @@ export default function GuardrailsPage() {
           <div className="mt-6 flex items-center gap-3">
             <Btn variant="solid" onClick={save} disabled={busy}>{busy ? 'saving…' : 'Save Guardrails'}</Btn>
             {saved && <span className="font-mono text-[11px] text-sig-completed">✓ saved</span>}
-            {cfgErr && <span className="font-mono text-[11px] text-sig-failed">{cfgErr}</span>}
+            {cfgErr && <ErrorBanner>{cfgErr}</ErrorBanner>}
           </div>
         </div>
       </Panel>
@@ -339,10 +339,7 @@ export default function GuardrailsPage() {
               {stopBusy ? 'stopping…' : `⏻ STOP ALL RUNS${activeCount > 0 ? ` (${activeCount})` : ''}`}
             </Btn>
             {stopMsg && (
-              <span
-                className="font-mono text-[11px]"
-                style={{ color: stopMsg.startsWith('error') ? '#ff5d5d' : '#54e08a' }}
-              >
+              <span className={`font-mono text-[11px] ${stopMsg.startsWith('error') ? 'text-sig-failed' : 'text-sig-completed'}`}>
                 {stopMsg}
               </span>
             )}
@@ -365,10 +362,7 @@ export default function GuardrailsPage() {
                 {resetBusy ? 'resetting…' : 'Reset Database'}
               </Btn>
               {resetMsg && (
-                <span
-                  className="font-mono text-[11px]"
-                  style={{ color: resetMsg.startsWith('error') || resetMsg.startsWith('type') ? '#ff5d5d' : '#54e08a' }}
-                >
+                <span className={`font-mono text-[11px] ${resetMsg.startsWith('error') || resetMsg.startsWith('type') ? 'text-sig-failed' : 'text-sig-completed'}`}>
                   {resetMsg}
                 </span>
               )}

@@ -43,6 +43,8 @@ const blank = (): Side => ({ run: null, loading: false, error: null });
 
 const GREEN = '#54e08a';
 const RED = '#ff5d5d';
+const DIM = '#9aa1ab';
+const AMBER = '#ffb000';
 
 // duration in ms; null while still running (no endedAt)
 function runDur(r: Run): number | null {
@@ -51,7 +53,7 @@ function runDur(r: Run): number | null {
 
 /** colorize a delta: lower=better metrics (cost/tokens/duration) → green when b<a. */
 function deltaColor(a: number | null, b: number | null, lowerBetter: boolean): string {
-  if (a == null || b == null || a === b) return '#9aa1ab';
+  if (a == null || b == null || a === b) return DIM;
   const bBetter = lowerBetter ? b < a : b > a;
   return bBetter ? GREEN : RED;
 }
@@ -215,7 +217,7 @@ function CompareInner() {
                 a={<StatusBadge status={ra!.status} />}
                 b={<StatusBadge status={rb!.status} />}
                 delta={ra!.status === rb!.status ? '=' : '≠'}
-                deltaCol={ra!.status === rb!.status ? '#9aa1ab' : '#ffb000'}
+                deltaCol={ra!.status === rb!.status ? DIM : AMBER}
               />
               <MetricRow
                 label="cost"

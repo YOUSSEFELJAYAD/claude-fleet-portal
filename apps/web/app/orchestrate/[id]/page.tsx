@@ -4,9 +4,9 @@ import Link from 'next/link';
 import { useCampaign } from '@/lib/live';
 import { api } from '@/lib/api';
 import type { CampaignTask } from '@fleet/shared';
-import { campaignStatusColor, taskStatusColor } from '@/lib/status';
+import { campaignStatusColor, taskStatusColor, roleColor, AMBER } from '@/lib/status';
 import { usd } from '@/lib/format';
-import { Panel, Kicker, Btn, Stat, Dot } from '@/components/ui';
+import { Panel, Kicker, Btn, Stat, Dot, Badge, ErrorBanner } from '@/components/ui';
 
 function RunLink({ runId, children }: { runId: string | null; children: React.ReactNode }) {
   if (!runId) return <span className="text-faint">{children}</span>;
@@ -17,7 +17,7 @@ function TaskCard({ task }: { task: CampaignTask }) {
   const color = taskStatusColor(task.status);
   const live = task.status === 'running';
   return (
-    <Panel className="p-3 w-[230px]" style={{ borderLeft: `2px solid ${color}` }}>
+    <Panel className="p-3 w-[230px]" style={{ boxShadow: `inset 2px 0 0 ${color}` }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <Dot color={color} live={live} size={6} />
@@ -56,10 +56,10 @@ function waves(tasks: CampaignTask[]): CampaignTask[][] {
   return out;
 }
 
-const NodeChip = ({ label, runId, color, sub }: { label: string; runId: string | null; color: string; sub?: string }) => (
-  <Panel className="p-3 w-[230px]" style={{ borderLeft: `2px solid ${color}` }}>
+const NodeChip = ({ label, runId, color, sub, live = false }: { label: string; runId: string | null; color: string; sub?: string; live?: boolean }) => (
+  <Panel className="p-3 w-[230px]" style={{ boxShadow: `inset 2px 0 0 ${color}` }}>
     <div className="flex items-center gap-1.5">
-      <span style={{ width: 7, height: 7, borderRadius: 999, background: color, display: 'inline-block' }} />
+      <Dot color={color} live={live} size={7} />
       <span className="font-display text-[11px] uppercase tracking-wide" style={{ color }}>{label}</span>
     </div>
     {sub && <div className="text-dim text-[11px] mt-1.5">{sub}</div>}
@@ -71,6 +71,13 @@ export default function CampaignDetail({ params }: { params: { id: string } }) {
   const { id } = params;
   const { campaign: c, connected } = useCampaign(id);
   const [killErr, setKillErr] = useState<string | null>(null);
+
+  const kill = () =>
+    api.killCampaign(id).then(
+      () => setKillErr(null),
+      // 404 = already gone; SSE will reflect the terminal state
+      (e: any) => setKillErr(e?.status === 404 ? null : e?.message || 'failed to kill campaign'),
+    );
 
   if (!c) {
     return (
@@ -94,9 +101,7 @@ export default function CampaignDetail({ params }: { params: { id: string } }) {
       <div className="flex items-start justify-between gap-6 mt-3 mb-4">
         <div className="min-w-0">
           <div className="flex items-center gap-3">
-            <span className="font-display text-[11px] uppercase tracking-wider px-2 py-0.5 border" style={{ color, borderColor: color + '50', background: color + '12' }}>
-              <Dot color={color} live={live} size={6} /> {c.status}
-            </span>
+            <Badge label={c.status} color={color} live={live} big />
             {connected && live && <span className="font-mono text-[9px] text-sig-running animate-pulseGlow">● LIVE</span>}
           </div>
           <h1 className="text-ink text-[17px] mt-2 leading-snug max-w-3xl">{c.objective}</h1>
@@ -106,25 +111,19 @@ export default function CampaignDetail({ params }: { params: { id: string } }) {
           <div className="flex flex-col items-end gap-1">
             <Btn
               variant="danger"
-              onClick={() =>
-                api.killCampaign(id).then(
-                  () => setKillErr(null),
-                  // 404 = already gone; SSE will reflect the terminal state
-                  (e: any) => setKillErr(e?.status === 404 ? null : e?.message || 'failed to kill campaign'),
-                )
-              }
+              onClick={kill}
             >
               ■ Kill Campaign
             </Btn>
-            {killErr && <span className="font-mono text-[10px] text-sig-failed">{killErr}</span>}
+            {killErr && <ErrorBanner className="mt-1" onRetry={kill}>{killErr}</ErrorBanner>}
           </div>
         )}
       </div>
 
       <Panel className="p-4 mb-5 grid grid-cols-2 md:grid-cols-4 gap-5">
-        <Stat label="cost" value={usd(c.costUsd)} accent="#ffb000" />
+        <Stat label="cost" value={usd(c.costUsd)} accent={AMBER} />
         <Stat label="tasks done" value={`${done}/${c.taskCount ?? tasks.length}`} />
-        <Stat label="live workers" value={c.liveWorkers ?? 0} accent={c.liveWorkers ? '#ffb000' : undefined} />
+        <Stat label="live workers" value={c.liveWorkers ?? 0} accent={c.liveWorkers ? AMBER : undefined} />
         <Stat label="synthesize" value={c.autoSynthesize ? 'on' : 'off'} />
       </Panel>
 
@@ -133,7 +132,7 @@ export default function CampaignDetail({ params }: { params: { id: string } }) {
         <div className="flex items-start gap-8 min-w-max">
           <div>
             <Kicker>orchestrator</Kicker>
-            <div className="mt-2"><NodeChip label="Orchestrator" runId={c.orchestratorRunId} color="#b08cff" sub={c.orchestratorTemplate} /></div>
+            <div className="mt-2"><NodeChip label="Orchestrator" runId={c.orchestratorRunId} color={roleColor('orchestrator')} sub={c.orchestratorTemplate} live={c.status === 'planning'} /></div>
           </div>
 
           {tasks.length === 0 ? (
@@ -154,7 +153,7 @@ export default function CampaignDetail({ params }: { params: { id: string } }) {
           {c.autoSynthesize && (
             <div>
               <Kicker>synthesizer</Kicker>
-              <div className="mt-2"><NodeChip label="Synthesizer" runId={c.synthesizerRunId} color="#ffb000" sub={c.synthesizerTemplate ?? ''} /></div>
+              <div className="mt-2"><NodeChip label="Synthesizer" runId={c.synthesizerRunId} color={roleColor('synthesizer')} sub={c.synthesizerTemplate ?? ''} live={c.status === 'synthesizing'} /></div>
             </div>
           )}
         </div>

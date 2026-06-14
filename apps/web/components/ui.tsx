@@ -44,24 +44,31 @@ export function Dot({ color, live = false, size = 7 }: { color: string; live?: b
   );
 }
 
-export function StatusBadge({ status, big = false }: { status: RunStatus; big?: boolean }) {
-  const m = statusMeta(status);
+/** Generic HUD pill — a colored uppercase label with a leading status dot. The canonical
+ *  replacement for the hand-rolled {Dot + bordered span} pills that drifted across pages
+ *  (kind badges, status chips, etc.). StatusBadge is the run-status specialization. */
+export function Badge({ label, color, live = false, big = false }: { label: React.ReactNode; color: string; live?: boolean; big?: boolean }) {
   return (
     <span
       className="font-display inline-flex items-center gap-1.5 uppercase tracking-wider"
       style={{
-        color: m.color,
+        color,
         fontSize: big ? 11 : 9.5,
-        border: `1px solid ${m.color}40`,
-        background: `${m.color}12`,
+        border: `1px solid ${color}40`,
+        background: `${color}12`,
         padding: big ? '3px 8px' : '2px 6px',
         letterSpacing: '0.12em',
       }}
     >
-      <Dot color={m.color} live={m.live} size={big ? 7 : 6} />
-      {m.label}
+      <Dot color={color} live={live} size={big ? 7 : 6} />
+      {label}
     </span>
   );
+}
+
+export function StatusBadge({ status, big = false }: { status: RunStatus; big?: boolean }) {
+  const m = statusMeta(status);
+  return <Badge label={m.label} color={m.color} live={m.live} big={big} />;
 }
 
 export function Stat({
@@ -115,6 +122,32 @@ export function Btn({
   };
   return (
     <button type={type} onClick={onClick} disabled={disabled} title={title} className={`${base} ${styles[variant]} ${className}`}>
+      {children}
+    </button>
+  );
+}
+
+/** Segmented tab / filter pill — the canonical control for filter rows and sub-tabs
+ *  (active = amber, inactive = ghost), replacing the copy-pasted inline-hex pill markup. */
+export function Tab({
+  active,
+  onClick,
+  children,
+  className = '',
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`font-display uppercase tracking-wider text-[10px] px-3 py-1.5 border transition-colors ${
+        active ? 'border-amber/60 text-amber bg-amber/8' : 'border-line2 text-dim hover:text-ink hover:border-amber/40'
+      } ${className}`}
+    >
       {children}
     </button>
   );

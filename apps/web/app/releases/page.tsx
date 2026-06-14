@@ -144,12 +144,7 @@ export default function ReleasesPage() {
       </Panel>
 
       {/* ── self-update output ── */}
-      {updateErr && (
-        <Panel className="p-4 mb-5">
-          <Kicker>update failed</Kicker>
-          <div className="font-mono text-[11.5px] mt-2 text-sig-failed">{updateErr}</div>
-        </Panel>
-      )}
+      {updateErr && <ErrorBanner className="mb-5">{updateErr}</ErrorBanner>}
       {updateResult && (
         <Panel className="p-4 mb-5">
           <Kicker>{updateResult.ok ? 'update applied' : 'update failed'}</Kicker>

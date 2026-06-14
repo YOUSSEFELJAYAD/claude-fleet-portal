@@ -2,9 +2,8 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usd, tokens, dur } from '@/lib/format';
-import { statusMeta } from '@/lib/status';
 import type { RunStatus } from '@fleet/shared';
-import { Kicker, Panel, Stat, Empty } from '@/components/ui';
+import { Kicker, Panel, Stat, Empty, Btn, StatusBadge, ErrorBanner } from '@/components/ui';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
@@ -31,6 +30,8 @@ export default function MetricsPage() {
   const [error, setError] = useState<string | null>(null);
   const [win, setWin] = useState('all');
 
+  const [reloadKey, setReloadKey] = useState(0);
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -55,7 +56,7 @@ export default function MetricsPage() {
     return () => {
       alive = false;
     };
-  }, [win]);
+  }, [win, reloadKey]);
 
   const empty = data && data.totals.runs === 0;
 
@@ -65,21 +66,13 @@ export default function MetricsPage() {
         <div>
           <Kicker>analytics</Kicker>
           <h1 className="font-display text-[26px] tracking-wide text-ink mt-1">Metrics</h1>
+          <p className="font-mono text-[11px] text-faint mt-1">Cost, token and duration analytics across every run in the selected window.</p>
         </div>
         <div className="flex gap-1">
           {WINDOWS.map((w) => (
-            <button
-              key={w.key}
-              onClick={() => setWin(w.key)}
-              className="font-display text-[11px] uppercase tracking-wider px-3 py-1.5 border transition-colors"
-              style={{
-                borderColor: win === w.key ? '#ffb000' : 'rgba(255,255,255,0.075)',
-                color: win === w.key ? '#ffb000' : '#9aa1ab',
-                background: win === w.key ? 'rgba(255,176,0,0.08)' : 'transparent',
-              }}
-            >
+            <Btn key={w.key} variant={win === w.key ? 'amber' : 'ghost'} onClick={() => setWin(w.key)}>
               {w.label}
-            </button>
+            </Btn>
           ))}
         </div>
       </div>
@@ -87,67 +80,66 @@ export default function MetricsPage() {
       {loading ? (
         <div className="font-mono text-faint text-[12px]">aggregating…</div>
       ) : error ? (
-        <Empty>Failed to load metrics — {error}</Empty>
+        <ErrorBanner onRetry={() => setReloadKey((k) => k + 1)}>Failed to load metrics — {error}</ErrorBanner>
       ) : empty || !data ? (
         <Empty>No runs in this window.</Empty>
       ) : (
         <div className="flex flex-col gap-3.5">
           {/* ── totals ──────────────────────────────────────────── */}
-          <Panel className="p-4">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <Stat label="total runs" value={<span className="tnum">{data.totals.runs}</span>} />
-              <Stat label="total cost" value={usd(data.totals.costUsd)} accent="#ffb000" />
-              <Stat label="tokens in" value={tokens(data.totals.tokensIn)} />
-              <Stat label="tokens out" value={tokens(data.totals.tokensOut)} />
-              <Stat
-                label="duration p50 / p95"
-                value={
-                  <span className="tnum">
-                    {dur(data.durations.p50Ms)} <span className="text-faint">/</span>{' '}
-                    {dur(data.durations.p95Ms)}
-                  </span>
-                }
-                sub="terminal runs"
-              />
+          <Panel ticked>
+            <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+              <Kicker>totals</Kicker>
+            </div>
+            <div className="p-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <Stat label="total runs" value={<span className="tnum">{data.totals.runs}</span>} />
+                <Stat label="total cost" value={usd(data.totals.costUsd)} accent="#ffb000" />
+                <Stat label="tokens in" value={tokens(data.totals.tokensIn)} />
+                <Stat label="tokens out" value={tokens(data.totals.tokensOut)} />
+                <Stat
+                  label="duration p50 / p95"
+                  value={
+                    <span className="tnum">
+                      {dur(data.durations.p50Ms)} <span className="text-faint">/</span>{' '}
+                      {dur(data.durations.p95Ms)}
+                    </span>
+                  }
+                  sub="terminal runs"
+                />
+              </div>
             </div>
           </Panel>
 
           {/* ── status counts ───────────────────────────────────── */}
           {Object.keys(data.statusCounts).length > 0 && (
-            <Panel className="p-4">
-              <Kicker className="mb-3">status breakdown</Kicker>
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(data.statusCounts)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([s, n]) => {
-                    const m = statusMeta(s as RunStatus);
-                    return (
-                      <div
-                        key={s}
-                        className="flex items-center gap-2 px-2.5 py-1.5 border"
-                        style={{ borderColor: `${m.color}40`, background: `${m.color}12` }}
-                      >
-                        <span
-                          className="font-display uppercase tracking-wider text-[9.5px]"
-                          style={{ color: m.color, letterSpacing: '0.12em' }}
-                        >
-                          {m.label}
-                        </span>
+            <Panel ticked>
+              <div className="flex items-center justify-between px-4 py-3 border-b hairline">
+                <Kicker>status breakdown</Kicker>
+              </div>
+              <div className="p-4">
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(data.statusCounts)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([s, n]) => (
+                      <span key={s} className="flex items-center gap-2">
+                        <StatusBadge status={s as RunStatus} />
                         <span className="font-mono tnum text-[12px] text-ink">{n}</span>
-                      </div>
-                    );
-                  })}
+                      </span>
+                    ))}
+                </div>
               </div>
             </Panel>
           )}
 
           {/* ── daily spend sparkline ───────────────────────────── */}
-          <Panel className="p-4">
-            <div className="flex items-baseline justify-between mb-3">
+          <Panel ticked>
+            <div className="flex items-center justify-between px-4 py-3 border-b hairline">
               <Kicker>daily spend</Kicker>
               <span className="font-mono text-faint text-[10px]">{data.dailySpend.length} days</span>
             </div>
-            <DailyBars data={data.dailySpend} />
+            <div className="p-4">
+              <DailyBars data={data.dailySpend} />
+            </div>
           </Panel>
 
           {/* ── tables ──────────────────────────────────────────── */}

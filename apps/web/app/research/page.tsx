@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import type { WebResult, ResearchStatusResponse } from '@fleet/shared';
-import { Kicker, Panel, Btn, Input, ErrorBanner, Dot } from '@/components/ui';
+import { Kicker, Panel, Btn, Input, ErrorBanner, Empty, Dot } from '@/components/ui';
 
 /** Only http(s) links are safe in an href — a `javascript:`/`data:` result URL is an XSS
  *  vector. Results are already scheme-filtered server-side; this is defense-in-depth. */
@@ -25,6 +25,9 @@ export default function ResearchPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [searched, setSearched] = useState(false);
+  const [addonBusy, setAddonBusy] = useState(false);
+  const [addonMsg, setAddonMsg] = useState<string | null>(null);
 
   useEffect(() => { api.researchStatus().then(setStatus).catch(() => setStatus(null)); }, []);
 
@@ -34,8 +37,27 @@ export default function ResearchPage() {
       const res = await api.researchSearch({ query });
       setResults(res.results);
       setSelected(new Set(res.results.map((r) => r.url))); // default: all selected
+      setSearched(true);
     } catch (e: any) { setErr(e?.message ?? 'search failed'); }
     finally { setBusy(false); }
+  }
+
+  async function installAddon() {
+    setErr(null); setAddonMsg(null); setAddonBusy(true);
+    try {
+      const r = await api.installAddon('web-research');
+      setAddonMsg(r.note ?? 'install started');
+    } catch (e: any) { setErr(e?.message ?? 'install failed'); }
+    finally { setAddonBusy(false); }
+  }
+
+  async function registerMcp() {
+    setErr(null); setAddonMsg(null); setAddonBusy(true);
+    try {
+      const r = await api.registerSearxngMcp();
+      setAddonMsg(r.note ?? (r.ok ? 'Registered mcp__searxng' : r.output));
+    } catch (e: any) { setErr(e?.message ?? 'register failed'); }
+    finally { setAddonBusy(false); }
   }
 
   function toggle(url: string) {
@@ -80,9 +102,10 @@ export default function ResearchPage() {
             <div className="font-mono text-[11px] text-sig-killed">{status.detail}</div>
           )}
           <div className="flex gap-2 pt-1">
-            <Btn onClick={() => api.installAddon('web-research').then((r) => alert(r.note))}>Install SearXNG (Docker)</Btn>
-            <Btn onClick={() => api.registerSearxngMcp().then((r) => alert(r.note ?? (r.ok ? 'Registered mcp__searxng' : r.output)))}>Register agent MCP tool</Btn>
+            <Btn onClick={installAddon} disabled={addonBusy}>Install SearXNG (Docker)</Btn>
+            <Btn onClick={registerMcp} disabled={addonBusy}>Register agent MCP tool</Btn>
           </div>
+          {addonMsg && <div className="font-mono text-[11px] text-sig-completed">{addonMsg}</div>}
         </div>
       </Panel>
 
@@ -131,6 +154,12 @@ export default function ResearchPage() {
           <Btn variant="solid" onClick={synthesize} disabled={busy || selected.size === 0}>
             {busy ? 'Launching…' : `Synthesize with agent (${selected.size})`}
           </Btn>
+        </div>
+      )}
+
+      {searched && results.length === 0 && !busy && (
+        <div className="mt-4">
+          <Empty>No results for that query.</Empty>
         </div>
       )}
     </div>
