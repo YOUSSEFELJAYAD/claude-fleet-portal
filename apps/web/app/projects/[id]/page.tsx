@@ -7,6 +7,7 @@ import type { Project, Run, AgentTemplate } from '@fleet/shared';
 import { statusMeta } from '@/lib/status';
 import { usd, clock } from '@/lib/format';
 import { Panel, Kicker, Stat, Gauge, Empty, Dot, Btn, Input, Select, ErrorBanner } from '@/components/ui';
+import { ProjectTabs } from '@/components/ProjectTabs';
 import { PlanModal } from '@/components/PlanModal';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
@@ -25,16 +26,6 @@ async function getProject(id: string): Promise<Project> {
   return r.json() as Promise<Project>;
 }
 
-function Tab({ href, label }: { href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="font-display uppercase tracking-wider text-[11px] px-4 py-2 border border-line2 text-dim hover:text-ink hover:border-amber/60 hover:bg-amber/5 inline-flex items-center transition-all"
-    >
-      {label}
-    </Link>
-  );
-}
 
 // ── Triggers Panel ─────────────────────────────────────────────────────────────
 
@@ -374,9 +365,7 @@ export default function ProjectHub({ params }: { params: { id: string } }) {
           <Btn variant="amber" onClick={() => setPlanning(true)} className="!px-4 !py-2">
             ✦ Plan board
           </Btn>
-          <Tab href={`/projects/${p.id}/board`} label="Board" />
-          <Tab href={`/projects/${p.id}/files`} label="Files" />
-          <Tab href={`/projects/${p.id}/history`} label="History" />
+          <ProjectTabs id={p.id} active="hub" />
         </div>
       </div>
 

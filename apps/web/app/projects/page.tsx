@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Project, CreateProjectRequest, MergeMode, GitHealth } from '@fleet/shared';
-import { Panel, Kicker, Field, Input, Select, Toggle, Btn, Empty, Dot, ErrorBanner } from '@/components/ui';
+import { Panel, Kicker, Field, Input, Select, Toggle, Btn, Empty, Dot, Chip, ErrorBanner } from '@/components/ui';
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
@@ -244,26 +244,16 @@ function ProjectRow({ p, onChanged, onDeleted }: { p: Project; onChanged: (p: Pr
             <Link href={`/projects/${p.id}`} className="font-display text-[14px] tracking-wide text-ink hover:text-amber">
               {p.name}
             </Link>
-            {p.paused && (
-              <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border text-sig-killed border-sig-killed/50">
-                paused
-              </span>
-            )}
-            {p.autoMerge && (
-              <span className="font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 border text-sig-failed border-sig-failed/50">
-                full-auto
-              </span>
-            )}
+            {p.paused && <Chip className="uppercase tracking-wider text-sig-killed border-sig-killed/50">paused</Chip>}
+            {p.autoMerge && <Chip className="uppercase tracking-wider text-sig-failed border-sig-failed/50">full-auto</Chip>}
           </div>
           <div className="font-mono text-[11px] text-faint mt-1 truncate">{p.rootDir}</div>
-          <div className="mt-2 flex flex-wrap gap-1.5 font-mono text-[10px]">
-            <span className="text-dim border border-line px-1.5 py-0.5">branch {p.defaultBranch}</span>
-            <span className="text-dim border border-line px-1.5 py-0.5">wip {p.wipLimit}</span>
-            <span className="text-dim border border-line px-1.5 py-0.5">
-              ceiling {p.budgetCeilingUsd != null ? `$${p.budgetCeilingUsd}` : '∞'}
-            </span>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Chip>branch {p.defaultBranch}</Chip>
+            <Chip>wip {p.wipLimit}</Chip>
+            <Chip>ceiling {p.budgetCeilingUsd != null ? `$${p.budgetCeilingUsd}` : '∞'}</Chip>
             {p.defaultValidationCommand && (
-              <span className="text-dim border border-line px-1.5 py-0.5 truncate max-w-[260px]">✓ {p.defaultValidationCommand}</span>
+              <Chip className="truncate max-w-[260px]">✓ {p.defaultValidationCommand}</Chip>
             )}
           </div>
         </div>

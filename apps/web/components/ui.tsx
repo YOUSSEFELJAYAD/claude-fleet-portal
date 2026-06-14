@@ -71,6 +71,17 @@ export function StatusBadge({ status, big = false }: { status: RunStatus; big?: 
   return <Badge label={m.label} color={m.color} live={m.live} big={big} />;
 }
 
+/** Small bordered metadata chip — a dot-less label tag (branch, wip, ceiling, paused, …).
+ *  Defaults to the dim/line token palette; pass className to tint or uppercase
+ *  (e.g. "uppercase tracking-wider text-sig-killed border-sig-killed/50"). */
+export function Chip({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <span className={`font-mono text-[10px] px-1.5 py-0.5 border border-line2 text-dim ${className}`}>
+      {children}
+    </span>
+  );
+}
+
 export function Stat({
   label,
   value,

@@ -1,36 +1,11 @@
 'use client';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import Link from 'next/link';
 import { API } from '@/lib/api';
 import type { Project } from '@fleet/shared';
 import { Kicker, Panel, ErrorBanner, Btn } from '@/components/ui';
+import { ProjectTabs } from '@/components/ProjectTabs';
 import { GitLog, type GitLogEntry } from '@/components/GitLog';
 import { DiffView } from '@/components/DiffView';
-
-/** Inline per-project tab nav (kept local to avoid cross-page imports; routes owned by sibling pages). */
-function ProjectTabs({ id, active }: { id: string; active: 'board' | 'files' | 'history' | 'hub' }) {
-  const tabs = [
-    { key: 'hub', label: 'Hub', href: `/projects/${id}` },
-    { key: 'board', label: 'Board', href: `/projects/${id}/board` },
-    { key: 'files', label: 'Files', href: `/projects/${id}/files` },
-    { key: 'history', label: 'History', href: `/projects/${id}/history` },
-  ];
-  return (
-    <div className="flex gap-1.5">
-      {tabs.map((t) => (
-        <Link
-          key={t.key}
-          href={t.href}
-          className={`font-display uppercase tracking-wider text-[10px] px-3 py-1.5 border transition-colors ${
-            active === t.key ? 'border-amber/60 text-amber bg-amber/8' : 'border-line2 text-faint hover:text-ink hover:border-amber/40'
-          }`}
-        >
-          {t.label}
-        </Link>
-      ))}
-    </div>
-  );
-}
 
 /**
  * Per-project git history (SPEC §7, §8): `GET .../git/log` → commit list (merge markers) →
