@@ -286,11 +286,16 @@ export function registerChatRoutes(app: FastifyInstance) {
   });
 
   // §3.3 — mid-turn input / permission decisions, written to the live process stdin. 409 if not live.
+  // Body: { message: string; attachments?: ChatAttachment[] }  (client sends `message`; `text` accepted for
+  // backward-compat with the existing agents /input pattern). `attachments` is accepted but not yet forwarded
+  // to stdin (the agent reads file content at turn time, not on mid-turn input).
   app.post('/api/chat/sessions/:id/input', async (req, reply) => {
     const id = (req.params as any).id;
     const session = chatRepo.getSession(id);
     if (!session) return reply.code(404).send({ error: 'not found' });
-    const text = (req.body as any)?.text;
+    const body = (req.body as any) ?? {};
+    // Accept `message` (chat-surface convention) or `text` (agents /input legacy).
+    const text: unknown = body.message ?? body.text;
     if (typeof text !== 'string' || text.length === 0) return reply.code(400).send({ error: 'text must be a non-empty string' });
     const runId = chatLive.liveRunId(id) ?? session.runId;
     if (!runId) return reply.code(409).send({ error: 'session is not live; send a normal turn instead' });

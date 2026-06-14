@@ -68,12 +68,12 @@ describe('api chat control helpers', () => {
     expect(init.method).toBe('POST');
   });
 
-  it('chatKill DELETEs the session-backing run', async () => {
+  it('chatKill POSTs to /interrupt (preserves session history; does not hard-delete)', async () => {
     const f = captured();
     await api.chatKill('sess1');
     const [url, init] = (f.mock.calls as any)[0];
-    expect(String(url)).toContain('/api/chat/sessions/sess1');
-    expect(init.method).toBe('DELETE');
+    expect(String(url)).toContain('/api/chat/sessions/sess1/interrupt');
+    expect(init.method).toBe('POST');
   });
 
   it('chatTurn carries attachments in the body when supplied', async () => {

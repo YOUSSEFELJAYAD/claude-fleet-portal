@@ -465,8 +465,11 @@ export const api = {
   /** §3 — stop the current turn, keep the process live if possible. */
   chatInterrupt: (id: string) =>
     j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
-  /** §3 — explicit kill: stops the live process; session becomes killed/resumable. */
-  chatKill: (id: string) => j(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
+  /** §3 — explicit kill: stops the live process and marks the session killed/resumable.
+   *  POSTs to /interrupt so the session row and message history are preserved (not deleted).
+   *  Use deleteChatSession to hard-delete a session and all its messages. */
+  chatKill: (id: string) =>
+    j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
   addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
   // ── chat-surface upgrade (§5/§6) ──
