@@ -120,29 +120,47 @@ export function ChatThread({
   const endRef = useRef<HTMLDivElement>(null);
   // ONE chat-scoped subscription for the whole thread (the live turn is presentational).
   const { run, events, partials, error } = useChatStream(sessionId);
-  const fired = useRef(false);
+  // fix 05 — completion is driven off the per-turn `result` event (emitted in both live and
+  // resumable modes), NOT run-terminal: a live interactive run never goes terminal between
+  // turns (it goes awaiting-input), so terminal-driven persistence would never fire for it.
+  // Dedup by the result event's seq: stripHelloEvents drops historical events on (re)connect,
+  // so a reload never replays an old `result` → no re-fire.
+  const lastResultSeq = useRef(-1);
 
   // A turn is in flight only while the backing run is non-terminal. When it is terminal the
   // persisted `messages` are the complete transcript, so the live turn renders nothing —
   // this is what prevents a completed turn from being duplicated / shown out of order.
   const turnActive = !!run && !TERMINAL.has(run.status);
 
-  // Final assistant text = concatenation of assistant_text + result payloads (server-authoritative
-  // run.resultText is preferred when present, so persistence stays complete even after reload).
-  const finalText = events
-    .filter((e) => e.type === 'assistant_text' || e.type === 'result')
-    .map((e) => String((e.payload as any)?.text ?? (e.payload as any)?.result ?? ''))
-    .join('');
+  // Latest `result` event for this session's current backing run (chat-scoped events only carry
+  // the in-flight turn's events; a reload strips historical ones). The reply text lives on
+  // payload.result; for engine results that omit it we fall back to the concatenated text.
+  const latestResult = events.filter((e) => e.type === 'result').at(-1) ?? null;
 
-  // Fire onComplete ONCE per turn completion. Re-arm while the run is active so each resumed
-  // turn (the run id is reused across turns) still persists its own reply.
+  // fix 05 step 5 — a live run stays non-terminal (awaiting-input) AFTER its turn's result, so
+  // `turnActive` alone would keep the just-completed turn's live cards on screen next to the
+  // newly-persisted message. Treat a turn as settled once its result is the LAST event seen: the
+  // persisted reply now owns that turn. The next turn's events arrive after the result (or the
+  // hook clears events on a terminal→active transition) → the live view re-shows for the new turn.
+  const lastEvent = events.at(-1) ?? null;
+  const turnSettled = !!lastEvent && lastEvent.type === 'result' && !Object.values(partials).some(Boolean);
+
+  // Fire onTurnComplete EXACTLY ONCE per result event (seq-deduped, idempotent across re-renders
+  // and reloads). Two sequential turns carry two result events with distinct seq → two fires.
   useEffect(() => {
-    if (!run) return;
-    if (!TERMINAL.has(run.status)) { fired.current = false; return; }
-    if (fired.current) return;
-    fired.current = true;
-    onTurnComplete(run.id, (run as any).resultText ?? finalText);
-  }, [run, finalText, onTurnComplete]);
+    if (!latestResult) return;
+    if (latestResult.seq <= lastResultSeq.current) return;
+    lastResultSeq.current = latestResult.seq;
+    const p: any = latestResult.payload ?? {};
+    const text = String(
+      p.result ??
+        events
+          .filter((e) => e.type === 'assistant_text')
+          .map((e) => String((e.payload as any)?.text ?? ''))
+          .join(''),
+    );
+    onTurnComplete(latestResult.runId, text);
+  }, [latestResult, events, onTurnComplete]);
 
   useEffect(() => {
     const end = endRef.current;
@@ -162,10 +180,10 @@ export function ChatThread({
           <button type="button" onClick={() => onTurnError(run?.id ?? '')} className="ml-2 underline hover:text-ink transition-colors">dismiss</button>
         </ErrorBanner>
       )}
-      {sessionId && turnActive && !error && (
+      {sessionId && turnActive && !turnSettled && !error && (
         <LiveTurn sessionId={sessionId} events={events} partials={partials} />
       )}
-      {turnActive && (
+      {turnActive && !turnSettled && (
         <div className="sticky bottom-0 flex justify-center py-2">
           <Btn variant="danger" onClick={() => { if (sessionId) api.chatInterrupt(sessionId).catch(() => {}); }}>stop</Btn>
         </div>

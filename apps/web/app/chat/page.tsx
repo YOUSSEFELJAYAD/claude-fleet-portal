@@ -90,17 +90,23 @@ export default function ChatPage() {
       await loadSession(activeId); // re-pull persisted command + result messages
     } catch (e: any) { setErr(e.message); }
   }
-  // Persist the assistant reply when the live run finishes, so it survives a reload (plan note 1).
+  // Persist the assistant reply when a turn's `result` event arrives (fix 05 — driven off the
+  // per-turn result, not run-terminal, so it works for live runs that never go terminal between
+  // turns). ChatThread already dedups by the result seq; this is a belt-and-suspenders guard
+  // against any double fire. runId alone is NOT unique across turns of a live run, so the guard
+  // matches on content too.
   const onTurnComplete = useCallback(async (runId: string, finalText: string) => {
     setLiveRunId(null);
     if (!activeId) return;
+    const content = finalText.trim() || '(no output)';
+    if (messages.some((m) => m.runId === runId && m.kind === 'text' && m.role === 'assistant' && m.content === content)) return;
     try {
       const msg = await api.addChatMessage(activeId, {
-        role: 'assistant', kind: 'text', content: finalText.trim() || '(no output)', runId,
+        role: 'assistant', kind: 'text', content, runId,
       });
       setMessages((m) => [...m, msg]);
     } catch (e: any) { setErr(e.message); }
-  }, [activeId]);
+  }, [activeId, messages]);
   // A dropped/failed live stream clears the live turn so the thread recovers from "⟳ thinking…".
   const onTurnError = useCallback((_runId: string) => {
     setLiveRunId(null);
