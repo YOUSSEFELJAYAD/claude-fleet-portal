@@ -307,11 +307,24 @@ export function registerChatStreamRoute(
     // The run's hello snapshot carries its FULL event log = the whole transcript (the run is
     // reused across turns via --resume) — already persisted as chat_messages. stripHelloEvents
     // drops that history so the live turn never duplicates the transcript / reorders on reload.
-    const runId = ensured?.runId ?? chatLive.liveRunId(id) ?? session.runId;
+    let currentRunId = ensured?.runId ?? chatLive.liveRunId(id) ?? session.runId ?? null;
     let unsub: (() => void) | null = null;
-    if (runId) unsub = registry.subscribeRun(runId, (m) => send(stripHelloEvents(m)));
+    if (currentRunId) unsub = registry.subscribeRun(currentRunId, (m) => send(stripHelloEvents(m)));
 
-    reply.raw.on('close', () => { unsub?.(); stop(); });
+    // Fix 11 — the backing run id can CHANGE mid-connection: after idle-suspend eviction or an
+    // explicit kill/interrupt, the next turn's ensureLive mints a FRESH held run id. The original
+    // subscription points at the dead run, so the new run's frames would never reach this client
+    // (the thread hangs on "⟳ thinking…"). Listen for that change for THIS session, re-subscribe to
+    // the new run, and announce it via a session_state frame so the client (fix 04) adopts the id.
+    const unsubChange = chatLive.onBackingRunChange((sessionId, newRunId) => {
+      if (sessionId !== id || newRunId === currentRunId) return;
+      unsub?.();
+      currentRunId = newRunId;
+      unsub = registry.subscribeRun(newRunId, (m) => send(stripHelloEvents(m)));
+      send({ kind: 'session_state', state: 'running', live: true, runId: newRunId } satisfies SessionStateEnvelope);
+    });
+
+    reply.raw.on('close', () => { unsub?.(); unsubChange(); stop(); });
   });
 }
 

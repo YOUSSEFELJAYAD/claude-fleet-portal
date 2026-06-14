@@ -21,6 +21,19 @@ export interface EnsureResult { live: boolean; runId: string | null; }
 class ChatLiveManager {
   private handles = new Map<string, LiveHandle>();
   private inited = false;
+  /** Fix 11 — listeners notified when a session's backing run id CHANGES (a fresh registry.launch
+   *  in ensureLive). Lets an open chat SSE learn it must re-subscribe to the new run after an
+   *  evict/kill → fresh-launch (claude reuses the id on plain resume, so we only fire on launch). */
+  private runChangeSubs = new Set<(sessionId: string, runId: string) => void>();
+
+  /** Subscribe to backing-run-id changes; returns an unsubscribe. */
+  onBackingRunChange(cb: (sessionId: string, runId: string) => void): () => void {
+    this.runChangeSubs.add(cb);
+    return () => { this.runChangeSubs.delete(cb); };
+  }
+  private emitRunChange(sessionId: string, runId: string): void {
+    for (const cb of this.runChangeSubs) { try { cb(sessionId, runId); } catch { /* dead listener */ } }
+  }
 
   /**
    * Subscribe to run-terminal events ONCE, from server.ts boot (same pattern as
@@ -69,6 +82,9 @@ class ChatLiveManager {
     const handle: LiveHandle = { runId: run.id, idleTimer: null };
     this.handles.set(session.id, handle);
     this.arm(session.id);
+    // Fix 11 — a FRESH held run was minted (not the reuse/touch fast path above). Notify so any
+    // open chat SSE re-subscribes to this new run id (the old one is now dead/evicted).
+    this.emitRunChange(session.id, run.id);
     return { live: true, runId: run.id };
   }
 
@@ -104,6 +120,7 @@ class ChatLiveManager {
   _resetForTest(): void {
     for (const h of this.handles.values()) if (h.idleTimer) clearTimeout(h.idleTimer);
     this.handles.clear();
+    this.runChangeSubs.clear();
   }
 }
 
