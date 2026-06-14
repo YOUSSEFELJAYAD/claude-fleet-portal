@@ -281,3 +281,133 @@ export function ErrorBanner({
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §9 — HUD-canon FloatingMenu / Combobox: a caret-anchored popover reused by the
+// `/` (SlashMenu) and `@` (MentionMenu) chat surfaces. The HUD has no overlay
+// primitive; this is the one. Styled to canon (charcoal #101217 surface, amber
+// #ffb000 active row, JetBrains Mono rows, uppercase group headers). The OWNER of
+// the item list / filtering / selection is the caller — this component only renders
+// the popover, paints the active row, wires click-outside, and forwards clicks.
+// Keyboard nav (arrow/enter/escape) is owned by the caller's input via `activeIndex`
+// + `onPick`/`onClose`, because the trigger char lives in the caller's <textarea>.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One selectable row. `group` headers render in first-appearance order. */
+export interface FloatingItem {
+  id: string;
+  label: React.ReactNode;
+  hint?: React.ReactNode;
+  /** optional right-aligned trailing note (e.g. an arg-hint chip). */
+  trailing?: React.ReactNode;
+  group?: string;
+}
+
+export function FloatingMenu({
+  open,
+  items,
+  activeIndex,
+  onPick,
+  onClose,
+  emptyText = 'no matches',
+  header,
+  footer,
+  className = '',
+}: {
+  open: boolean;
+  items: FloatingItem[];
+  /** index into the FLAT `items` array of the currently-highlighted row. */
+  activeIndex: number;
+  onPick: (item: FloatingItem, index: number) => void;
+  onClose: () => void;
+  emptyText?: string;
+  header?: React.ReactNode;
+  footer?: React.ReactNode;
+  className?: string;
+}) {
+  const rootRef = React.useRef<HTMLDivElement | null>(null);
+
+  // click-outside dismiss — mirrors MultiPicker's mousedown listener
+  React.useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open, onClose]);
+
+  // scroll the active row into view as the caller moves the selection
+  React.useEffect(() => {
+    if (!open || !rootRef.current) return;
+    const el = rootRef.current.querySelector(`[data-idx="${activeIndex}"]`) as HTMLElement | null;
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+  }, [open, activeIndex]);
+
+  if (!open) return null;
+
+  // group → rows, preserving first-appearance group order ('' = ungrouped). We keep
+  // each row's FLAT index so the caller's activeIndex (over the flat list) lines up.
+  const grouped: Array<[string, Array<{ item: FloatingItem; idx: number }>]> = [];
+  const seen = new Map<string, Array<{ item: FloatingItem; idx: number }>>();
+  items.forEach((item, idx) => {
+    const g = item.group ?? '';
+    if (!seen.has(g)) {
+      const bucket: Array<{ item: FloatingItem; idx: number }> = [];
+      seen.set(g, bucket);
+      grouped.push([g, bucket]);
+    }
+    seen.get(g)!.push({ item, idx });
+  });
+
+  return (
+    <div
+      ref={rootRef}
+      data-floating-menu
+      className={`absolute left-0 bottom-full mb-1 z-50 w-full border border-line2 overflow-auto ${className}`}
+      style={{ background: '#101217', maxHeight: 280, boxShadow: '0 -12px 32px -8px rgba(0,0,0,0.8)' }}
+    >
+      {header && <div className="px-3 py-1.5 border-b hairline font-mono text-[10px] text-faint">{header}</div>}
+      {items.length === 0 && <div className="px-3 py-2 font-mono text-[11px] text-faint">{emptyText}</div>}
+      {grouped.map(([group, rows]) => (
+        <div key={group || '∅'}>
+          {group && (
+            <div
+              data-group-header
+              className="px-3 pt-2 pb-1 font-mono text-[9px] uppercase tracking-[0.18em] text-faint sticky top-0"
+              style={{ background: '#101217' }}
+            >
+              {group}
+            </div>
+          )}
+          {rows.map(({ item, idx }) => {
+            const active = idx === activeIndex;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                data-menu-item
+                data-idx={idx}
+                // onMouseDown (not onClick) so the row fires BEFORE the textarea blurs
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onPick(item, idx);
+                }}
+                className="w-full text-left px-3 py-1.5 font-mono text-[11.5px] flex items-baseline gap-2"
+                style={{
+                  color: active ? '#ffb000' : '#e9e7df',
+                  background: active ? 'rgba(255,176,0,0.10)' : 'transparent',
+                }}
+              >
+                <span className="shrink-0">{item.label}</span>
+                {item.hint && <span className="text-faint text-[10px] truncate flex-1">{item.hint}</span>}
+                {item.trailing && <span className="text-faint text-[10px] shrink-0 ml-auto">{item.trailing}</span>}
+              </button>
+            );
+          })}
+        </div>
+      ))}
+      {footer && <div className="px-3 py-1.5 border-t hairline font-mono text-[10px] text-faint">{footer}</div>}
+    </div>
+  );
+}
