@@ -51,13 +51,13 @@ describe('api chat control helpers', () => {
     return f;
   };
 
-  it('chatInput POSTs the mid-turn text to /input with attachments', async () => {
+  it('chatInput POSTs the input body to /input', async () => {
     const f = captured();
-    await api.chatInput('sess1', 'approve', [{ path: 'a.ts', kind: 'file' }]);
+    await api.chatInput('sess1', { type: 'permission', requestId: 'r1', decision: 'allow' });
     const [url, init] = (f.mock.calls as any)[0];
     expect(String(url)).toContain('/api/chat/sessions/sess1/input');
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toEqual({ message: 'approve', attachments: [{ path: 'a.ts', kind: 'file' }] });
+    expect(JSON.parse(init.body)).toEqual({ type: 'permission', requestId: 'r1', decision: 'allow' });
   });
 
   it('chatInterrupt POSTs to /interrupt with an empty body', async () => {

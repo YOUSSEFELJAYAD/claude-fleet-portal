@@ -457,14 +457,14 @@ export const api = {
       body: JSON.stringify(attachments?.length ? { message, attachments } : { message }),
     }),
   /** §3 — mid-turn input / permission decision to the live process (409 if not live). */
-  chatInput: (id: string, message: string, attachments?: ChatAttachment[]) =>
+  chatInput: (id: string, body: { type: string; requestId?: string; decision?: 'allow' | 'deny'; text?: string }) =>
     j(`/api/chat/sessions/${id}/input`, {
       method: 'POST',
-      body: JSON.stringify(attachments?.length ? { message, attachments } : { message }),
+      body: JSON.stringify(body),
     }),
   /** §3 — stop the current turn, keep the process live if possible. */
   chatInterrupt: (id: string) =>
-    j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
+    j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST' }),
   /** §3 — explicit kill: stops the live process and marks the session killed/resumable.
    *  POSTs to /interrupt so the session row and message history are preserved (not deleted).
    *  Use deleteChatSession to hard-delete a session and all its messages. */
