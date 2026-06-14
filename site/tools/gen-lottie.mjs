@@ -4,7 +4,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const OUT = fileURLToPath(new URL('../assets/lottie/robot.json', import.meta.url));
+const OUT = fileURLToPath(new URL('../assets/lottie/robot.js', import.meta.url));
 
 // brand colors (0..1 rgb)
 const amber = [1, 0.69, 0];
@@ -52,5 +52,5 @@ const anim = {
 };
 
 mkdirSync(dirname(OUT), { recursive: true });
-writeFileSync(OUT, JSON.stringify(anim));
+writeFileSync(OUT, 'window.__fxRobotData=' + JSON.stringify(anim) + ';\n');
 console.log('wrote', OUT);
