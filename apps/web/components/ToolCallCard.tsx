@@ -23,9 +23,9 @@ export function ToolCallCard({
   name, input, result, isError,
 }: { name: string; input: unknown; result: string | null; isError: boolean }) {
   const [open, setOpen] = useState(false);
-  const teal = '#39d4cf';
-  const statusColor = result == null ? teal : isError ? '#ff5d5d' : '#54e08a';
   const statusLabel = result == null ? 'running…' : isError ? 'error' : 'done';
+  const statusClass = result == null ? 'text-sig-running' : isError ? 'text-sig-failed' : 'text-sig-completed';
+  const dotColor = result == null ? '#39d4cf' : isError ? '#ff5d5d' : '#54e08a';
   const argsJson = (() => {
     try { return JSON.stringify(input, null, 2); } catch { return String(input); }
   })();
@@ -34,14 +34,14 @@ export function ToolCallCard({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-amber/[0.03] transition-colors"
+        className="group w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-amber/[0.03] transition-colors"
       >
-        <span className="font-mono text-[11px]" style={{ color: open ? '#ffb000' : '#9aa1ab' }}>{open ? '▾' : '▸'}</span>
-        <span className="font-mono text-[11px]" style={{ color: teal }}>{name}</span>
+        <span className="font-mono text-[11px] text-dim group-hover:text-amber transition-colors">{open ? '▾' : '▸'}</span>
+        <span className="font-mono text-[11px] text-sig-running">{name}</span>
         <span className="font-mono text-[10px] text-faint truncate min-w-0 flex-1">{summarize(input)}</span>
         <span className="inline-flex items-center gap-1 shrink-0">
-          <Dot color={statusColor} live={result == null} size={6} />
-          <span className="font-mono text-[9px] uppercase tracking-wider" style={{ color: statusColor }}>{statusLabel}</span>
+          <Dot color={dotColor} live={result == null} size={6} />
+          <span className={`font-mono text-[9px] uppercase tracking-wider ${statusClass}`}>{statusLabel}</span>
         </span>
       </button>
       {open && (
