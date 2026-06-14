@@ -10,6 +10,7 @@ import type {
   Campaign,
   CampaignTask,
   CampaignMessage,
+  ChatSessionState,
 } from '@fleet/shared';
 import { API } from './api';
 
@@ -207,6 +208,84 @@ export function useCampaign(id: string): { campaign: Campaign | null; connected:
   }, [id]);
 
   return { campaign, connected };
+}
+
+// ── per-chat-session live channel (§4 chat-scoped SSE) ──────────────────────
+// Subscribes to the SESSION, not a run id, so it survives kill→resume (the backing
+// run id changes underneath) and page reload. Re-uses the EXISTING run-event
+// vocabulary (assistant_partial/text, tool_use, tool_result, thinking,
+// permission_request, subagent_spawned, result) plus the chat-only `session_state`
+// control envelope { state, live } owned by Unit 1's stream route.
+export interface ChatLiveState {
+  /** appended run events for this session's CURRENT backing run. */
+  events: NormalizedEvent[];
+  /** nodeId → currently-streaming assistant text (token deltas). */
+  partials: Record<string, string>;
+  /** §3 — derived session lifecycle from the latest session_state frame. */
+  state: ChatSessionState;
+  /** §3 — true iff a live interactive process is held. */
+  live: boolean;
+  connected: boolean;
+  error: string | null;
+}
+
+export function useChatStream(sessionId: string): ChatLiveState {
+  const [events, setEvents] = useState<NormalizedEvent[]>([]);
+  const [partials, setPartials] = useState<Record<string, string>>({});
+  const [state, setState] = useState<ChatSessionState>('idle');
+  const [live, setLive] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const partialRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    partialRef.current = {};
+    setEvents([]);
+    setPartials({});
+    setState('idle');
+    setLive(false);
+    setError(null);
+    const es = new EventSource(`${API}/api/chat/sessions/${sessionId}/stream`);
+    es.onopen = () => setConnected(true);
+    es.onerror = () => setConnected(false);
+    es.onmessage = (e) => {
+      let m: any;
+      try {
+        m = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      if (m.error) {
+        setError(String(m.error));
+        es.close();
+        return;
+      }
+      // chat-control envelope (Unit 1) — not a run event
+      if (m.kind === 'session_state') {
+        setState(m.state as ChatSessionState);
+        setLive(Boolean(m.live));
+        return;
+      }
+      if (m.kind === 'event') {
+        const evt = m.event as NormalizedEvent;
+        if (evt.type === 'assistant_partial') {
+          const text = String((evt.payload as any)?.text ?? '');
+          const cur = partialRef.current[evt.nodeId] ?? '';
+          partialRef.current = { ...partialRef.current, [evt.nodeId]: cur + text };
+          setPartials(partialRef.current);
+        } else {
+          if (evt.type === 'assistant_text' && partialRef.current[evt.nodeId]) {
+            partialRef.current = { ...partialRef.current, [evt.nodeId]: '' };
+            setPartials(partialRef.current);
+          }
+          setEvents((prev) => [...prev, evt]);
+        }
+      }
+    };
+    return () => es.close();
+  }, [sessionId]);
+
+  return { events, partials, state, live, connected, error };
 }
 
 // ── one-shot fetch helper for client components ─────────────────────────────
