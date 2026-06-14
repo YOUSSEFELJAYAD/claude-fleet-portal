@@ -186,8 +186,9 @@
   .doc-sidebar a:hover, .doc-sidebar a.active { color: var(--amber); border-left-color: var(--amber); background: rgba(255,176,0,.04); }
   .doc-content { padding: 32px 36px; }
   @media (max-width: 860px) { .doc-content { padding: 24px 20px; } }
-  .doc-content .doc-section { display: none; }
-  .doc-content .doc-section.active { display: block; }
+  .doc-content .doc-section { display: none; opacity: 0; transform: translateY(6px); transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
+  .doc-content .doc-section.active { display: block; opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .doc-content .doc-section { transition: none; } }
   .doc-content h3 { font-size: 22px; margin-bottom: 14px; letter-spacing: .03em; }
   .doc-content h4 { font-size: 15px; color: var(--amber); margin: 22px 0 8px; letter-spacing: .06em; text-transform: uppercase; }
   .doc-content p { color: var(--dim); font-size: 14.5px; line-height: 1.7; margin-bottom: 12px; }
@@ -699,9 +700,9 @@
 
 <!-- ── DOCUMENTATION ────────────────────────────────────────────────────── -->
 <section id="docs">
-  <div class="kicker">documentation</div>
-  <h2>How it works — in depth</h2>
-  <p class="lead">Everything you need to know to get the most out of your fleet. Select a topic to dive in.</p>
+  <div class="kicker" data-reveal>documentation</div>
+  <h2 data-reveal>How it works — in depth</h2>
+  <p class="lead" data-reveal>Everything you need to know to get the most out of your fleet. Select a topic to dive in.</p>
 
   <div class="doc-grid">
     <div class="doc-sidebar">
@@ -910,9 +911,9 @@
 
 <!-- ── RELEASES ─────────────────────────────────────────────────────────── -->
 <section id="releases">
-  <div class="kicker">changelog</div>
-  <h2>Releases</h2>
-  <p class="lead">Track every version, see what shipped, and stay up to date.</p>
+  <div class="kicker" data-reveal>changelog</div>
+  <h2 data-reveal>Releases</h2>
+  <p class="lead" data-reveal>Track every version, see what shipped, and stay up to date.</p>
 
   <div class="release-timeline">
     <div class="release-entry current">
@@ -1067,10 +1068,10 @@
 
 <!-- ── INSTALL ──────────────────────────────────────────────────────────── -->
 <section id="install">
-  <div class="kicker">get started</div>
-  <h2>Running in two minutes</h2>
-  <div class="install-cols">
-    <div class="card">
+  <div class="kicker" data-reveal>get started</div>
+  <h2 data-reveal>Running in two minutes</h2>
+  <div class="install-cols" data-stagger="80">
+    <div class="card" data-reveal>
       <h3>⇩ Download the app</h3>
       <p>Prebuilt by GitHub Actions for every release — no Node, pnpm or checkout required.</p>
       <div class="plat">
@@ -1087,7 +1088,7 @@
         <div class="macnote-opt">or open it once → <b>System Settings → Privacy &amp; Security → “Open Anyway”</b> → launch again</div>
       </div>
     </div>
-    <div class="card">
+    <div class="card" data-reveal>
       <h3>⌁ Build from source</h3>
 <pre><span class="c"># Node ≥ 20 · pnpm · git</span>
 git clone https://github.com/YOUSSEFELJAYAD/claude-fleet-portal.git
@@ -1101,18 +1102,18 @@ cd claude-fleet-portal
 
 <!-- ── OPEN SOURCE ──────────────────────────────────────────────────────── -->
 <section id="oss">
-  <div class="kicker">open source</div>
-  <h2>Built in the open. Yours to shape.</h2>
-  <p class="lead">Claude Fleet Portal is MIT-licensed, end to end — the control plane, the UI, the desktop
+  <div class="kicker" data-reveal>open source</div>
+  <h2 data-reveal>Built in the open. Yours to shape.</h2>
+  <p class="lead" data-reveal>Claude Fleet Portal is MIT-licensed, end to end — the control plane, the UI, the desktop
     shell and the release pipeline. Local-first by design: your code, your data and your API spend never
     leave your machine. Every engineering decision is logged in the repo (<span class="mono">DC.md</span>),
     every release ships from a public GitHub Actions pipeline you can audit, and the deterministic
     mock + 350-test hermetic suite mean you can hack on it without spending a token.</p>
-  <div class="stats">
-    <div class="stat"><b>MIT</b><span>license — use it anywhere</span></div>
-    <div class="stat"><b>660+</b><span>deterministic server tests</span></div>
-    <div class="stat"><b>3 OS</b><span>installers, built by public CI</span></div>
-    <div class="stat"><b>100%</b><span>local — nothing leaves your machine</span></div>
+  <div class="stats" data-stagger="70">
+    <div class="stat" data-reveal><b>MIT</b><span>license — use it anywhere</span></div>
+    <div class="stat" data-reveal><b>660+</b><span>deterministic server tests</span></div>
+    <div class="stat" data-reveal><b>3 OS</b><span>installers, built by public CI</span></div>
+    <div class="stat" data-reveal><b>100%</b><span>local — nothing leaves your machine</span></div>
   </div>
   <div class="cta" style="justify-content:flex-start; margin-top:36px">
     <a class="btn btn-amber" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal">Read the source</a>
@@ -1123,31 +1124,31 @@ cd claude-fleet-portal
 
 <!-- ── FAQ ──────────────────────────────────────────────────────────────── -->
 <section id="faq">
-  <div class="kicker">questions</div>
-  <h2>Frequently asked</h2>
-  <p class="lead">Straight answers — no sign-up, no catch. It runs on your machine.</p>
-  <div class="faq-list">
-    <details class="faq-item">
+  <div class="kicker" data-reveal>questions</div>
+  <h2 data-reveal>Frequently asked</h2>
+  <p class="lead" data-reveal>Straight answers — no sign-up, no catch. It runs on your machine.</p>
+  <div class="faq-list" data-stagger="60">
+    <details class="faq-item" data-reveal>
       <summary>Do I need a Claude subscription or API key?</summary>
       <div class="faq-a">For real agent runs you need the <a href="https://claude.com/claude-code">Claude Code CLI</a> with its normal auth. No CLI installed? A free deterministic <code>--mock</code> mode lets you explore the whole portal without spending a token. Codex and OpenCode are optional engine add-ons.</div>
     </details>
-    <details class="faq-item">
+    <details class="faq-item" data-reveal>
       <summary>Does my code or data ever leave my machine?</summary>
       <div class="faq-a">No. The portal is local-first by design — the control plane and UI run on <code>localhost</code> (<code>:4318</code> / <code>:4319</code>). Your code, API keys and spend data never leave your network.</div>
     </details>
-    <details class="faq-item">
+    <details class="faq-item" data-reveal>
       <summary>Which operating systems are supported?</summary>
       <div class="faq-a">Prebuilt desktop apps for <b>macOS</b>, <b>Windows</b> and <b>Linux</b>, built by public GitHub Actions for every release — or build from source with Node&nbsp;20+ and pnpm.</div>
     </details>
-    <details class="faq-item">
+    <details class="faq-item" data-reveal>
       <summary>Can it run Codex and OpenCode too?</summary>
       <div class="faq-a">Yes. They join the same unified model catalog as engine add-ons and route automatically. Claude stays the native, full-feature engine (subagent trees, resume, per-run cost streams); engine add-ons are one-shot headless runs.</div>
     </details>
-    <details class="faq-item">
+    <details class="faq-item" data-reveal>
       <summary>Is it really free and open source?</summary>
       <div class="faq-a">Yes — <b>MIT licensed</b> end to end: control plane, UI, desktop shell and release pipeline. You only ever pay your own model/API costs when running real agents.</div>
     </details>
-    <details class="faq-item">
+    <details class="faq-item" data-reveal>
       <summary>How do updates work?</summary>
       <div class="faq-a">The server checks GitHub Releases in the background; when a new version lands you can update in place (<code>git pull</code> + <code>pnpm install</code>) and restart. Desktop builds point you at the new installer.</div>
     </details>
@@ -1156,11 +1157,11 @@ cd claude-fleet-portal
 
 <!-- ── CLOSING CTA ──────────────────────────────────────────────────────── -->
 <section id="launch-cta">
-  <div class="cta-card ticked">
-    <span class="kicker">get started</span>
-    <h2>Ready to launch your fleet?</h2>
-    <p>Download the desktop app or build from source — and run your first agent in about two minutes.</p>
-    <div class="cta">
+  <div class="cta-card ticked" data-stagger="80">
+    <span class="kicker" data-reveal>get started</span>
+    <h2 data-reveal>Ready to launch your fleet?</h2>
+    <p data-reveal>Download the desktop app or build from source — and run your first agent in about two minutes.</p>
+    <div class="cta" data-reveal>
       <a class="btn btn-amber" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal/releases/latest">⇩ Download</a>
       <a class="btn btn-ghost" href="https://github.com/YOUSSEFELJAYAD/claude-fleet-portal">★ Star on GitHub</a>
     </div>
@@ -1662,7 +1663,8 @@ new IntersectionObserver((entries) => {
       links.forEach((l) => l.classList.remove('active'));
       link.classList.add('active');
       sections.forEach((s) => {
-        s.classList.toggle('active', s.id === 'doc-' + target);
+        if (s.id === 'doc-' + target) { s.style.display = 'block'; requestAnimationFrame(() => s.classList.add('active')); }
+        else { s.classList.remove('active'); s.style.display = 'none'; }
       });
     });
   });
