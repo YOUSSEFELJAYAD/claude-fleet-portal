@@ -106,7 +106,7 @@ export default function ChatPage() {
                 <ErrorBanner onRetry={() => setErr(null)}>{err}</ErrorBanner>
               </div>
             )}
-            <ChatThread messages={messages} liveRunId={liveRunId} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
+            <ChatThread sessionId={activeId} messages={messages} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
             <ChatComposer
               disabled={busy}
               running={chatState === 'running'}
