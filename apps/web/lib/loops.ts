@@ -61,6 +61,57 @@ export interface CreateLoopRequest {
   routableCeiling?: RiskLevel;
 }
 
+/** Ask AI to draft a loop from a prompt (POST /api/loops/generate) — server gathers project context. */
+export interface GenerateLoopRequest {
+  prompt: string;
+  projectId: string;
+}
+export interface GenerateLoopResponse {
+  kind: LoopKind;
+  controlPlane: ControlPlaneKind;
+  suggestedName: string;
+  contract: LoopContract;
+  mergePosture: MergePosture;
+  reviewPolicy: string;
+  routableCeiling: RiskLevel;
+  escalationThreshold: number;
+  riskRubric: RiskRule[];
+  /** non-null when the generated contract wouldn't pass create validation as-is (form guides the fix). */
+  warning: string | null;
+}
+
+/** The form state a generated draft prefills (kind/controlPlane/name + the ContractEditor draft). */
+export interface GeneratedForm {
+  kind: LoopKind;
+  controlPlane: ControlPlaneKind;
+  name: string;
+  draft: {
+    contract: LoopContract;
+    mergePosture: MergePosture;
+    reviewPolicy: string;
+    routableCeiling: RiskLevel;
+    riskRubric: RiskRule[];
+    escalationThreshold: number;
+  };
+}
+
+/** PURE: reshape the AI response into the create form's state (structurally a ContractDraft). */
+export function mapGenerateResponseToForm(r: GenerateLoopResponse): GeneratedForm {
+  return {
+    kind: r.kind,
+    controlPlane: r.controlPlane,
+    name: r.suggestedName,
+    draft: {
+      contract: r.contract,
+      mergePosture: r.mergePosture,
+      reviewPolicy: r.reviewPolicy,
+      routableCeiling: r.routableCeiling,
+      riskRubric: r.riskRubric,
+      escalationThreshold: r.escalationThreshold,
+    },
+  };
+}
+
 /** card assessment thread (board adapter) — GET /api/tasks/:id/comments */
 export interface TaskComment {
   id: string;
@@ -95,6 +146,7 @@ export const loopsApi = {
   list: () => j<Loop[]>('/api/loops'),
   get: (id: string) => j<Loop>(`/api/loops/${id}`),
   create: (body: CreateLoopRequest) => j<Loop>('/api/loops', { method: 'POST', body: JSON.stringify(body) }),
+  generate: (body: GenerateLoopRequest) => j<GenerateLoopResponse>('/api/loops/generate', { method: 'POST', body: JSON.stringify(body) }),
   update: (id: string, patch: Partial<CreateLoopRequest> & { enabled?: boolean }) =>
     j<Loop>(`/api/loops/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
   remove: (id: string) => j<void>(`/api/loops/${id}`, { method: 'DELETE' }),

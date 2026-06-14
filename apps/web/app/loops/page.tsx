@@ -2,10 +2,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Project } from '@fleet/shared';
-import { Kicker, Panel, Empty, Btn, Field, Input, Select, Toggle, Dot, ErrorBanner } from '@/components/ui';
+import { Kicker, Panel, Empty, Btn, Field, Input, Select, Textarea, Toggle, Dot, ErrorBanner } from '@/components/ui';
 import { ContractEditor, DEFAULT_DRAFT, type ContractDraft } from '@/components/ContractEditor';
 import { LOOP_TEMPLATES, applyTemplate, CUSTOM_TEMPLATE_ID } from '@/components/loopTemplates';
-import { loopsApi, type Loop, type LoopKind, type ControlPlaneKind, type CreateLoopRequest } from '@/lib/loops';
+import { loopsApi, mapGenerateResponseToForm, type Loop, type LoopKind, type ControlPlaneKind, type CreateLoopRequest } from '@/lib/loops';
 
 const TEMPLATE_GROUPS = ['Custom', 'Manager', 'Worker'] as const;
 
@@ -91,6 +91,10 @@ export default function LoopsPage() {
   const [templateId, setTemplateId] = useState<string>(CUSTOM_TEMPLATE_ID);
   const [submitting, setSubmitting] = useState(false);
   const [formErr, setFormErr] = useState<string | null>(null);
+  // ✨ generate-with-AI
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [aiNote, setAiNote] = useState<string | null>(null);
 
   // Prefill the whole form from a preset (name only when still empty — never clobber typed input).
   function onTemplate(id: string) {
@@ -104,6 +108,29 @@ export default function LoopsPage() {
     setDraft(r.draft);
   }
   const selectedTemplate = LOOP_TEMPLATES.find((t) => t.id === templateId);
+
+  // ✨ Ask AI to draft the whole loop from a description (server uses the project's board + repo).
+  async function generateWithAI() {
+    setAiNote(null);
+    setFormErr(null);
+    if (!aiPrompt.trim()) return setAiNote('Describe the loop you want first.');
+    if (!projectId) return setAiNote('Pick a project — the AI tailors the loop to its board + repo.');
+    setGenerating(true);
+    try {
+      const resp = await loopsApi.generate({ prompt: aiPrompt.trim(), projectId });
+      const f = mapGenerateResponseToForm(resp);
+      setKind(f.kind);
+      setControlPlane(f.controlPlane);
+      if (f.name.trim()) setName(f.name);
+      setDraft(f.draft);
+      setTemplateId(CUSTOM_TEMPLATE_ID);
+      setAiNote(resp.warning ? `Generated — heads up: ${resp.warning}` : 'Generated — review the fields and Create.');
+    } catch (e: any) {
+      setAiNote(e?.message ?? 'generation failed — retry or use a template');
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   const aliveRef = useRef(true);
   useEffect(() => {
@@ -159,6 +186,8 @@ export default function LoopsPage() {
       setName('');
       setDraft(DEFAULT_DRAFT);
       setTemplateId(CUSTOM_TEMPLATE_ID);
+      setAiPrompt('');
+      setAiNote(null);
       await load();
     } catch (e: any) {
       setFormErr(e?.message ?? 'failed to create loop');
@@ -204,6 +233,23 @@ export default function LoopsPage() {
             <Kicker>new loop</Kicker>
           </div>
           <div className="p-5 space-y-4">
+            <div className="border border-amber/30 bg-amber/5 p-3 space-y-2">
+              <Field label="✨ generate with AI" hint="describe the loop in plain language — the AI tailors it to the selected project's board + repo">
+                <Textarea
+                  rows={2}
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="e.g. triage incoming bug reports by severity and only auto-route trivial ones"
+                />
+              </Field>
+              <div className="flex items-center gap-3">
+                <Btn variant="solid" onClick={generateWithAI} disabled={generating || !aiPrompt.trim()}>
+                  {generating ? 'Generating… (~10–40s)' : '✨ Generate'}
+                </Btn>
+                <span className="font-mono text-[10px] text-faint">spawns one read-only Opus run · fills the form for review</span>
+              </div>
+              {aiNote && <div className="font-mono text-[10.5px] text-amber">{aiNote}</div>}
+            </div>
             <Field label="template" hint="prefill a known-good config — every field stays editable">
               <Select value={templateId} onChange={(e) => onTemplate(e.target.value)}>
                 {TEMPLATE_GROUPS.map((g) => (
