@@ -4,7 +4,10 @@ import Link from 'next/link';
 import type { Project } from '@fleet/shared';
 import { Kicker, Panel, Empty, Btn, Field, Input, Select, Toggle, Dot, ErrorBanner } from '@/components/ui';
 import { ContractEditor, DEFAULT_DRAFT, type ContractDraft } from '@/components/ContractEditor';
+import { LOOP_TEMPLATES, applyTemplate, CUSTOM_TEMPLATE_ID } from '@/components/loopTemplates';
 import { loopsApi, type Loop, type LoopKind, type ControlPlaneKind, type CreateLoopRequest } from '@/lib/loops';
+
+const TEMPLATE_GROUPS = ['Custom', 'Manager', 'Worker'] as const;
 
 const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 
@@ -85,8 +88,22 @@ export default function LoopsPage() {
   const [kind, setKind] = useState<LoopKind>('manager');
   const [controlPlane, setControlPlane] = useState<ControlPlaneKind>('board');
   const [draft, setDraft] = useState<ContractDraft>(DEFAULT_DRAFT);
+  const [templateId, setTemplateId] = useState<string>(CUSTOM_TEMPLATE_ID);
   const [submitting, setSubmitting] = useState(false);
   const [formErr, setFormErr] = useState<string | null>(null);
+
+  // Prefill the whole form from a preset (name only when still empty — never clobber typed input).
+  function onTemplate(id: string) {
+    setTemplateId(id);
+    const t = LOOP_TEMPLATES.find((x) => x.id === id);
+    if (!t) return;
+    const r = applyTemplate(t, name);
+    setKind(r.kind);
+    setControlPlane(r.controlPlane);
+    if (r.name !== undefined) setName(r.name);
+    setDraft(r.draft);
+  }
+  const selectedTemplate = LOOP_TEMPLATES.find((t) => t.id === templateId);
 
   const aliveRef = useRef(true);
   useEffect(() => {
@@ -141,6 +158,7 @@ export default function LoopsPage() {
       await loopsApi.create(body);
       setName('');
       setDraft(DEFAULT_DRAFT);
+      setTemplateId(CUSTOM_TEMPLATE_ID);
       await load();
     } catch (e: any) {
       setFormErr(e?.message ?? 'failed to create loop');
@@ -186,6 +204,20 @@ export default function LoopsPage() {
             <Kicker>new loop</Kicker>
           </div>
           <div className="p-5 space-y-4">
+            <Field label="template" hint="prefill a known-good config — every field stays editable">
+              <Select value={templateId} onChange={(e) => onTemplate(e.target.value)}>
+                {TEMPLATE_GROUPS.map((g) => (
+                  <optgroup key={g} label={g}>
+                    {LOOP_TEMPLATES.filter((t) => t.group === g).map((t) => (
+                      <option key={t.id} value={t.id}>{t.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </Select>
+            </Field>
+            {selectedTemplate?.hint && (
+              <div className="font-mono text-[10.5px] text-amber -mt-2">↳ {selectedTemplate.hint}</div>
+            )}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <Field label="name">
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="backlog triage" />
