@@ -9,6 +9,7 @@
  * Permission items include the LATEST permission_request event payload.
  * Input items include a lastText preview (last assistant_text, 400 chars).
  */
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { NormalizedEvent } from '@fleet/shared';
 import { registry } from './registry.js';
@@ -32,11 +33,45 @@ export interface InboxPermissionRequest {
   };
 }
 
+/** A destructive slash-command parked for operator approval (it did NOT execute). */
+export interface CommandApproval {
+  id: string;
+  command: string;   // the verb, e.g. 'stop-all'
+  summary: string;   // human-readable description of what will happen on approve
+  cwd: string;
+  createdAt: number;
+}
+
 export interface InboxItem {
-  run: SlimRun;
-  kind: 'permission' | 'input';
+  /** present for derived run items; omitted for parked command approvals. */
+  run?: SlimRun;
+  kind: 'permission' | 'input' | 'command';
   request?: InboxPermissionRequest;
   lastText?: string;
+  /** present iff kind === 'command'. */
+  approval?: CommandApproval;
+}
+
+// ── command-approval queue (destructive slash commands park here, see commands.ts) ──
+const pendingApprovals: CommandApproval[] = [];
+
+/** Park a destructive command for operator approval. Returns the approval id.
+ *  The command does NOT execute here — approving it (existing inbox actions) does. */
+export function enqueueApproval(input: { command: string; summary: string; cwd: string }): string {
+  const approval: CommandApproval = {
+    id: randomUUID(),
+    command: input.command,
+    summary: input.summary,
+    cwd: input.cwd,
+    createdAt: Date.now(),
+  };
+  pendingApprovals.push(approval);
+  return approval.id;
+}
+
+/** Test-only: reset the queue between cases. */
+export function __clearApprovalsForTests(): void {
+  pendingApprovals.length = 0;
 }
 
 function toSlim(run: { id: string; task: string; cwd: string; model: string; status: string; startedAt: number; costUsd: number }): SlimRun {
@@ -99,6 +134,10 @@ export function getInboxItems(): InboxItem[] {
         lastText,
       });
     }
+  }
+
+  for (const approval of pendingApprovals) {
+    items.push({ kind: 'command', approval });
   }
 
   return items;
