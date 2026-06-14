@@ -8,10 +8,11 @@ import type { FastifyInstance } from 'fastify';
 import db from './db.js';
 import { registry } from './registry.js';
 import { dispatchCommand } from './commands.js';
+import { chatLive } from './chatLive.js';
 import type {
   ChatSession, ChatMessage, ChatRole, ChatMessageKind,
   CreateChatSessionRequest, RunEngine, EffortLevel, PermissionMode,
-  ChatTurnResponse, AddChatMessageRequest, ChatAttachment,
+  ChatTurnResponse, AddChatMessageRequest, ChatAttachment, ChatSessionState,
 } from '@fleet/shared';
 
 export default db;
@@ -175,6 +176,18 @@ export async function startTurn(sessionId: string, message: string, attachments?
   return { runId: run.id, userMessage };
 }
 
+const TERMINAL_RUN = new Set(['completed', 'failed', 'killed']);
+
+/** §3.1 — derive (never store) a session's lifecycle from the live manager + backing run status. */
+export function deriveSessionState(session: ChatSession): { state: ChatSessionState; live: boolean } {
+  const live = chatLive.isLive(session.id);
+  if (live) return { state: 'live', live: true };
+  const run = session.runId ? registry.getRun(session.runId) : null;
+  if (run && !TERMINAL_RUN.has(run.status)) return { state: 'running', live: false };
+  if (run && run.status === 'killed') return { state: 'killed', live: false };
+  return { state: 'idle', live: false };
+}
+
 export function registerChatRoutes(app: FastifyInstance) {
   app.get('/api/chat/sessions', async () => chatRepo.listSessions());
 
@@ -188,7 +201,7 @@ export function registerChatRoutes(app: FastifyInstance) {
     const id = (req.params as any).id;
     const session = chatRepo.getSession(id);
     if (!session) return reply.code(404).send({ error: 'not found' });
-    return { session, messages: chatRepo.listMessages(id) };
+    return { session: { ...session, ...deriveSessionState(session) }, messages: chatRepo.listMessages(id) };
   });
 
   app.patch('/api/chat/sessions/:id', async (req, reply) => {
@@ -207,7 +220,11 @@ export function registerChatRoutes(app: FastifyInstance) {
 
   app.post('/api/chat/sessions/:id/turn', async (req, reply) => {
     try {
-      return await startTurn((req.params as any).id, (req.body as any)?.message);
+      const id = (req.params as any).id;
+      const body = (req.body ?? {}) as { message?: string; attachments?: ChatAttachment[] };
+      const res = await startTurn(id, body.message as string, body.attachments);
+      chatLive.touch(id); // a turn is activity — keep a live session warm
+      return res;
     } catch (e: any) {
       return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'turn failed' });
     }
