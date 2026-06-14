@@ -472,6 +472,10 @@ export const api = {
     j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
   addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
+  // §3.3 — kill keeps the transcript (resume-able); interrupt stops the current turn.
+  killChatSession: (id: string) => j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({ kill: true }) }),
+  // §3.1 — resume re-spawns via --resume on the next turn; this primes the live process.
+  resumeChatSession: (id: string) => j<ChatSession>(`/api/chat/sessions/${id}/resume`, { method: 'POST', body: JSON.stringify({}) }),
   // ── chat-surface upgrade (§5/§6) ──
   /** §5.3 — `/` palette catalog (server strips CommandDef.run before serializing). */
   listCommands: () => j<CommandDef[]>('/api/commands'),
