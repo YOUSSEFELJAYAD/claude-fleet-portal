@@ -40,6 +40,18 @@ class ChatLiveManager {
     for (const cb of this.runChangeSubs) { try { cb(sessionId, runId); } catch { /* dead listener */ } }
   }
 
+  /** Fired when a session's held process is dropped (idle-evict, explicit kill, or the run
+   *  going terminal on its own) → the session is no longer live. Lets an open chat SSE clear
+   *  the stale LIVE state so the client badge/affordance reflects resumable until the next turn. */
+  private evictSubs = new Set<(sessionId: string) => void>();
+  onSessionEvicted(cb: (sessionId: string) => void): () => void {
+    this.evictSubs.add(cb);
+    return () => { this.evictSubs.delete(cb); };
+  }
+  private emitEvicted(sessionId: string): void {
+    for (const cb of this.evictSubs) { try { cb(sessionId); } catch { /* dead listener */ } }
+  }
+
   /**
    * Subscribe to run-terminal events ONCE, from server.ts boot (same pattern as
    * campaigns.init / pm.init / planboard.init / initNotifier / initMemory / initLearner).
@@ -123,6 +135,7 @@ class ChatLiveManager {
     if (!h) return;
     if (h.idleTimer) clearTimeout(h.idleTimer);
     this.handles.delete(sessionId);
+    this.emitEvicted(sessionId);
   }
 
   private arm(sessionId: string): void {

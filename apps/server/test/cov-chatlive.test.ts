@@ -41,6 +41,17 @@ describe('chatLive', () => {
     expect((registry.launch as any).mock.calls[0][0].prompt).toBe('');
   });
 
+  it('fires onSessionEvicted when a live session is evicted (clears the stale LIVE badge)', async () => {
+    const evicted: string[] = [];
+    const unsub = chatLive.onSessionEvicted((id) => evicted.push(id));
+    await chatLive.ensureLive(session('s1'));
+    expect(chatLive.isLive('s1')).toBe(true);
+    chatLive.evict('s1');
+    expect(evicted).toContain('s1');
+    expect(chatLive.isLive('s1')).toBe(false);
+    unsub();
+  });
+
   it('a terminal event for a tracked run drops the session to resumable (isLive false, timer cleared)', async () => {
     const a = await chatLive.ensureLive(session('s1'));
     expect(chatLive.isLive('s1')).toBe(true);

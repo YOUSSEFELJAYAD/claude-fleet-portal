@@ -127,8 +127,11 @@ export function ChatThread({
   // resumable modes), NOT run-terminal: a live interactive run never goes terminal between
   // turns (it goes awaiting-input), so terminal-driven persistence would never fire for it.
   // Dedup by the result event's seq: stripHelloEvents drops historical events on (re)connect,
-  // so a reload never replays an old `result` → no re-fire.
-  const lastResultSeq = useRef(-1);
+  // so a reload never replays an old `result` → no re-fire. The seq space is PER-RUN (each
+  // backing run starts its own low seq), so we key the baseline on runId too — switching
+  // sessions or an evict→relaunch/kill→resume that changes the run id resets it, otherwise a
+  // lower-seq new run would fail the guard and its reply would never persist (silent data loss).
+  const lastResult = useRef<{ runId: string | null; seq: number }>({ runId: null, seq: -1 });
 
   // A turn is in flight only while the backing run is non-terminal. When it is terminal the
   // persisted `messages` are the complete transcript, so the live turn renders nothing —
@@ -152,8 +155,12 @@ export function ChatThread({
   // and reloads). Two sequential turns carry two result events with distinct seq → two fires.
   useEffect(() => {
     if (!latestResult) return;
-    if (latestResult.seq <= lastResultSeq.current) return;
-    lastResultSeq.current = latestResult.seq;
+    const prev = lastResult.current;
+    // A new run id = a fresh per-run seq space → always fire (and reset the baseline). Within the
+    // same run, only fire when the seq advances past the last handled one (idempotent on re-render).
+    const sameRun = latestResult.runId === prev.runId;
+    if (sameRun && latestResult.seq <= prev.seq) return;
+    lastResult.current = { runId: latestResult.runId, seq: latestResult.seq };
     const p: any = latestResult.payload ?? {};
     const text = String(
       p.result ??

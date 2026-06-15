@@ -324,7 +324,15 @@ export function registerChatStreamRoute(
       send({ kind: 'session_state', state: 'live', live: true, runId: newRunId } satisfies SessionStateEnvelope);
     });
 
-    reply.raw.on('close', () => { unsub?.(); unsubChange(); stop(); });
+    // The held process was dropped (idle-evict / kill / run terminal) → the session is no longer
+    // live; tell the open client so the LIVE badge clears to resumable (it self-heals to live on
+    // the next turn's backing-run-change). The backing run id is unchanged here (just suspended).
+    const unsubEvict = chatLive.onSessionEvicted((sessionId) => {
+      if (sessionId !== id) return;
+      send({ kind: 'session_state', state: 'idle', live: false, runId: currentRunId } satisfies SessionStateEnvelope);
+    });
+
+    reply.raw.on('close', () => { unsub?.(); unsubChange(); unsubEvict(); stop(); });
   });
 }
 
