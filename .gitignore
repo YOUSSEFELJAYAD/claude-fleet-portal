@@ -17,3 +17,6 @@ desktop/mock/
 
 # test coverage artifacts
 coverage/
+
+# local Claude Code worktrees / agent scratch
+.claude/worktrees/

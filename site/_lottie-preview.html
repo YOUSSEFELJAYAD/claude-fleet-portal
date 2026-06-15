@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/>
+<title>lottie preview grid</title>
+<style>
+  body{background:#0a0b0e;color:#e9e7df;font:13px ui-monospace,monospace;margin:0;padding:18px}
+  h2{color:#ffb000;font-size:14px;letter-spacing:.1em;margin:18px 0 8px}
+  .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+  .cell{border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#101217;padding:6px;text-align:center}
+  .cell .lbl{color:#ffb000;font-weight:bold}
+  .cell .u{color:#5b626d;font-size:9px;word-break:break-all;line-height:1.2}
+  dotlottie-player{width:100%;height:150px}
+</style>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@dotlottie/player-component@2.7.12/dist/dotlottie-player.mjs"></script>
+</head><body>
+<h2>ROBOT / AI</h2>
+<div class="grid" id="robots"></div>
+<h2>DEVELOPER / LAPTOP / CODING</h2>
+<div class="grid" id="devs"></div>
+<script>
+const B='https://assets-v2.lottiefiles.com/';
+const ROBOTS=[
+ 'a/431279d2-118a-11ee-afa8-f7fbc4c05a63/bsM1mDTFOD.lottie',
+ 'a/427209d4-118a-11ee-af13-efdc31b1068b/w8KYRbsm9k.lottie',
+ 'a/1fd76874-118a-11ee-82bf-77e12175636b/VHhpIIuHSi.lottie',
+ 'a/1fd53a68-118a-11ee-82bd-13ef09c2cdae/1TIitrYzuh.lottie',
+ 'a/1ffb2b46-1fd6-11ef-ab1d-532218b289b9/BxkedYueZp.lottie',
+ 'a/42d7e7ea-118a-11ee-af72-1f4e3751989c/9QcWKFDyRA.lottie',
+ 'a/426f0176-118a-11ee-af11-57b1842db695/1a7ZUiXncy.lottie',
+ 'a/61ed5162-86f8-11ef-aa41-67fd38e29e31/JCkSnf7tfJ.lottie',
+ 'a/e4c09ece-3c6e-11f0-9916-d701e33abd6d/4aFPIJ0vIk.lottie',
+ 'a/deeabcf2-62ce-11ef-8e74-57b8718a83fd/xwU5mVFbC1.lottie',
+ 'a/ab860d86-f57a-47ea-bb3b-33ab74d99bac/3pemcTrIld.lottie',
+ 'a/42d8f900-118a-11ee-af73-5f8fbe7210db/mGymASDjTG.lottie',
+];
+const DEVS=[
+ 'a/9fe12c24-1178-11ee-be5f-830c8b48a4db/pHPvG2FQBt.lottie',
+ 'a/67f3f52c-1168-11ee-8e26-3f9f4e0e1ec4/CxE5abhI28.lottie',
+ 'a/5860254c-116b-11ee-abc1-9b4d5341a3ec/r2yTej0nfi.lottie',
+ 'a/12bac05e-116d-11ee-916d-d342c074ee37/HOh1Rki10m.lottie',
+ 'a/5017fc96-1177-11ee-b93e-0b578c668bf6/eMfHJTNM36.lottie',
+ 'a/ce08a35e-116c-11ee-960d-eb7318f5d313/X7r1LeLsBL.lottie',
+ 'a/0f912a22-4fdd-11ee-a766-d3389c49afe6/CgKdDYs3jQ.lottie',
+ 'a/9a281b76-1173-11ee-b842-8fe723ad1e7d/4hYHSBetxq.lottie',
+ 'a/f0cf0a1c-1163-11ee-b804-d3baf57720a9/DbrkKxHdIg.lottie',
+ 'a/76e3f8ee-116c-11ee-be7a-631629a787fa/VTcYe3S1mg.lottie',
+ 'a/16dea22e-1161-11ee-9552-93419bf9bcdf/eu3s6dRG3M.lottie',
+ 'a/6a1bcd7e-1178-11ee-a804-2ff6bc42c6ae/j55Q9zfFBZ.lottie',
+];
+function build(host, list, prefix){
+  list.forEach((u,i)=>{
+    const c=document.createElement('div'); c.className='cell';
+    c.innerHTML=`<div class="lbl">${prefix}${i+1}</div><dotlottie-player src="${B+u}" autoplay loop></dotlottie-player><div class="u">${u.split('/')[2]}</div>`;
+    host.appendChild(c);
+  });
+}
+build(document.getElementById('robots'), ROBOTS, 'R');
+build(document.getElementById('devs'), DEVS, 'D');
+</script>
+</body></html>

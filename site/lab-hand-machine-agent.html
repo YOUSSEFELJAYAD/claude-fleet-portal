@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LAB · hand → machine → agent (prototype, not merged)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0a0b0e; --panel:#101217; --ink:#e9e7df; --dim:#9aa1ab; --faint:#5b626d;
+    --amber:#ffb000; --teal:#39d4cf; --coral:#e8704a; --green:#54e08a;
+    --grid:rgba(255,255,255,.022); --scan:rgba(255,255,255,.014);
+    --display:"Chakra Petch",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-font-smoothing:antialiased}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--ink); font-family:var(--mono); overflow:hidden;
+    background-image:
+      radial-gradient(1100px 700px at 75% -10%, rgba(255,176,0,.06), transparent 60%),
+      radial-gradient(900px 600px at 0% 110%, rgba(57,212,207,.05), transparent 55%),
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      repeating-linear-gradient(0deg, var(--scan), var(--scan) 1px, transparent 1px, transparent 3px);
+    background-size:auto,auto,42px 42px,42px 42px,auto;
+  }
+  #stage{ position:fixed; inset:0; }
+  #scene3d{ position:absolute; inset:0; z-index:0; }
+
+  /* overlay layer (hand, lottie, tasks) sits on top of the canvas */
+  #overlay{ position:absolute; inset:0; z-index:2; pointer-events:none; }
+
+  /* SVG hand that flies in and taps the button */
+  #hand{ position:absolute; width:64px; height:64px; transform:translate(-14px,-6px); filter:drop-shadow(0 8px 16px rgba(0,0,0,.6)); will-change:left,top,transform; }
+  #ripple{ position:absolute; width:10px; height:10px; border:2px solid var(--amber); border-radius:50%; transform:translate(-50%,-50%) scale(1); opacity:0; }
+
+  /* the lottie "scanning" ring, parked over the working agent */
+  #scan{ position:absolute; width:230px; height:230px; transform:translate(-50%,-50%); opacity:0; transition:opacity .4s; pointer-events:none; }
+
+  /* streaming task log next to the agent */
+  #tasks{
+    position:absolute; min-width:188px; padding:12px 14px; border:1px solid rgba(255,255,255,.09);
+    border-radius:10px; background:rgba(12,14,19,.66); backdrop-filter:blur(8px);
+    font-size:12px; line-height:1.95; color:var(--dim); opacity:0; transition:opacity .35s;
+    box-shadow:0 24px 60px -30px rgba(0,0,0,.9);
+  }
+  #tasks .hd{ font-family:var(--display); font-size:9.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--faint); margin-bottom:8px; }
+  #tasks .row{ white-space:nowrap; }
+  #tasks .row.done{ color:var(--green); }
+
+  /* chrome */
+  #cap{
+    position:absolute; left:50%; bottom:30px; transform:translateX(-50%); z-index:3;
+    font-family:var(--display); letter-spacing:.04em; font-size:15px; color:var(--ink);
+    background:rgba(12,14,19,.7); border:1px solid rgba(255,255,255,.09); border-radius:999px;
+    padding:10px 22px; backdrop-filter:blur(8px); white-space:nowrap;
+  }
+  #bar{
+    position:absolute; top:18px; left:18px; right:18px; z-index:3; display:flex; align-items:center; gap:14px;
+    font-family:var(--display); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint);
+  }
+  #bar .tag{ color:var(--amber); }
+  #bar .warn{ color:var(--coral); }
+  #bar .spacer{ flex:1; }
+  #bar button{
+    pointer-events:auto; cursor:pointer; font-family:var(--display); font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--ink); background:rgba(255,176,0,.08); border:1px solid rgba(255,176,0,.35); border-radius:8px; padding:7px 14px;
+  }
+  #bar button:hover{ background:rgba(255,176,0,.16); }
+  #lottieNote{ position:absolute; right:18px; bottom:30px; z-index:3; font-size:10.5px; color:var(--faint); }
+  #lottieNote b{ color:var(--teal); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="scene3d"></div>
+
+  <div id="overlay">
+    <!-- a real LottieFiles runtime animation (rotating "scan" ring) renders here -->
+    <div id="scan"></div>
+
+    <div id="tasks">
+      <div class="hd">agent · live</div>
+      <div id="taskRows"></div>
+    </div>
+
+    <div id="ripple"></div>
+
+    <svg id="hand" viewBox="0 0 64 64" fill="none">
+      <path d="M26 6c-2.2 0-4 1.8-4 4v22l-3.4-3.6c-1.6-1.7-4.3-1.7-5.9 0-1.5 1.6-1.5 4.1 0 5.7L25 49.4c2.2 2.4 5.3 3.8 8.6 3.8H40c5 0 9-4 9-9V24c0-2.2-1.8-4-4-4-.7 0-1.4.2-2 .5C42.6 19 41 17.6 39 17.6c-.9 0-1.7.3-2.4.7C35.8 16.7 34 15.4 32 15.4c-.7 0-1.4.2-2 .5V10c0-2.2-1.8-4-4-4z"
+        fill="#e9e7df" stroke="#0a0b0e" stroke-width="1.6" stroke-linejoin="round"/>
+    </svg>
+  </div>
+
+  <div id="bar">
+    <span class="tag">◉ LAB</span>
+    <span>hand → machine → agent</span>
+    <span class="spacer"></span>
+    <span class="warn">prototype · not merged into index.html</span>
+    <button id="replay">↻ replay</button>
+  </div>
+  <div id="cap">booting…</div>
+  <div id="lottieNote">scanning ring = real <b>Lottie</b> (lottie-web runtime)</div>
+</div>
+
+<!-- LottieFiles runtime player.
+     PROTOTYPE NOTE: before productionising, pin Subresource Integrity, e.g.
+     integrity="sha384-<cdnjs-published-hash>" (and keep crossorigin). -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js" crossorigin="anonymous"></script>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }</script>
+<script type="module">
+import * as THREE from 'three';
+
+const AMBER = 0xffb000, TEAL = 0x39d4cf, CORAL = 0xe8704a;
+const host = document.getElementById('scene3d');
+const overlay = document.getElementById('overlay');
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+host.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x07080b, 0.045);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+camera.position.set(1.6, 0.85, 6.2);
+
+// ── ambient particle sea (the wider fleet) ──
+const N = 420, pp = new Float32Array(N*3);
+for (let i=0;i<N;i++){ const r=7+Math.random()*16, th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1);
+  pp[i*3]=r*Math.sin(ph)*Math.cos(th); pp[i*3+1]=r*Math.cos(ph)*0.5; pp[i*3+2]=r*Math.sin(ph)*Math.sin(th)-4; }
+const pgeo = new THREE.BufferGeometry(); pgeo.setAttribute('position', new THREE.BufferAttribute(pp,3));
+const points = new THREE.Points(pgeo, new THREE.PointsMaterial({ color:AMBER, size:.045, transparent:true, opacity:.5, blending:THREE.AdditiveBlending, depthWrite:false }));
+scene.add(points);
+
+// ── the machine ──
+const machine = new THREE.Group(); scene.add(machine);
+const bodyGeo = new THREE.BoxGeometry(2.7, 2.2, 1.5);
+machine.add(new THREE.Mesh(bodyGeo, new THREE.MeshBasicMaterial({ color:0x12141a })));
+machine.add(new THREE.LineSegments(new THREE.EdgesGeometry(bodyGeo), new THREE.LineBasicMaterial({ color:AMBER, transparent:true, opacity:.55 })));
+
+// inner back-glow (brightens as the door opens)
+const glow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.9), new THREE.MeshBasicMaterial({ color:AMBER, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false }));
+glow.position.set(0, 0, 0.2); machine.add(glow);
+
+// light-spill sprite at the doorway
+const spillCanvas = document.createElement('canvas'); spillCanvas.width = spillCanvas.height = 128;
+{ const g = spillCanvas.getContext('2d'); const rad = g.createRadialGradient(64,64,0,64,64,64);
+  rad.addColorStop(0,'rgba(255,176,0,.9)'); rad.addColorStop(.4,'rgba(255,176,0,.25)'); rad.addColorStop(1,'rgba(255,176,0,0)');
+  g.fillStyle=rad; g.fillRect(0,0,128,128); }
+const spill = new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(spillCanvas), transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false }));
+spill.scale.set(2.6,2.6,1); spill.position.set(0,0,0.85); machine.add(spill);
+
+// the bay door — hinged on its left edge
+const doorPivot = new THREE.Group(); doorPivot.position.set(-0.7, 0, 0.78); machine.add(doorPivot);
+const doorGeo = new THREE.BoxGeometry(1.4, 1.9, 0.06);
+const door = new THREE.Mesh(doorGeo, new THREE.MeshBasicMaterial({ color:0x1b1f28 }));
+door.position.set(0.7, 0, 0); doorPivot.add(door);
+door.add(new THREE.LineSegments(new THREE.EdgesGeometry(doorGeo), new THREE.LineBasicMaterial({ color:AMBER, transparent:true, opacity:.5 })));
+
+// the button the hand presses
+const button = new THREE.Mesh(new THREE.CylinderGeometry(0.14,0.14,0.12,22), new THREE.MeshBasicMaterial({ color:AMBER }));
+button.rotation.x = Math.PI/2; button.position.set(1.02, -0.74, 0.82); machine.add(button);
+const buttonRing = new THREE.Mesh(new THREE.TorusGeometry(0.2,0.02,8,28), new THREE.MeshBasicMaterial({ color:AMBER, transparent:true, opacity:.6 }));
+buttonRing.position.copy(button.position); buttonRing.position.z = 0.8; machine.add(buttonRing);
+
+// ── the agent that rises out of the bay ──
+const agent = new THREE.Group(); scene.add(agent);
+const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42,2), new THREE.MeshBasicMaterial({ color:AMBER, wireframe:true, transparent:true, opacity:0 }));
+const heart = new THREE.Mesh(new THREE.IcosahedronGeometry(0.24,1), new THREE.MeshBasicMaterial({ color:CORAL, transparent:true, opacity:0 }));
+agent.add(core, heart); agent.position.set(0, -0.4, 0.2);
+
+// ── lottie scanning ring (real LottieFiles runtime) ──
+const SCAN = {"v":"5.7.4","fr":60,"ip":0,"op":120,"w":300,"h":300,"nm":"scan","ddd":0,"assets":[],"layers":[
+  {"ddd":0,"ind":1,"ty":4,"nm":"ringA","sr":1,"ks":{"o":{"a":0,"k":100},"r":{"a":1,"k":[{"i":{"x":[0.5],"y":[1]},"o":{"x":[0.5],"y":[0]},"t":0,"s":[0]},{"t":120,"s":[360]}]},"p":{"a":0,"k":[150,150,0]},"a":{"a":0,"k":[0,0,0]},"s":{"a":0,"k":[100,100,100]}},"ao":0,"shapes":[{"ty":"gr","nm":"g","it":[
+    {"ty":"el","d":1,"s":{"a":0,"k":[220,220]},"p":{"a":0,"k":[0,0]},"nm":"e"},
+    {"ty":"st","c":{"a":0,"k":[1,0.69,0,1]},"o":{"a":0,"k":100},"w":{"a":0,"k":9},"lc":2,"lj":1,"ml":1,"d":[{"n":"d","nm":"dash","v":{"a":0,"k":56}},{"n":"g","nm":"gap","v":{"a":0,"k":42}}],"nm":"st"},
+    {"ty":"tr","p":{"a":0,"k":[0,0]},"a":{"a":0,"k":[0,0]},"s":{"a":0,"k":[100,100]},"r":{"a":0,"k":0},"o":{"a":0,"k":100}}
+  ]}],"ip":0,"op":120,"st":0,"bm":0},
+  {"ddd":0,"ind":2,"ty":4,"nm":"ringB","sr":1,"ks":{"o":{"a":0,"k":85},"r":{"a":1,"k":[{"i":{"x":[0.5],"y":[1]},"o":{"x":[0.5],"y":[0]},"t":0,"s":[360]},{"t":120,"s":[0]}]},"p":{"a":0,"k":[150,150,0]},"a":{"a":0,"k":[0,0,0]},"s":{"a":0,"k":[100,100,100]}},"ao":0,"shapes":[{"ty":"gr","nm":"g","it":[
+    {"ty":"el","d":1,"s":{"a":0,"k":[150,150]},"p":{"a":0,"k":[0,0]},"nm":"e"},
+    {"ty":"st","c":{"a":0,"k":[0.224,0.831,0.812,1]},"o":{"a":0,"k":100},"w":{"a":0,"k":6},"lc":2,"lj":1,"ml":1,"d":[{"n":"d","nm":"dash","v":{"a":0,"k":24}},{"n":"g","nm":"gap","v":{"a":0,"k":30}}],"nm":"st"},
+    {"ty":"tr","p":{"a":0,"k":[0,0]},"a":{"a":0,"k":[0,0]},"s":{"a":0,"k":[100,100]},"r":{"a":0,"k":0},"o":{"a":0,"k":100}}
+  ]}],"ip":0,"op":120,"st":0,"bm":0}
+]};
+const scanEl = document.getElementById('scan');
+let scanLottie = null;
+if (window.lottie) {
+  // ▸ to use a real LottieFiles asset instead, swap animationData for: path:'https://lottie.host/....json'
+  scanLottie = window.lottie.loadAnimation({ container: scanEl, renderer:'svg', loop:true, autoplay:true, animationData: SCAN });
+} else {
+  scanEl.style.border = '3px dashed var(--amber)'; scanEl.style.borderRadius = '50%'; // graceful fallback
+}
+
+// ── DOM overlay refs ──
+const handEl = document.getElementById('hand');
+const rippleEl = document.getElementById('ripple');
+const tasksEl = document.getElementById('tasks');
+const taskRowsEl = document.getElementById('taskRows');
+const capEl = document.getElementById('cap');
+const TASKS = ['◉ agent online','⌕ search · SearXNG','▤ fetched 5 sources','◌ compressing context','✶ synthesizing','✓ done'];
+
+// ── timeline ──
+const T_CLICK=1.6, T_DOOR0=1.7, T_DOOR1=2.9, T_RISE0=2.9, T_RISE1=4.2, T_WORK0=4.3, T_WORK1=8.6, LOOP=9.6;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const eio=(t)=>t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+const eout=(t)=>1-Math.pow(1-t,3);
+
+let W=0,H=0;
+function size(){ W=host.clientWidth; H=host.clientHeight; renderer.setSize(W,H); camera.aspect=W/H; camera.updateProjectionMatrix(); }
+addEventListener('resize', size); size();
+
+const v = new THREE.Vector3();
+function toScreen(obj){ obj.getWorldPosition(v); v.project(camera); return { x:(v.x*.5+.5)*W, y:(-v.y*.5+.5)*H }; }
+
+const HAND_START = { x:0.86, y:0.92 }; // fraction of viewport
+function update(T){
+  // hand: fly to the button, then a short press
+  const bs = toScreen(button);
+  const p = eio(clamp(T/T_CLICK,0,1));
+  let hx = (HAND_START.x*W)*(1-p) + bs.x*p;
+  let hy = (HAND_START.y*H)*(1-p) + bs.y*p;
+  const press = (T>=T_CLICK && T<T_CLICK+0.18) ? 7 : 0;
+  handEl.style.left = hx+'px'; handEl.style.top = (hy+press)+'px';
+  handEl.style.opacity = T>LOOP-0.6 ? '0' : '1';
+
+  // click ripple + button push
+  const rp = clamp((T-T_CLICK)/0.45,0,1);
+  if (T>=T_CLICK && rp<1){ rippleEl.style.left=bs.x+'px'; rippleEl.style.top=bs.y+'px';
+    rippleEl.style.opacity=String(1-rp); rippleEl.style.transform=`translate(-50%,-50%) scale(${1+rp*3})`; }
+  else rippleEl.style.opacity='0';
+  button.position.z = 0.82 - (press?0.05:0);
+  buttonRing.scale.setScalar(1 + (T>=T_CLICK?Math.max(0,1-rp)*0.6:0));
+
+  // door swings open
+  const dp = eio(clamp((T-T_DOOR0)/(T_DOOR1-T_DOOR0),0,1));
+  doorPivot.rotation.y = -2.0*dp;
+  glow.material.opacity = 0.85*dp;
+  spill.material.opacity = dp;
+
+  // agent powers up and rises out of the bay
+  const ap = clamp((T-T_RISE0)/(T_RISE1-T_RISE0),0,1);
+  core.material.opacity = ap; heart.material.opacity = 0.5*ap;
+  agent.position.set(0, -0.4 + eout(ap)*1.65, 0.2 + ap*0.7);
+  agent.rotation.y = T*0.7; heart.scale.setScalar(1+Math.sin(T*3)*0.12);
+
+  // working: lottie scan ring over the agent + streaming task log
+  const working = T>=T_WORK0;
+  const as = toScreen(agent);
+  scanEl.style.left = as.x+'px'; scanEl.style.top = as.y+'px';
+  scanEl.style.opacity = working ? String(clamp((T-T_WORK0)/0.4,0,1)) : '0';
+  tasksEl.style.left = Math.min(W-210, as.x+90)+'px';
+  tasksEl.style.top = Math.max(70, as.y-70)+'px';
+  tasksEl.style.opacity = working ? '1' : '0';
+  const n = working ? clamp(Math.floor((T-T_WORK0)/0.7)+1, 0, TASKS.length) : 0;
+  let html=''; for (let i=0;i<n;i++){ const done = TASKS[i].startsWith('✓'); html += `<div class="row${done?' done':''}">${TASKS[i]}</div>`; }
+  taskRowsEl.innerHTML = html;
+
+  // caption
+  capEl.textContent =
+    T < T_CLICK ? '👆 a hand reaches for the console…' :
+    T < T_DOOR1 ? '🔘 click — opening the bay door' :
+    T < T_RISE1 ? '🚪 an agent powers up and rises out' :
+    T <= T_WORK1 ? '🔍 agent searches · fetches · synthesizes' :
+    '✓ task complete — looping';
+
+  points.rotation.y = T*0.03;
+}
+
+// ── loop (with a pause hook for deterministic review) ──
+let T=0, paused=false, last=0;
+function frame(ms){
+  const dt = Math.min(0.05, last? (ms-last)/1000 : 0); last=ms;
+  if (!paused){ T += dt; if (T>LOOP) T=0; }
+  update(T);
+  renderer.render(scene,camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+document.getElementById('replay').addEventListener('click', ()=>{ T=0; paused=false; });
+// review hooks: __goto(seconds) freezes a phase; __play() resumes
+window.__goto = (t)=>{ paused=true; T=t; update(t); renderer.render(scene,camera); };
+window.__play = ()=>{ paused=false; };
+</script>
+</body>
+</html>

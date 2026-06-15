@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LAB · laptop → agent flies → works (LottieFiles prototype, not merged)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0a0b0e; --panel:#101217; --ink:#e9e7df; --dim:#9aa1ab; --faint:#5b626d;
+    --amber:#ffb000; --teal:#39d4cf; --coral:#e8704a; --green:#54e08a;
+    --grid:rgba(255,255,255,.022); --scan:rgba(255,255,255,.014);
+    --display:"Chakra Petch",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--ink); font-family:var(--mono); overflow:hidden;
+    background-image:
+      radial-gradient(1100px 700px at 75% -10%, rgba(255,176,0,.06), transparent 60%),
+      radial-gradient(900px 600px at 0% 110%, rgba(57,212,207,.05), transparent 55%),
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      repeating-linear-gradient(0deg, var(--scan), var(--scan) 1px, transparent 1px, transparent 3px);
+    background-size:auto,auto,42px 42px,42px 42px,auto;
+  }
+  #stage{ position:fixed; inset:0; }
+
+  /* the laptop / typing scene (real LottieFiles asset) */
+  #typing{ position:absolute; left:50%; bottom:5%; transform:translateX(-50%); width:min(460px,72vw); height:auto; filter:drop-shadow(0 30px 60px rgba(0,0,0,.6)); }
+
+  /* a faint amber "bay" glow under the laptop, brightens when the agent launches */
+  #bay{ position:absolute; left:50%; bottom:30%; width:280px; height:120px; transform:translateX(-50%);
+    background:radial-gradient(closest-side, rgba(255,176,0,.28), transparent 70%); opacity:.25; transition:opacity .5s; pointer-events:none; }
+  .launching #bay{ opacity:.9; }
+
+  /* the agent (real LottieFiles robot) that flies up out of the laptop */
+  #agent{ position:absolute; left:50%; top:58%; width:160px; transform:translate(-50%,-50%) scale(.35); opacity:0;
+    transition: top 1.35s cubic-bezier(.34,1.25,.4,1), transform 1.35s cubic-bezier(.34,1.25,.4,1), opacity .6s; }
+  #agent.spawn{ opacity:1; transform:translate(-50%,-50%) scale(.5); }
+  #agent.fly{ top:28%; transform:translate(-50%,-50%) scale(1); opacity:1; }
+
+  /* amber "scanning" ring (inline Lottie via lottie-web) parked over the working agent */
+  #scan{ position:absolute; left:50%; top:28%; width:250px; height:250px; transform:translate(-50%,-50%); opacity:0; transition:opacity .5s; pointer-events:none; }
+  #scan::before,#scan::after{ content:''; position:absolute; inset:0; border-radius:50%; }
+  #scan::before{ border:4px dashed var(--amber); box-shadow:0 0 26px -6px var(--amber); animation:scanSpin 6s linear infinite; }
+  #scan::after{ inset:34px; border:3px dashed var(--teal); opacity:.85; animation:scanSpin 4s linear infinite reverse; }
+  @keyframes scanSpin{ to{ transform:rotate(360deg); } }
+  .working #scan{ opacity:1; }
+
+  /* streaming task log = what the agent is doing (app-tied) */
+  #tasks{ position:absolute; left:calc(50% + 150px); top:28%; transform:translateY(-50%);
+    min-width:196px; padding:13px 15px; border:1px solid rgba(255,255,255,.09); border-radius:11px;
+    background:rgba(12,14,19,.66); backdrop-filter:blur(8px); font-size:12px; line-height:2; color:var(--dim);
+    opacity:0; transition:opacity .4s; box-shadow:0 24px 60px -30px rgba(0,0,0,.9); }
+  .working #tasks{ opacity:1; }
+  #tasks .hd{ font-family:var(--display); font-size:9.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--faint); margin-bottom:8px; }
+  #tasks .row{ white-space:nowrap; } #tasks .row.done{ color:var(--green); }
+  @media (max-width:720px){ #tasks{ left:auto; right:18px; top:18%; } }
+
+  /* chrome */
+  #cap{ position:absolute; left:50%; bottom:26px; transform:translateX(-50%); z-index:3;
+    font-family:var(--display); letter-spacing:.04em; font-size:15px; color:var(--ink);
+    background:rgba(12,14,19,.7); border:1px solid rgba(255,255,255,.09); border-radius:999px;
+    padding:10px 22px; backdrop-filter:blur(8px); white-space:nowrap; }
+  #bar{ position:absolute; top:18px; left:18px; right:18px; z-index:3; display:flex; align-items:center; gap:14px;
+    font-family:var(--display); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); }
+  #bar .tag{ color:var(--amber); } #bar .warn{ color:var(--coral); } #bar .spacer{ flex:1; }
+  #bar button{ pointer-events:auto; cursor:pointer; font-family:var(--display); font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--ink); background:rgba(255,176,0,.08); border:1px solid rgba(255,176,0,.35);
+    border-radius:8px; padding:7px 14px; }
+  #bar button:hover{ background:rgba(255,176,0,.16); }
+  #credits{ position:absolute; right:18px; bottom:26px; z-index:3; font-size:10.5px; color:var(--faint); text-align:right; line-height:1.5; }
+  #credits a{ color:var(--teal); text-decoration:none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bay"></div>
+
+  <!-- real LottieFiles asset: developer typing at a laptop (the "hand tik-tak") -->
+  <dotlottie-player id="typing" src="https://assets-v2.lottiefiles.com/a/16dea22e-1161-11ee-9552-93419bf9bcdf/eu3s6dRG3M.lottie" autoplay loop></dotlottie-player>
+
+  <!-- real LottieFiles asset: robot agent that flies out and works -->
+  <dotlottie-player id="agent" src="https://assets-v2.lottiefiles.com/a/e4c09ece-3c6e-11f0-9916-d701e33abd6d/4aFPIJ0vIk.lottie" autoplay loop></dotlottie-player>
+
+  <!-- inline Lottie (lottie-web): amber scanning ring while the agent works -->
+  <div id="scan"></div>
+
+  <div id="tasks">
+    <div class="hd">agent · live</div>
+    <div id="taskRows"></div>
+  </div>
+
+  <div id="bar">
+    <span class="tag">◉ LAB</span>
+    <span>laptop → agent flies → works</span>
+    <span class="spacer"></span>
+    <span class="warn">prototype · not merged into index.html</span>
+    <button id="replay">↻ replay</button>
+  </div>
+  <div id="cap">booting…</div>
+  <div id="credits">Lottie assets via <a href="https://lottiefiles.com/free-animations/developer">LottieFiles</a> · free typing + AI-robot · amber scan = inline Lottie</div>
+</div>
+
+<!-- dotLottie runtime (plays LottieFiles .lottie assets) -->
+<script type="module" src="https://cdn.jsdelivr.net/npm/@dotlottie/player-component@2.7.12/dist/dotlottie-player.mjs"></script>
+<!-- lottie-web runtime (for the inline amber scan ring).
+     PROTOTYPE NOTE: pin Subresource Integrity (integrity="sha384-…") before productionising. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js" crossorigin="anonymous"></script>
+<script>
+(() => {
+  // ── inline amber "scan" ring (two counter-rotating dashed rings) ──
+  const SCAN = {"v":"5.7.4","fr":60,"ip":0,"op":120,"w":300,"h":300,"nm":"scan","ddd":0,"assets":[],"layers":[
+    {"ddd":0,"ind":1,"ty":4,"nm":"a","sr":1,"ks":{"o":{"a":0,"k":100},"r":{"a":1,"k":[{"i":{"x":[0.5],"y":[1]},"o":{"x":[0.5],"y":[0]},"t":0,"s":[0]},{"t":120,"s":[360]}]},"p":{"a":0,"k":[150,150,0]},"a":{"a":0,"k":[0,0,0]},"s":{"a":0,"k":[100,100,100]}},"ao":0,"shapes":[{"ty":"gr","it":[
+      {"ty":"el","d":1,"s":{"a":0,"k":[220,220]},"p":{"a":0,"k":[0,0]}},
+      {"ty":"st","c":{"a":0,"k":[1,0.69,0,1]},"o":{"a":0,"k":100},"w":{"a":0,"k":9},"lc":2,"lj":1,"ml":1,"d":[{"n":"d","v":{"a":0,"k":56}},{"n":"g","v":{"a":0,"k":42}}]},
+      {"ty":"tr","p":{"a":0,"k":[0,0]},"a":{"a":0,"k":[0,0]},"s":{"a":0,"k":[100,100]},"r":{"a":0,"k":0},"o":{"a":0,"k":100}}
+    ]}],"ip":0,"op":120,"st":0,"bm":0},
+    {"ddd":0,"ind":2,"ty":4,"nm":"b","sr":1,"ks":{"o":{"a":0,"k":80},"r":{"a":1,"k":[{"i":{"x":[0.5],"y":[1]},"o":{"x":[0.5],"y":[0]},"t":0,"s":[360]},{"t":120,"s":[0]}]},"p":{"a":0,"k":[150,150,0]},"a":{"a":0,"k":[0,0,0]},"s":{"a":0,"k":[100,100,100]}},"ao":0,"shapes":[{"ty":"gr","it":[
+      {"ty":"el","d":1,"s":{"a":0,"k":[150,150]},"p":{"a":0,"k":[0,0]}},
+      {"ty":"st","c":{"a":0,"k":[0.224,0.831,0.812,1]},"o":{"a":0,"k":100},"w":{"a":0,"k":6},"lc":2,"lj":1,"ml":1,"d":[{"n":"d","v":{"a":0,"k":24}},{"n":"g","v":{"a":0,"k":30}}]},
+      {"ty":"tr","p":{"a":0,"k":[0,0]},"a":{"a":0,"k":[0,0]},"s":{"a":0,"k":[100,100]},"r":{"a":0,"k":0},"o":{"a":0,"k":100}}
+    ]}],"ip":0,"op":120,"st":0,"bm":0}
+  ]};
+  if (window.lottie) window.lottie.loadAnimation({ container:document.getElementById('scan'), renderer:'svg', loop:true, autoplay:true, animationData:SCAN });
+
+  // ── narrative timeline ──
+  const stage=document.getElementById('stage'), agent=document.getElementById('agent'), capEl=document.getElementById('cap'), rows=document.getElementById('taskRows');
+  const TASKS=['◉ agent online','⌕ search · SearXNG','▤ fetched 5 sources','◌ compressing context','✶ synthesizing','✓ done'];
+  let timers=[], taskIv=null;
+  const cap=(s)=>capEl.textContent=s;
+  const at=(t,fn)=>timers.push(setTimeout(fn,t));
+  function clearAll(){ timers.forEach(clearTimeout); timers=[]; if(taskIv){clearInterval(taskIv);taskIv=null;} }
+  function reset(){ clearAll(); agent.classList.remove('spawn','fly'); stage.classList.remove('working','launching'); rows.innerHTML=''; cap('💻 tik-tak… coding on the laptop'); }
+  function streamTasks(){ let i=0; taskIv=setInterval(()=>{ if(i>=TASKS.length){clearInterval(taskIv);taskIv=null;return;}
+    const d=TASKS[i].startsWith('✓'); rows.insertAdjacentHTML('beforeend',`<div class="row${d?' done':''}">${TASKS[i]}</div>`); i++; }, 650); }
+  function run(){
+    reset();
+    at(2200,()=>{ stage.classList.add('launching'); agent.classList.add('spawn'); cap('✦ a request fires — an agent powers up'); });
+    at(2750,()=>{ agent.classList.add('fly'); cap('🚀 the agent flies out of the laptop'); });
+    at(4150,()=>{ stage.classList.remove('launching'); stage.classList.add('working'); cap('🔍 searching · fetching · synthesizing'); streamTasks(); });
+    at(8300,()=> cap('✓ task complete — looping'));
+    at(9500, run);
+  }
+  document.getElementById('replay').onclick=run;
+  run();
+
+  // review hooks — freeze a phase for screenshots
+  window.__jump=(p)=>{ clearAll(); agent.classList.remove('spawn','fly'); stage.classList.remove('working','launching');
+    if(p==='spawn'){ stage.classList.add('launching'); agent.classList.add('spawn'); cap('✦ agent powers up'); }
+    if(p==='fly'){ agent.classList.add('spawn','fly'); cap('🚀 flies out'); }
+    if(p==='work'){ agent.classList.add('spawn','fly'); stage.classList.add('working'); rows.innerHTML=TASKS.map(t=>`<div class="row${t.startsWith('✓')?' done':''}">${t}</div>`).join(''); cap('🔍 working'); }
+  };
+})();
+</script>
+</body>
+</html>

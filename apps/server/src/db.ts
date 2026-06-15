@@ -606,8 +606,16 @@ export const repo = {
    *  failed so the UI never shows a permanently-"starting" zombie (PRD §10 reliability). */
   reconcileOrphans(): number {
     const now = Date.now();
+    // A run still marked live at boot was orphaned: the control-plane process died (crash,
+    // SIGKILL, or — common in dev — a `tsx watch` hot-restart) while its child was running.
+    // Record WHY via COALESCE so the run page shows a reason instead of a blank 'failed', while
+    // never clobbering a genuine error a clean onExit may have already written.
     const r = db
-      .prepare("UPDATE runs SET status='failed', ended_at=? WHERE status NOT IN ('completed','failed','killed')")
+      .prepare(
+        "UPDATE runs SET status='failed', ended_at=?, " +
+          "error=COALESCE(error, 'orphaned — the control-plane server stopped or restarted while this run was live') " +
+          "WHERE status NOT IN ('completed','failed','killed')",
+      )
       .run(now);
     db.prepare("UPDATE campaigns SET status='failed', ended_at=? WHERE status NOT IN ('completed','failed','killed')").run(now);
     db.prepare("UPDATE campaign_tasks SET status='failed' WHERE status NOT IN ('completed','failed','skipped')").run();
