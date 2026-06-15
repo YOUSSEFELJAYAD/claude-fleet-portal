@@ -29,4 +29,19 @@ describe('useChatStream', () => {
     act(() => es.emit({ kind: 'session_state', state: 'idle', live: false } as any));
     expect(result.current.state).toBe('idle');
   });
+
+  it('held-run new turn (awaiting-input → running) clears the prior turn live events', () => {
+    const { result } = renderHook(() => useChatStream('sess1'));
+    const es = FakeEventSource.last();
+    // turn 1: the held interactive run is running and streams its reply + result
+    act(() => es.emit({ kind: 'hello', run: { id: 'run1', status: 'running' }, events: [], state: 'live', live: true, runId: 'run1' } as any));
+    act(() => es.emit({ kind: 'event', event: { ...ev('assistant_text', 'n1', { text: 'TURN-1-REPLY' }), seq: 1 } } as any));
+    act(() => es.emit({ kind: 'event', event: { ...ev('result', 'run1', {}), seq: 2 } } as any));
+    expect(result.current.events.map((e: any) => e.type)).toEqual(['assistant_text', 'result']);
+    // held run settles to awaiting-input (NON-terminal), then the next turn flips it back to running
+    act(() => es.emit({ kind: 'run', run: { id: 'run1', status: 'awaiting-input' } } as any));
+    act(() => es.emit({ kind: 'run', run: { id: 'run1', status: 'running' } } as any));
+    // the awaiting-input → running edge is a new-turn boundary: turn 1's live events were dropped
+    expect(result.current.events.length).toBe(0);
+  });
 });

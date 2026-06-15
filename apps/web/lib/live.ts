@@ -310,9 +310,13 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
       if (m.kind === 'run') {
         const prev = prevRunStatusRef.current;
         const next = (m.run as Run | undefined)?.status ?? null;
-        // new turn starting (run went terminal → active): drop the prior turn's live events;
-        // they belong to a completed turn that now lives in the persisted transcript.
-        if (prev && TERMINAL_STATUS.has(prev) && next && !TERMINAL_STATUS.has(next)) {
+        // new turn starting: drop the prior turn's live events; they belong to a settled
+        // turn that now lives in the persisted transcript. A turn boundary is EITHER a
+        // terminal state (resumable-fallback: completed → running) OR `awaiting-input`
+        // (always-live held run: the held process settles to awaiting-input after each
+        // turn's `result`, then sendInput flips it back to running — fix 14).
+        const wasTurnBoundary = !!prev && (TERMINAL_STATUS.has(prev) || prev === 'awaiting-input');
+        if (wasTurnBoundary && next && !TERMINAL_STATUS.has(next) && next !== 'awaiting-input') {
           partialRef.current = {};
           setEvents([]);
           setPartials({});
