@@ -39,6 +39,7 @@ vi.mock('../src/chatLive.js', async (orig) => {
     liveRunId: vi.fn(() => 'run-xyz'),
     touch: vi.fn(),
     isLive: vi.fn(() => false),
+    notifyBackingRun: vi.fn(),
     init: vi.fn(),
   });
   return { ...actual, chatLive: proxied };

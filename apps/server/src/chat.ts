@@ -228,6 +228,14 @@ export async function startTurn(sessionId: string, message: string, attachments?
     }
   }
   chatRepo.setSessionRun(sessionId, run.id);
+  // Announce the backing run to any open chat SSE so it subscribes/re-subscribes. The held path
+  // already streams (the SSE attached to the held run on connect), and resume reuses the id the
+  // SSE is on — both are no-ops via the onBackingRunChange `newRunId === currentRunId` guard. The
+  // case this rescues: a budget-exhausted FRESH session whose connect-time ensureLive returned
+  // {live:false,runId:null} (SSE subscribed to nothing) and whose first turn one-shot-launches a
+  // NEW run id — without this the stream never proxies it, the result never arrives, and the
+  // reply (persisted client-side on `result`) is silently lost.
+  chatLive.notifyBackingRun(sessionId, run.id);
   return { runId: run.id, userMessage };
 }
 

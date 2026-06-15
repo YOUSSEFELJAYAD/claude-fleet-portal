@@ -40,6 +40,11 @@ class ChatLiveManager {
     for (const cb of this.runChangeSubs) { try { cb(sessionId, runId); } catch { /* dead listener */ } }
   }
 
+  /** Public hook for the turn orchestrator to announce a session's CURRENT backing run id to open
+   *  chat streams — used by the resumable-fallback path (one-shot launch / resume), which does NOT
+   *  go through the held-process launch that emits internally. Listeners guard on a same-id no-op. */
+  notifyBackingRun(sessionId: string, runId: string): void { this.emitRunChange(sessionId, runId); }
+
   /** Fired when a session's held process is dropped (idle-evict, explicit kill, or the run
    *  going terminal on its own) → the session is no longer live. Lets an open chat SSE clear
    *  the stale LIVE state so the client badge/affordance reflects resumable until the next turn. */

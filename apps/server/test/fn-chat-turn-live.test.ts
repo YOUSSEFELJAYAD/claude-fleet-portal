@@ -38,6 +38,7 @@ vi.mock('../src/registry.js', async (orig) => {
 
 // chatLive: control ensureLive (the live/budget signal) + no-op the warmth touch.
 const ensureLive = vi.fn();
+const notifyBackingRun = vi.fn();
 vi.mock('../src/chatLive.js', async (orig) => {
   const actual = (await orig()) as any;
   const proxied = Object.create(actual.chatLive);
@@ -46,6 +47,7 @@ vi.mock('../src/chatLive.js', async (orig) => {
     touch: vi.fn(),
     isLive: vi.fn(() => false),
     liveRunId: vi.fn(() => null),
+    notifyBackingRun,
     init: vi.fn(),
   });
   return { ...actual, chatLive: proxied };
@@ -64,7 +66,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await app?.close(); });
 
-beforeEach(() => { sendInput.mockClear(); ensureLive.mockReset(); });
+beforeEach(() => { sendInput.mockClear(); ensureLive.mockReset(); notifyBackingRun.mockClear(); });
 
 describe('startTurn — always-live wiring (fix 03)', () => {
   it('reuses the held run across two turns and delivers each via registry.sendInput', async () => {
@@ -103,6 +105,9 @@ describe('startTurn — always-live wiring (fix 03)', () => {
     expect(t1.json().runId).toBe('run-launch');
     expect((registry.launch as any)).toHaveBeenCalledTimes(1);
     expect(sendInput).not.toHaveBeenCalled();
+    // the one-shot run MUST be announced to any open chat SSE, else the stream stays bound to
+    // nothing and the reply (persisted client-side on `result`) is silently lost.
+    expect(notifyBackingRun).toHaveBeenCalledWith(id, 'run-launch');
   });
 
   it('budget-exhausted on a session with a backing run falls back to resume', async () => {

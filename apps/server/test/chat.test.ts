@@ -73,6 +73,7 @@ vi.mock('../src/chatLive.js', () => ({
     touch: vi.fn(),
     isLive: vi.fn(() => false),
     liveRunId: vi.fn(() => null),
+    notifyBackingRun: vi.fn(),
     init: vi.fn(),
   },
 }));
