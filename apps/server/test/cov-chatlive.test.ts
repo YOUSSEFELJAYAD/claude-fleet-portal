@@ -67,6 +67,24 @@ describe('chatLive', () => {
     expect((registry.launch as any)).toHaveBeenCalledTimes(1);
   });
 
+  it('two concurrent ensureLive for the same session serialize onto ONE launch (no double-launch race)', async () => {
+    // Make launch slow/async so the await in ensureLive genuinely yields between the
+    // existing-handle check and the handles.set — the window the in-flight guard must close.
+    (registry.launch as any).mockImplementationOnce(async (req: any) => {
+      await new Promise((res) => setTimeout(res, 20));
+      const id = `run-${launched.length}`; launched.push({ id, ...req }); return { id };
+    });
+    const [a, b] = await Promise.all([
+      chatLive.ensureLive(session('s1')),
+      chatLive.ensureLive(session('s1')),
+    ]);
+    expect((registry.launch as any)).toHaveBeenCalledTimes(1); // serialized — only one spawn
+    expect(a.live).toBe(true);
+    expect(b.live).toBe(true);
+    expect(a.runId).toBe(b.runId); // both resolve to the SAME held run
+    expect(chatLive.isLive('s1')).toBe(true);
+  });
+
   it('falls back to resumable when CHAT_LIVE_MAX is exhausted', async () => {
     await chatLive.ensureLive(session('s1'));
     await chatLive.ensureLive(session('s2')); // fills the 2 slots

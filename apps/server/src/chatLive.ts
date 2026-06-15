@@ -20,6 +20,11 @@ export interface EnsureResult { live: boolean; runId: string | null; }
 
 class ChatLiveManager {
   private handles = new Map<string, LiveHandle>();
+  /** Fix 13 — in-flight launches keyed by sessionId. Two concurrent ensureLive for the same id
+   *  both pass the existing-handle check, then each await registry.launch and set a handle — the
+   *  second orphans the first (a leaked fleet slot). Serializing onto a single pending promise
+   *  closes that window: the second caller awaits the first launch instead of spawning again. */
+  private pending = new Map<string, Promise<EnsureResult>>();
   private inited = false;
   /** Fix 11 — listeners notified when a session's backing run id CHANGES (a fresh registry.launch
    *  in ensureLive). Lets an open chat SSE learn it must re-subscribe to the new run after an
@@ -66,9 +71,21 @@ class ChatLiveManager {
    * interactive run if a CHAT_LIVE_MAX slot is free; otherwise signals resumable fallback.
    */
   async ensureLive(session: ChatSession): Promise<EnsureResult> {
+    // Synchronous fast paths stay OUTSIDE the pending map (no await → no race window).
     const existing = this.handles.get(session.id);
     if (existing) { this.touch(session.id); return { live: true, runId: existing.runId }; }
     if (this.handles.size >= CHAT_LIVE_MAX) return { live: false, runId: null };
+    // Fix 13 — coalesce concurrent launches for one session onto a single in-flight promise so
+    // a second caller awaits the first launch (and reuses its runId) instead of double-spawning.
+    const inflight = this.pending.get(session.id);
+    if (inflight) return inflight;
+    const launch = this.launchLive(session).finally(() => { this.pending.delete(session.id); });
+    this.pending.set(session.id, launch);
+    return launch;
+  }
+
+  /** The actual launch path, serialized via `pending` so it runs at most once per session id. */
+  private async launchLive(session: ChatSession): Promise<EnsureResult> {
     const run = await registry.launch({
       prompt: '', // held process waits on stdin; turns arrive via sendInput (no spurious turn-1)
       cwd: session.cwd,
@@ -120,6 +137,7 @@ class ChatLiveManager {
   _resetForTest(): void {
     for (const h of this.handles.values()) if (h.idleTimer) clearTimeout(h.idleTimer);
     this.handles.clear();
+    this.pending.clear();
     this.runChangeSubs.clear();
   }
 }
