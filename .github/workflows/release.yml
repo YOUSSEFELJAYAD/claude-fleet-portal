@@ -77,6 +77,7 @@ jobs:
       # manual workflow_dispatch keeps the committed version, which it expects to match an existing release.)
       - name: Sync desktop version to the release tag
         if: startsWith(github.ref, 'refs/tags/')
+        shell: bash # ${TAG#v} is a bash-ism; windows-latest defaults run: steps to PowerShell
         env:
           TAG: ${{ github.ref_name }}
         run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
