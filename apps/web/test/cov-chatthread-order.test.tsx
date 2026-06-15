@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
 import { ChatThread } from '../components/ChatThread';
 import { FakeEventSource } from './setup';
 import type { ChatMessage, NormalizedEvent, Run, ChatSession, AddChatMessageRequest } from '@fleet/shared';
@@ -238,6 +238,7 @@ describe('ChatPage persists identical-content live turns (fix 12)', () => {
           ...real.api,
           chatSessions: vi.fn(async () => [session]),
           chatSession: vi.fn(async () => ({ session, messages: [user1] })),
+          chatTurn: vi.fn(async () => ({ runId: RUN_ID, userMessage: user1 })),
           addChatMessage: vi.fn(async (_id: string, body: AddChatMessageRequest) => {
             added.push(body);
             return msg({ role: 'assistant', kind: 'text', content: body.content, runId: body.runId });
@@ -260,12 +261,22 @@ describe('ChatPage persists identical-content live turns (fix 12)', () => {
     act(() => {
       es.emit({ kind: 'hello', run: { id: RUN_ID, status: 'running' }, events: [], state: 'live', live: true, runId: RUN_ID });
     });
-    // Turn 1 result → 'Done.'
+    const composer = screen.getByPlaceholderText(/Message/i);
+    // a result only persists while a USER turn is pending (a held process that emits before any
+    // input must not inject a phantom reply) — so drive a real send before each result.
+    const send = async () => {
+      fireEvent.change(composer, { target: { value: 'first' } });
+      fireEvent.keyDown(composer, { key: 'Enter' });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    };
+    // Turn 1: send → result 'Done.'
+    await send();
     act(() => {
       es.emit({ kind: 'event', event: { type: 'result', runId: RUN_ID, nodeId: RUN_ID, seq: 1, ts: 0, payload: { result: 'Done.', isError: false, costUsd: 0 } } });
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    // Turn 2 result → 'Done.' AGAIN (same runId, identical content, distinct seq)
+    // Turn 2: send → result 'Done.' AGAIN (same runId, identical content, distinct seq)
+    await send();
     act(() => {
       es.emit({ kind: 'event', event: { type: 'result', runId: RUN_ID, nodeId: RUN_ID, seq: 2, ts: 0, payload: { result: 'Done.', isError: false, costUsd: 0 } } });
     });
@@ -274,6 +285,42 @@ describe('ChatPage persists identical-content live turns (fix 12)', () => {
     // BOTH identical 'Done.' replies must persist — the page no longer early-returns on (runId, content).
     expect(added).toHaveLength(2);
     expect(added.every((b) => b.content === 'Done.' && b.runId === RUN_ID)).toBe(true);
+    vi.doUnmock('@/lib/api');
+  });
+
+  it('does NOT persist a result that arrives with NO pending user turn (phantom held-process reply)', async () => {
+    const RUN_ID = 'held-run';
+    const SID = 'sess-phantom';
+    const session: ChatSession = {
+      id: SID, title: 'phantom', engine: 'claude', model: 'sonnet', effort: 'medium' as any,
+      permissionMode: 'default' as any, cwd: '/tmp', allowedTools: null, skills: null,
+      runId: RUN_ID, createdAt: 0, updatedAt: 0,
+    };
+    const added: AddChatMessageRequest[] = [];
+    vi.resetModules();
+    vi.doMock('@/lib/api', async () => {
+      const real = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
+      return { ...real, api: { ...real.api,
+        chatSessions: vi.fn(async () => [session]),
+        chatSession: vi.fn(async () => ({ session, messages: [] })),
+        addChatMessage: vi.fn(async (_id: string, body: AddChatMessageRequest) => { added.push(body); return msg(body as any); }),
+      } };
+    });
+    FakeEventSource.reset();
+    const { default: ChatPage } = await import('../app/chat/page');
+    const { findByText } = render(<ChatPage />);
+    act(() => { (findByText('phantom') as any); });
+    const row = await findByText('phantom');
+    act(() => { row.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const es = FakeEventSource.last();
+    act(() => { es.emit({ kind: 'hello', run: { id: RUN_ID, status: 'running' }, events: [], state: 'live', live: true, runId: RUN_ID }); });
+    // The held process emits a result with NO preceding user send → must be dropped, not persisted.
+    act(() => {
+      es.emit({ kind: 'event', event: { type: 'result', runId: RUN_ID, nodeId: RUN_ID, seq: 1, ts: 0, payload: { result: 'phantom output', isError: false, costUsd: 0 } } });
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(added).toHaveLength(0);
     vi.doUnmock('@/lib/api');
   });
 });

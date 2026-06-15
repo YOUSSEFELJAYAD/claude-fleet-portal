@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatSession, ChatMessage } from '@fleet/shared';
 import { api } from '@/lib/api';
 import { useChatStream } from '@/lib/live';
@@ -18,6 +18,11 @@ export default function ChatPage() {
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // True only between a user send and its reply being persisted. A `result` that arrives with no
+  // pending turn is NOT a response to the user (e.g. a held interactive process that emits before
+  // it receives any stdin input) — persisting it would inject a phantom assistant message ahead of
+  // the user's first turn. Guards onTurnComplete so only genuine turn replies are written.
+  const pendingTurnRef = useRef(false);
 
   // §3 — chat-scoped SSE for session lifecycle state; null when no session is active.
   // fix 10A — ONE subscription hoisted here (was 3: page + ChatThread + RunningAgentsPanel);
@@ -78,7 +83,7 @@ export default function ChatPage() {
     setErr(null);
     try {
       const { runId, userMessage } = await api.chatTurn(activeId, message, attachments);
-      setMessages((m) => [...m, userMessage]); setLiveRunId(runId);
+      setMessages((m) => [...m, userMessage]); setLiveRunId(runId); pendingTurnRef.current = true;
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   }
   function runCommand(line: string) {
@@ -101,6 +106,10 @@ export default function ChatPage() {
   // collide on (runId, content) and the old guard silently DROPPED the second reply. The seq
   // guarantee already prevents double-persist; this callback now persists every result it receives.
   const onTurnComplete = useCallback(async (runId: string, finalText: string) => {
+    // A result with no pending user turn is not a reply to anything (e.g. a held process that
+    // emits before its first stdin turn) — drop it rather than persist a phantom message.
+    if (!pendingTurnRef.current) return;
+    pendingTurnRef.current = false;
     setLiveRunId(null);
     if (!activeId) return;
     const content = finalText.trim() || '(no output)';
