@@ -157,6 +157,7 @@ class ChatLiveManager {
     this.handles.clear();
     this.pending.clear();
     this.runChangeSubs.clear();
+    this.evictSubs.clear();
   }
 }
 
