@@ -25,9 +25,12 @@
  */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
+import type { FileFindResult } from '@fleet/shared';
 import { projectsRepo } from './projects.js';
+import { chatRepo } from './chat.js';
 import {
   safePath,
   lsTree,
@@ -37,6 +40,8 @@ import {
   gitLog,
   gitShow,
   gitExec,
+  repoRoot,
+  lsFiles,
 } from './git.js';
 
 const execFileAsync = promisify(execFile);
@@ -102,6 +107,68 @@ function capDiffLocal(raw: string): { diff: string; truncated: boolean } {
   }
   if (truncated) body += '\n... [diff truncated]';
   return { diff: body, truncated };
+}
+
+const FIND_WALK_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'coverage', '.turbo']);
+
+/**
+ * Subsequence fuzzy score: every char of `q` (lowercased) must appear in order in `hay`.
+ * Returns -1 on no match. Rewards contiguous runs and a basename hit, so 'chatlive' ranks
+ * 'src/chatLive.ts' above an incidental 'c…h…a…t…l…i…v…e' scatter. Empty q → 0 (everything matches).
+ */
+function fuzzyScore(hay: string, q: string): number {
+  if (!q) return 0;
+  const h = hay.toLowerCase();
+  let score = 0, run = 0, qi = 0;
+  for (let i = 0; i < h.length && qi < q.length; i++) {
+    if (h[i] === q[qi]) { run++; score += 1 + run; qi++; } else { run = 0; }
+  }
+  if (qi < q.length) return -1; // not all of q consumed → no match
+  // basename bonus: a hit late in the path (the filename) reads as more relevant.
+  const base = hay.slice(hay.lastIndexOf('/') + 1).toLowerCase();
+  if (base.includes(q)) score += 10;
+  return score;
+}
+
+/**
+ * Workspace path list for `@`-mention search (SPEC §6.1): git ls-files when in a repo (fast,
+ * tracked-only), else a bounded gitignore-naive walk capped at `cap`. Returns repo/cwd-relative
+ * paths with their kind. Dirs are synthesized from file path prefixes so folders are mentionable.
+ */
+async function collectWorkspace(root: string, cap: number): Promise<Array<{ path: string; kind: 'file' | 'dir' }>> {
+  const files = await lsFiles(root);
+  let rels: string[];
+  if (files.length > 0) {
+    rels = files;
+  } else {
+    // non-repo (or empty repo): bounded walk.
+    rels = [];
+    const walk = (dir: string, prefix: string) => {
+      if (rels.length >= cap) return;
+      let entries: import('node:fs').Dirent<string>[] = [];
+      try { entries = readdirSync(dir, { withFileTypes: true, encoding: 'utf8' }); } catch { return; }
+      for (const e of entries) {
+        if (rels.length >= cap) return;
+        if (e.name.startsWith('.') && e.name !== '.gitignore') continue;
+        if (FIND_WALK_DIRS.has(e.name)) continue;
+        const rel = prefix ? `${prefix}/${e.name}` : e.name;
+        if (e.isDirectory()) walk(`${dir}/${e.name}`, rel);
+        else rels.push(rel);
+      }
+    };
+    walk(root, '');
+  }
+  const out: Array<{ path: string; kind: 'file' | 'dir' }> = [];
+  const dirs = new Set<string>();
+  for (const rel of rels) {
+    out.push({ path: rel, kind: 'file' });
+    const parts = rel.split('/');
+    for (let i = 1; i < parts.length; i++) {
+      const d = parts.slice(0, i).join('/');
+      if (!dirs.has(d)) { dirs.add(d); out.push({ path: d, kind: 'dir' }); }
+    }
+  }
+  return out;
 }
 
 export function registerFileviewRoutes(app: FastifyInstance) {
@@ -317,6 +384,46 @@ export function registerFileviewRoutes(app: FastifyInstance) {
     const hash = typeof q.hash === 'string' ? q.hash : '';
     const r = await gitShow(project.rootDir, hash);
     return { text: r.text, truncated: r.truncated, ...(r.error ? { error: r.error } : {}) };
+  });
+
+  /**
+   * GET /api/files/find?sessionId=<id>&q=<str>&limit=<n> → FileFindResult[] (SPEC §6.1).
+   *
+   * Trust model (fix 10B): the workspace root is resolved from SERVER-TRUSTED state — the chat
+   * session's `cwd` (`chatRepo.getSession(sessionId).cwd`), NEVER from a free-form client `cwd`.
+   * Resolving the root from an arbitrary client `cwd` enabled host-wide filename enumeration
+   * (`?cwd=/Users/x/.ssh`); requiring a known session pins the root to a place the user already owns.
+   * An absent/unknown sessionId is a 400. Any client-supplied `cwd` is ignored.
+   *
+   * Resolves the workspace (git root else the session cwd), fuzzy-matches files+dirs, guards each
+   * candidate with safePath containment, and returns workspace-relative paths. Disk I/O is bounded
+   * by `limit` (walk cap) + the scorer sort.
+   */
+  app.get('/api/files/find', async (req, reply) => {
+    const q = (req.query as any) ?? {};
+    const sessionId = typeof q.sessionId === 'string' ? q.sessionId : '';
+    const query = typeof q.q === 'string' ? q.q.toLowerCase() : '';
+    const limit = Math.min(Math.max(Number(q.limit) || 20, 1), 100);
+    if (!sessionId) { reply.code(400); return { error: 'sessionId is required' }; }
+
+    // server-trusted root: the session's cwd, never a client-supplied cwd.
+    const session = chatRepo.getSession(sessionId);
+    if (!session) { reply.code(400); return { error: 'unknown session' }; }
+
+    const root = (await repoRoot(session.cwd)) ?? session.cwd;
+    const candidates = await collectWorkspace(root, 2000);
+
+    const scored: Array<FileFindResult> = [];
+    for (const c of candidates) {
+      const score = fuzzyScore(c.path, query);
+      if (score < 0) continue;
+      // containment guard: a tracked path could in principle be a symlink escape.
+      const safe = await safePath(root, c.path);
+      if (!safe) continue;
+      scored.push({ path: c.path, kind: c.kind, score });
+    }
+    scored.sort((a, b) => b.score - a.score || a.path.length - b.path.length || a.path.localeCompare(b.path));
+    return scored.slice(0, limit);
   });
 }
 

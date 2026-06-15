@@ -214,7 +214,7 @@ Effort/ultracode and Dynamic Workflows are session/runtime concerns; confirm the
 - Claude Code **≥ v2.1.154** installed and authenticated; Dynamic Workflows availability depends on plan (Max/Team/Enterprise) and is a **research preview** — treat as feature-flagged.
 - `stream-json` event schema and the exact **subagent/workflow event identifiers** are not fully documented — parse defensively; verify the tree-building fields against the installed version.
 - The Dynamic Workflows **JS runtime runs in the background**; the portal observes its subagents via the event stream and does not run the orchestration itself.
-- **Abort and session-resume are mutually exclusive** — "stop" is terminal, not pause-and-resume.
+- ~~**Abort and session-resume are mutually exclusive** — "stop" is terminal, not pause-and-resume.~~ **Superseded by DC D-044 (2026-06-14):** the registry resumes terminal/killed runs (kill is not delete); chat sessions are always-live with resumable fallback.
 - ultracode is **session-scoped** and resets on a new session; the portal must model effort per-run, not globally.
 - No supported API drives an already-running interactive TUI session — control is limited to portal-spawned runs.
 - Agent Teams is **experimental** and gated behind `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`; the shared task-list path (`~/.claude/tasks/{team}/`) is the integration surface.

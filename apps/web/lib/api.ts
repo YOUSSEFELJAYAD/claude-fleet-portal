@@ -39,6 +39,9 @@ import type {
   ChatTurnResponse,
   AddChatMessageRequest,
   ChatCommandResult,
+  CommandDef,
+  FileFindResult,
+  ChatAttachment,
 } from '@fleet/shared';
 // F10 — config-as-code export/import types (defined locally to avoid cross-package imports)
 export interface ExportedSetup {
@@ -448,7 +451,45 @@ export const api = {
   createChatSession: (body: CreateChatSessionRequest) => j<ChatSession>('/api/chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
   renameChatSession: (id: string, title: string) => j<ChatSession>(`/api/chat/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteChatSession: (id: string) => j(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
-  chatTurn: (id: string, message: string) => j<ChatTurnResponse>(`/api/chat/sessions/${id}/turn`, { method: 'POST', body: JSON.stringify({ message }) }),
+  chatTurn: (id: string, message: string, attachments?: ChatAttachment[]) =>
+    j<ChatTurnResponse>(`/api/chat/sessions/${id}/turn`, {
+      method: 'POST',
+      body: JSON.stringify(attachments?.length ? { message, attachments } : { message }),
+    }),
+  /** §3 — mid-turn input / permission decision to the live process (409 if not live). */
+  chatInput: (id: string, body: { type: string; requestId?: string; decision?: 'allow' | 'deny'; text?: string }) =>
+    j(`/api/chat/sessions/${id}/input`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** Fix 06 — inline permission approve/deny via the dedicated chat permission route. The server
+   *  maps decision 'allow'|'deny' to the registry verb 'approve'|'deny'. */
+  chatPermission: (id: string, requestId: string, decision: 'allow' | 'deny') =>
+    j(`/api/chat/sessions/${id}/permission`, {
+      method: 'POST',
+      body: JSON.stringify({ requestId, decision }),
+    }),
+  /** §3 — stop the current turn, keep the process live if possible. */
+  chatInterrupt: (id: string) =>
+    j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST' }),
+  /** §3 — explicit kill: stops the live process and marks the session killed/resumable.
+   *  POSTs to /interrupt so the session row and message history are preserved (not deleted).
+   *  Use deleteChatSession to hard-delete a session and all its messages. */
+  chatKill: (id: string) =>
+    j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
   addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
+  /** §3.1 — explicitly kills a live/running session by stopping its backing run. The server
+   *  route is /interrupt (there is NO /kill route); the session row + transcript are preserved
+   *  (→ resumable). Use deleteChatSession to hard-delete. */
+  killChatSession: (id: string) => j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
+  /** §3.1 — re-spawns a killed/idle session via registry.resume; the server returns the updated ChatSession. */
+  resumeChatSession: (id: string) => j<ChatSession>(`/api/chat/sessions/${id}/resume`, { method: 'POST' }),
+  // ── chat-surface upgrade (§5/§6) ──
+  /** §5.3 — `/` palette catalog (server strips CommandDef.run before serializing). */
+  listCommands: () => j<CommandDef[]>('/api/commands'),
+  /** §6.1 — `@` fuzzy file/folder search. The workspace root is resolved SERVER-SIDE from the
+   *  session's trusted cwd (fix 10B); the client passes only the sessionId, never a raw cwd. */
+  findFiles: (sessionId: string, q: string, limit?: number) =>
+    j<FileFindResult[]>('/api/files/find' + qs({ sessionId, q, limit: limit != null ? String(limit) : undefined })),
 };

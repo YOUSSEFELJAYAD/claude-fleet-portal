@@ -34,6 +34,19 @@ export const PORT = Number(process.env.FLEET_SERVER_PORT || 4319);
 export const WEB_PORT = Number(process.env.FLEET_WEB_PORT || 4318);
 
 /**
+ * Chat surface upgrade (§3.2) — live chat processes draw from a DEDICATED pool,
+ * separate from `config.maxConcurrentRuns` (the fleet/batch cap), so chat can never
+ * starve batch work and vice-versa. When this pool is exhausted, a newly-focused
+ * session falls back to resumable mode (~1s slower per turn) rather than blocking.
+ */
+export const CHAT_LIVE_MAX = Number(process.env.FLEET_CHAT_LIVE_MAX || 4);
+/**
+ * Chat surface upgrade (§3.2) — a live chat process idle past this many ms is evicted,
+ * dropping the session to resumable/idle and reclaiming its chat slot. Default 10 min.
+ */
+export const CHAT_IDLE_SUSPEND_MS = Number(process.env.FLEET_CHAT_IDLE_SUSPEND_MS || 600_000);
+
+/**
  * H3 — DNS-rebinding defense for the unauthenticated localhost control plane (D-011).
  * The Host allowlist is the load-bearing guard: a rebound attacker domain becomes
  * same-origin in the browser but its Host header is still the attacker domain, so it

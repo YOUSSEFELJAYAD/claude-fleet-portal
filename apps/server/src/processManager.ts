@@ -133,6 +133,9 @@ export function buildArgs(req: LaunchRequest, sessionId: string, interactive: bo
     args.push('--allowedTools', req.allowedTools.join(','));
   }
   if (req.cwd) args.push('--add-dir', req.cwd);
+  for (const dir of req.addDirs ?? []) {
+    if (dir && dir !== req.cwd) args.push('--add-dir', dir);
+  }
   if (req.subagentProfile) args.push('--agent', req.subagentProfile);
   // Selected skills are made REAL here: claude has no --skills flag, so without this block
   // they were write-only run metadata. The agent invokes them itself via its Skill tool.

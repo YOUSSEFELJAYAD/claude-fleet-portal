@@ -37,6 +37,15 @@ export function tailTruncatedBefore(events: NormalizedEvent[]): number | undefin
   return events.length >= 5000 && (events[0]?.seq ?? 0) > 0 ? events[0].seq : undefined;
 }
 
+/** Fix 01 — interactive runs hold a live process born with an EMPTY prompt that waits on
+ *  stdin (every turn arrives via sendInput). Only the FIRST turn launched with a real
+ *  non-empty prompt is delivered as turn-1; an empty/whitespace launch prompt must NOT be
+ *  auto-written (it would send a blank turn-1). Non-interactive runs pass the prompt as a
+ *  positional arg, never via this path. */
+export function shouldDeliverInitialPrompt(interactive: boolean, prompt: string | undefined | null): boolean {
+  return !!(interactive && prompt && prompt.trim());
+}
+
 /** H14 — the verified SDK control-protocol response shape for a permission decision. */
 export function buildPermissionControlResponse(requestId: string, decision: 'approve' | 'deny') {
   return {
@@ -725,7 +734,7 @@ class Registry {
     repo.upsertRun(lr.run);
     // Interactive runs use stream-json INPUT: the prompt is NOT a positional, it must be sent on
     // stdin as the first user message — otherwise claude blocks forever (run stuck at "starting").
-    if (lr.interactive) lr.proc.writeUserMessage(lr.req.prompt);
+    if (shouldDeliverInitialPrompt(lr.interactive, lr.req.prompt)) lr.proc.writeUserMessage(lr.req.prompt);
   }
 
   private handleLine(lr: LiveRun, raw: any) {
@@ -1077,7 +1086,7 @@ class Registry {
     return { clearedRuns: runs.length };
   }
 
-  resume(runId: string, prompt?: string, interactive?: boolean): Run {
+  resume(runId: string, prompt?: string, interactive?: boolean, addDirs?: string[]): Run {
     const existing = repo.getRun(runId);
     if (!existing) throw Object.assign(new Error('Run not found'), { statusCode: 404 });
     if (!isTerminal(existing.status)) {
@@ -1115,6 +1124,7 @@ class Registry {
       budgetUsd: existing.budgetUsd,
       ultracode: existing.ultracode,
       interactive: interactive ?? false,
+      addDirs,
     };
     // ALWAYS a fresh tree (review #2): never reuse a prior tree whose authoritativeCost/seq
     // are frozen from the previous invocation. Carry prior totals as a baseline so display

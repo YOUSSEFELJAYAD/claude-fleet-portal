@@ -1,23 +1,50 @@
 'use client';
+import React from 'react';
 import Link from 'next/link';
-import { useFleet } from '@/lib/live';
+import type { ChatSessionState } from '@fleet/shared';
+import type { ChatSubagent } from '@/lib/live';
+import { chatStateMeta } from '@/lib/chatState';
+import { Dot, Kicker, Empty } from '@/components/ui';
 
-const TERMINAL = new Set(['completed', 'failed', 'killed']);
-
-export function RunningAgentsPanel() {
-  // useFleet returns `runs` as a sorted array (not a Map) — filter it directly.
-  const { runs } = useFleet();
-  const live = runs.filter((r) => !TERMINAL.has(r.status));
+/** Session-scoped (spec §8): the active session's backing run + its subagents. fix 10A — the
+ *  panel no longer owns a subscription; the page hoists ONE `useChatStream(activeId)` and passes
+ *  the derived stream values down as props (3 EventSources per session → 1). */
+export function RunningAgentsPanel({
+  sessionId,
+  state,
+  live,
+  runId,
+  subagents,
+}: {
+  sessionId: string | null;
+  state?: ChatSessionState;
+  live?: boolean;
+  runId?: string | null;
+  subagents?: ChatSubagent[];
+}) {
+  const subs = subagents ?? [];
+  const meta = chatStateMeta(state ?? 'idle');
   return (
     <div className="w-64 shrink-0 border-l hairline flex flex-col">
-      <div className="p-2 border-b hairline"><span className="kicker">running agents · {live.length}</span></div>
+      <div className="px-4 py-3 border-b hairline flex items-center gap-1.5">
+        <Kicker>session agents</Kicker>
+        {sessionId && <Dot color={meta.color} live={meta.live} size={6} />}
+      </div>
       <div className="flex-1 overflow-auto">
-        {live.length === 0 && <div className="p-3 font-mono text-[11px] text-faint">none running</div>}
-        {live.map((r) => (
-          <Link key={r.id} href={`/runs/${r.id}`}
-            className="block px-2 py-2 text-[12px] border-b hairline hover:bg-white/5 transition-colors">
-            <div className="font-mono text-ink">{r.id.slice(0, 8)} · {r.status}</div>
-            <div className="font-mono text-[10px] text-faint truncate mt-0.5">{r.model} · {r.cwd}</div>
+        {!sessionId && <Empty>no active session</Empty>}
+        {sessionId && !runId && <Empty>none running</Empty>}
+        {sessionId && runId && (
+          <Link href={`/runs/${runId}`}
+            className="block px-3 py-2.5 text-[12px] border-b hairline hover:bg-white/[0.02] transition-colors">
+            <div className="font-mono text-ink">{runId.slice(0, 8)} · {meta.label.toLowerCase()}{live ? ' · live' : ''}</div>
+            <div className="font-mono text-[10px] text-faint mt-0.5">backing run</div>
+          </Link>
+        )}
+        {subs.map((s) => (
+          <Link key={s.runId} href={`/runs/${s.runId}`}
+            className="block px-3 py-2.5 text-[12px] border-b hairline last:border-0 hover:bg-white/[0.02] transition-colors">
+            <div className="font-mono text-dim">↳ {s.name}</div>
+            <div className="font-mono text-[10px] text-faint truncate mt-0.5">{s.runId}</div>
           </Link>
         ))}
       </div>

@@ -1203,3 +1203,61 @@ This pass merged `main` (chat §30 + settings §31) into the branch first, so th
 `/settings` and `/chat` pages were brought onto the canon too. Verified: `pnpm -r typecheck` clean
 (shared/server/web); `next build` compiles every route; grep sweep shows 0 hand-rolled banners, 0
 `bg-surface`, 0 stray `text-[22px]` / `text-white` / duplicate glyphs.
+
+## 33. Chat surface upgrade — end-to-end conversational control-plane (2026-06-14) — spec docs/superpowers/specs/2026-06-14-chat-surface-upgrade-design.md
+
+> Numbering note: this spec's §15 names these D-033…D-041, but D-033/D-034 were already taken
+> by the settings-env work (§31). They are recorded here as **D-035…D-043** (spec D-033→D-035,
+> D-034→D-036, … D-041→D-043); content is unchanged.
+
+### D-035 — Chat sessions are always-live with resumable fallback
+Reverses D-029's "resume-per-turn over a live process". A focused session holds a long-lived
+interactive Claude process (instant turns, mid-turn input, inline permissions); kill stops it;
+it resumes later with full memory. Made safe by D-036.
+
+### D-036 — Separate chat budget + idle eviction
+Live chat processes draw from a dedicated pool CHAT_LIVE_MAX (default 4, env FLEET_CHAT_LIVE_MAX),
+distinct from config.maxConcurrentRuns. Exhaustion → resumable fallback (still usable, ~1s slower).
+A live process idle past CHAT_IDLE_SUSPEND_MS (default 600000, env FLEET_CHAT_IDLE_SUSPEND_MS) is
+evicted → session drops to idle and reclaims the slot. Chat can never consume batch slots.
+
+### D-037 — One declarative command registry is the source of truth
+A single CommandDef[] feeds dispatchCommand + GET /api/commands + /help + the composer autocomplete.
+No switch/HELP-string duplication. The server-only run() is stripped before the wire shape.
+
+### D-038 — Curated typed verb set (~18) + NL long-tail; mutations via Inbox
+Chat exposes ~18 typed slash verbs; the ~100-route long tail is invoked by the agent as
+natural-language tool-calls. Destructive actions (and the long-tail's mutations) route through the
+existing Inbox approval queue — no new privileged surface (preserves D-031).
+
+### D-039 — Chat-scoped SSE replaces per-run subscription for chat
+GET /api/chat/sessions/:id/stream subscribes to the session, not a run id; the server proxies
+whichever run currently backs the session. Survives kill→resume (run id changes underneath) and
+page reload (no orphaned streaming turn). Carries the full run-event vocabulary plus a chat-control
+session_state envelope { state, live }.
+
+### D-040 — `@` mentions resolve the workspace from session cwd
+Resolve workspace root from cwd (git root, else gitignore-aware walk). Files = a path-reference
+token the agent reads at runtime; folders = added to that turn's --add-dir set. safePath-guarded;
+paths workspace-relative. ChatMessage gains an optional additive attachments field.
+
+### D-041 — Full-fidelity rendering + inline permissions
+The chat thread consumes the complete stream vocabulary: markdown, real tables, collapsible
+tool-call/thinking cards, live token streaming, subagent chips, and inline permission approve/deny
+(enabled by the live process via POST .../input), plus a Stop button while running.
+
+### D-042 — One HUD-canon FloatingMenu/Combobox primitive
+A single keyboard-navigable, caret-anchored, click-outside-dismiss FloatingMenu/Combobox in
+components/ui.tsx (charcoal, amber #ffb000, status colors, Chakra Petch/JetBrains Mono), reused by
+both `/` and `@`.
+
+### D-043 — Engine (codex/opencode) sessions degrade honestly (supersedes nothing; refines D-030)
+Engines never go live. A "resume" UX is presented uniformly but emulated: every engine turn
+re-launches via registry.launchEngine with a reconstructed buildEnginePrompt transcript; the chat
+layer never calls registry.resume() (which still 409s for engine runs). Engine session rows hide
+Kill/Resume, suppress the Stop button, and carry an amber "one-shot · limited memory" badge; the
+derived state is never `live`.
+
+### D-044 — Supersedes PRD §11 ("abort and session-resume are mutually exclusive")
+No longer true: the registry resumes terminal/killed runs (kill is not delete). PRD §11's
+abort/resume bullet is marked superseded by this decision.
