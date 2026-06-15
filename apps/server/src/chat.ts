@@ -321,7 +321,7 @@ export function registerChatStreamRoute(
       unsub?.();
       currentRunId = newRunId;
       unsub = registry.subscribeRun(newRunId, (m) => send(stripHelloEvents(m)));
-      send({ kind: 'session_state', state: 'running', live: true, runId: newRunId } satisfies SessionStateEnvelope);
+      send({ kind: 'session_state', state: 'live', live: true, runId: newRunId } satisfies SessionStateEnvelope);
     });
 
     reply.raw.on('close', () => { unsub?.(); unsubChange(); stop(); });

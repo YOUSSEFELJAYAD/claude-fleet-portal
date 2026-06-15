@@ -101,6 +101,10 @@ describe('GET /api/chat/sessions/:id/stream — re-attach on backing-run change'
     const reattach = ssFrames.find((f) => f.runId === newRunId);
     expect(reattach).toBeTruthy();
     expect(reattach.runId).toBe(newRunId);
+    // the re-attach frame must carry the canonical LIVE state — a freshly-launched held run is
+    // `'live'` (not `'running'`); otherwise ChatComposer hides the Send button after reattach (fix 15).
+    expect(reattach.state).toBe('live');
+    expect(reattach.live).toBe(true);
     // the new run id must differ from the one the stream first attached to (proves a real re-sub)
     const first = ssFrames[0];
     expect(first.runId).not.toBe(newRunId);
