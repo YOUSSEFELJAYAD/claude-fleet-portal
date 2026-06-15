@@ -118,6 +118,10 @@ async function waitForCompression(pred: (a: any) => boolean, timeoutMs = 15_000)
 
 beforeAll(async () => {
   process.env.HEADROOM_BIN = FAKE_HEADROOM;
+  // On a docker-equipped host (e.g. CI runners) enabling web-research against a json-disabled
+  // local SearXNG would kick off a real `docker run` provision and block the enable response
+  // past the 30s test timeout. Opt out so these tests exercise status mapping, not provisioning.
+  process.env.FLEET_SKIP_SEARXNG_AUTOPROVISION = '1';
   await startSearxng();
   const cfg = await import('../src/config.js');
   PORT = cfg.PORT;
@@ -134,6 +138,7 @@ afterAll(async () => {
   await new Promise<void>((r) => searxng.close(() => r()));
   delete process.env.HEADROOM_BIN;
   delete process.env.ANTHROPIC_BASE_URL;
+  delete process.env.FLEET_SKIP_SEARXNG_AUTOPROVISION;
   for (const d of [binDir, process.env.FLEET_DATA_DIR!]) {
     try { rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }
   }

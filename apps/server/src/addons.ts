@@ -1298,10 +1298,13 @@ export function registerAddonRoutes(app: FastifyInstance) {
       saveRow(id, true, row.config); // status reflects reachability; enabling never blocks
       // Auto-configure on enable: if SearXNG isn't already answering json, provision it via
       // Docker with json enabled (best-effort — never block the toggle). Only for a local
-      // default URL; a user-configured remote instance is theirs to manage.
+      // default URL; a user-configured remote instance is theirs to manage. Set
+      // FLEET_SKIP_SEARXNG_AUTOPROVISION to opt out (tests set it so a docker-equipped host
+      // doesn't kick off a real `docker run` — which otherwise blocks the response for ~minutes).
       const url = researchConfig().searxngUrl;
-      const probe = await probeSearxng(url);
-      if (probe.state !== 'ok' && isLocalSearxng(url) && (await executableAvailable('docker', ['--version']))) {
+      const autoProvision = !process.env.FLEET_SKIP_SEARXNG_AUTOPROVISION;
+      const probe = autoProvision ? await probeSearxng(url) : null;
+      if (probe && probe.state !== 'ok' && isLocalSearxng(url) && (await executableAvailable('docker', ['--version']))) {
         await installSearxng().catch(() => {});
       }
       return addonInfo(id);
