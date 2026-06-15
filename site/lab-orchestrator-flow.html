@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LAB · workflow films + thinking states + live state table — prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0a0b0e; --panel:#101217; --ink:#e9e7df; --dim:#9aa1ab; --faint:#5b626d;
+    --amber:#ffb000; --teal:#39d4cf; --coral:#e8704a; --green:#54e08a; --violet:#b08cff;
+    --grid:rgba(255,255,255,.022); --scan:rgba(255,255,255,.014);
+    --display:"Chakra Petch",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--ink); font-family:var(--mono); overflow:hidden;
+    background-image:
+      radial-gradient(1100px 700px at 80% -10%, rgba(255,176,0,.05), transparent 60%),
+      radial-gradient(900px 600px at 0% 110%, rgba(57,212,207,.05), transparent 55%),
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      repeating-linear-gradient(0deg, var(--scan), var(--scan) 1px, transparent 1px, transparent 3px);
+    background-size:auto,auto,42px 42px,42px 42px,auto;
+  }
+  #stage{ position:fixed; inset:0; }
+  .bar-l{ position:absolute; left:0; right:0; height:42px; background:#000; z-index:4; opacity:.9; }
+  .bar-l.top{ top:0; } .bar-l.bot{ bottom:0; }
+
+  #world{ position:absolute; inset:0; transform-origin:50% 50%; transition:transform 1.7s cubic-bezier(.4,0,.2,1), opacity .5s; will-change:transform; }
+  #world.fade{ opacity:0; }
+
+  #typing{ position:absolute; left:14%; top:34%; transform:translate(-50%,-50%); width:184px; filter:drop-shadow(0 24px 50px rgba(0,0,0,.6)); }
+  .trigtag{ position:absolute; left:14%; top:51%; transform:translate(-50%,-50%); font-family:var(--display); font-size:9px; letter-spacing:.2em; text-transform:uppercase; color:var(--faint); }
+
+  #wires{ position:absolute; inset:0; z-index:1; pointer-events:none; overflow:visible; }
+  .wire{ fill:none; stroke-width:2.4; stroke-dasharray:7 9; animation:flow .9s linear infinite; opacity:0; transition:opacity .35s; }
+  @keyframes flow{ to{ stroke-dashoffset:-16; } }
+
+  .node{ position:absolute; transform:translate(-50%,-50%) scale(.7); opacity:0; z-index:2;
+    display:flex; align-items:center; gap:9px; padding:8px 14px 8px 8px;
+    border:1px solid rgba(255,255,255,.1); border-radius:13px; background:rgba(12,14,19,.78); backdrop-filter:blur(8px);
+    box-shadow:0 20px 50px -28px rgba(0,0,0,.9);
+    transition:opacity .5s, transform .6s cubic-bezier(.34,1.45,.4,1); white-space:nowrap; }
+  .node.show{ opacity:1; transform:translate(-50%,-50%) scale(1); }
+  .node .t b{ display:block; font-family:var(--display); font-size:12px; letter-spacing:.03em; color:var(--ink); }
+  .node .t span{ font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+  .node .st{ width:7px; height:7px; border-radius:999px; background:var(--faint); flex:none; }
+  .node.thinking .st{ background:var(--violet); box-shadow:0 0 8px var(--violet); }
+  .node.run .st{ background:var(--amber); box-shadow:0 0 8px var(--amber); animation:pulse 1.2s ease-in-out infinite; }
+  .node.run{ border-color:rgba(255,176,0,.4); }
+  .node.done .st{ background:var(--green); box-shadow:0 0 8px var(--green); }
+  .node.done{ border-color:rgba(84,224,138,.35); }
+  @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* thought bubble shown while a node is "thinking" */
+  .node .think{ position:absolute; top:-24px; left:50%; transform:translateX(-50%) scale(.5); opacity:0;
+    background:rgba(176,140,255,.16); border:1px solid rgba(176,140,255,.55); color:var(--violet);
+    border-radius:10px; padding:1px 8px 3px; font-size:13px; letter-spacing:2px; line-height:1;
+    transition:opacity .25s, transform .25s; }
+  .node.thinking .think{ opacity:1; transform:translateX(-50%) scale(1); animation:thinkPulse 1.1s ease-in-out infinite; }
+  @keyframes thinkPulse{ 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .role-orch{ border-color:rgba(255,176,0,.45); box-shadow:0 0 34px -10px var(--amber), 0 20px 50px -28px rgba(0,0,0,.9); }
+  .role-orch .bot{ width:84px; height:84px; flex:none; } .role-orch .t b{ color:var(--amber); font-size:13px; }
+  .role-agent .bot{ width:46px; height:46px; flex:none; }
+  .role-synth{ border-color:rgba(84,224,138,.45); box-shadow:0 0 34px -10px var(--green), 0 20px 50px -28px rgba(0,0,0,.9); }
+  .role-synth .bot{ width:62px; height:62px; flex:none; } .role-synth .t b{ color:var(--green); }
+  .node .burst{ position:absolute; inset:-7px; border-radius:16px; border:2px solid var(--green); opacity:0; pointer-events:none; }
+  .node.celebrate .burst{ animation:burst .85s ease-out; }
+  @keyframes burst{ 0%{opacity:.85; transform:scale(1)} 100%{opacity:0; transform:scale(1.6)} }
+
+  .prchip{ position:absolute; transform:translate(-50%,-50%) scale(.8); opacity:0; z-index:2;
+    font-family:var(--mono); font-size:10.5px; color:var(--green); border:1px solid rgba(84,224,138,.4);
+    background:rgba(84,224,138,.08); border-radius:7px; padding:4px 10px; transition:opacity .4s, transform .4s; white-space:nowrap; }
+  .prchip.show{ opacity:1; transform:translate(-50%,-50%) scale(1); }
+
+  /* live state table (fleet-dashboard style, like index.html) */
+  #statepanel{ position:absolute; left:16px; bottom:52px; z-index:5; width:352px; padding:13px 15px;
+    border:1px solid rgba(255,255,255,.1); border-radius:12px; background:rgba(12,14,19,.82); backdrop-filter:blur(8px);
+    box-shadow:0 24px 60px -30px rgba(0,0,0,.95); }
+  #statepanel h3{ font-family:var(--display); font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--faint);
+    margin-bottom:10px; display:flex; justify-content:space-between; align-items:baseline; }
+  #statepanel h3 .wf{ color:var(--amber); }
+  #statetable{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:11px; }
+  #statetable col.c-stat{ width:84px; } #statetable col.c-agent{ width:96px; } #statetable col.c-eng{ width:58px; }
+  #statetable th,#statetable td{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #statetable th{ text-align:left; color:var(--faint); font-weight:500; font-size:8px; letter-spacing:.1em; text-transform:uppercase; padding:0 8px 7px 0; border-bottom:1px solid rgba(255,255,255,.12); }
+  #statetable td{ padding:7px 8px 7px 0; color:var(--dim); border-bottom:1px solid rgba(255,255,255,.06); }
+  #statetable tbody tr:last-child td{ border-bottom:none; }
+  #statetable tbody tr:nth-child(even){ background:rgba(255,255,255,.02); }
+  #statetable td.stat{ font-size:10px; letter-spacing:.04em; text-transform:capitalize; }
+  #statetable td.stat .d{ display:inline-block; width:6px; height:6px; border-radius:999px; background:var(--faint); margin-right:7px; vertical-align:1px; }
+  #statetable td.eng{ text-align:right; color:var(--faint); font-size:10px; }
+  .s-queued{ color:var(--faint); } .s-queued .d{ background:var(--faint); }
+  .s-thinking{ color:var(--violet); } .s-thinking .d{ background:var(--violet); box-shadow:0 0 6px var(--violet); }
+  .s-running{ color:var(--amber); } .s-running .d{ background:var(--amber); box-shadow:0 0 6px var(--amber); }
+  .s-done{ color:var(--green); } .s-done .d{ background:var(--green); box-shadow:0 0 6px var(--green); }
+
+  /* chrome */
+  #cap{ position:absolute; left:50%; bottom:54px; transform:translateX(-50%); z-index:5;
+    font-family:var(--display); letter-spacing:.04em; font-size:15px; color:var(--ink);
+    background:rgba(12,14,19,.7); border:1px solid rgba(255,255,255,.09); border-radius:999px;
+    padding:10px 22px; backdrop-filter:blur(8px); white-space:nowrap; max-width:60vw; overflow:hidden; text-overflow:ellipsis; }
+  #topbar{ position:absolute; top:6px; left:18px; right:18px; z-index:5; display:flex; align-items:center; gap:14px;
+    font-family:var(--display); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); }
+  #topbar .tag{ color:var(--amber); } #topbar .warn{ color:var(--coral); } #topbar .spacer{ flex:1; }
+  #topbar button{ pointer-events:auto; cursor:pointer; font-family:var(--display); font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--ink); background:rgba(255,176,0,.08); border:1px solid rgba(255,176,0,.35);
+    border-radius:8px; padding:7px 14px; }
+  #credits{ position:absolute; right:18px; bottom:12px; z-index:5; font-size:10px; color:var(--faint); text-align:right; }
+  #credits a{ color:var(--teal); text-decoration:none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="bar-l top"></div>
+  <div class="bar-l bot"></div>
+
+  <div id="world">
+    <svg id="wires"></svg>
+    <dotlottie-player id="typing" src="https://assets-v2.lottiefiles.com/a/76e3f8ee-116c-11ee-be7a-631629a787fa/VTcYe3S1mg.lottie" autoplay loop></dotlottie-player>
+    <div class="trigtag">task typed</div>
+    <div id="flow"></div>
+  </div>
+
+  <div id="statepanel">
+    <h3><span>Fleet · state</span><span class="wf" id="wfName">—</span></h3>
+    <table id="statetable">
+      <colgroup><col class="c-stat"><col class="c-agent"><col><col class="c-eng"></colgroup>
+      <thead><tr><th>Status</th><th>Agent</th><th>Task</th><th>Engine</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div id="topbar">
+    <span class="tag">◉ LAB</span>
+    <span>workflow films · thinking states · live table</span>
+    <span class="spacer"></span>
+    <span class="warn">prototype · not merged</span>
+    <button id="replay">↻ replay</button>
+  </div>
+  <div id="cap">booting…</div>
+  <div id="credits">Lottie via <a href="https://lottiefiles.com/free-animations/ai-robot">LottieFiles</a> · D12 + AI-robots</div>
+</div>
+
+<script type="module" src="https://cdn.jsdelivr.net/npm/@dotlottie/player-component@2.7.12/dist/dotlottie-player.mjs"></script>
+<script>
+(() => {
+  const el=id=>document.getElementById(id);
+  const world=el('world'), flow=el('flow'), svg=el('wires'), tbody=el('tbody'), wfName=el('wfName'), capEl=el('cap'), typingEl=el('typing');
+  const NS='http://www.w3.org/2000/svg';
+  const COL={amber:'#ffb000', teal:'#39d4cf', green:'#54e08a'};
+  const A={ orch:'https://assets-v2.lottiefiles.com/a/e4c09ece-3c6e-11f0-9916-d701e33abd6d/4aFPIJ0vIk.lottie',
+            worker:'https://assets-v2.lottiefiles.com/a/ab860d86-f57a-47ea-bb3b-33ab74d99bac/3pemcTrIld.lottie',
+            synth:'https://assets-v2.lottiefiles.com/a/427209d4-118a-11ee-af13-efdc31b1068b/w8KYRbsm9k.lottie' };
+
+  // ── workflow library (data-driven — add more anytime) ──
+  const WORKFLOWS=[
+    { name:'Campaign · refactor auth', shape:'fan',
+      nodes:[
+        {id:'orch',role:'orch',title:'◉ Orchestrator',sub:'plan · refactor auth',bot:A.orch,x:34,y:50,eng:'fleet'},
+        {id:'a0',role:'agent',title:'Audit',sub:'current auth',bot:A.worker,x:60,y:17,eng:'claude'},
+        {id:'a1',role:'agent',title:'Design',sub:'JWT schema',bot:A.worker,x:60,y:38,eng:'claude'},
+        {id:'a2',role:'agent',title:'Implement',sub:'token issuer',bot:A.worker,x:60,y:60,eng:'codex'},
+        {id:'a3',role:'agent',title:'Tests',sub:'write + run',bot:A.worker,x:60,y:82,eng:'claude'},
+        {id:'synth',role:'synth',title:'✓ Synthesizer',sub:'merge & PR',bot:A.synth,x:86,y:50,eng:'fleet'},
+      ],
+      edges:[['laptop','orch','amber'],['orch','a0','amber'],['orch','a1','amber'],['orch','a2','amber'],['orch','a3','amber'],['a0','synth','teal'],['a1','synth','teal'],['a2','synth','teal'],['a3','synth','teal']],
+      agents:['a0','a1','a2','a3'] },
+    { name:'Web research · SearXNG', shape:'pipe',
+      nodes:[
+        {id:'orch',role:'orch',title:'◉ Orchestrator',sub:'plan · research',bot:A.orch,x:29,y:50,eng:'fleet'},
+        {id:'a0',role:'agent',title:'Search',sub:'SearXNG',bot:A.worker,x:47,y:50,eng:'opencode'},
+        {id:'a1',role:'agent',title:'Fetch',sub:'5 sources',bot:A.worker,x:63,y:50,eng:'codex'},
+        {id:'a2',role:'agent',title:'Compress',sub:'Headroom',bot:A.worker,x:79,y:50,eng:'claude'},
+        {id:'synth',role:'synth',title:'✓ Synthesize',sub:'cited answer',bot:A.synth,x:93,y:50,eng:'fleet'},
+      ],
+      edges:[['laptop','orch','amber'],['orch','a0','amber'],['a0','a1','teal'],['a1','a2','teal'],['a2','synth','green']],
+      agents:['a0','a1','a2'] },
+  ];
+
+  let nodeEls={}, rowEls={}, edges=[], prchipEl=null;
+  const rectOf=id=> (id==='laptop'?typingEl:nodeEls[id]).getBoundingClientRect();
+  const vis=id=> id==='laptop' ? true : (nodeEls[id] && nodeEls[id].classList.contains('show'));
+  function bez(a,b){ const x1=a.right-10,y1=a.top+a.height/2,x2=b.left+8,y2=b.top+b.height/2,dx=Math.max(38,(x2-x1)*0.5);
+    return `M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`; }
+  function frame(now){
+    edges.forEach((e,i)=>{
+      if(vis(e.f)&&vis(e.t)){
+        e.path.setAttribute('d', bez(rectOf(e.f),rectOf(e.t))); e.path.style.opacity='1';
+        const L=e.path.getTotalLength(); const tt=((now/1500)+i*0.12)%1; const p=e.path.getPointAtLength(tt*L);
+        e.dot.setAttribute('cx',p.x); e.dot.setAttribute('cy',p.y); e.dot.style.opacity='1';
+      } else { e.path.style.opacity='0'; e.dot.style.opacity='0'; }
+    });
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  function render(wf){
+    flow.innerHTML=''; while(svg.firstChild) svg.removeChild(svg.firstChild); tbody.innerHTML='';
+    nodeEls={}; rowEls={}; edges=[]; wfName.textContent=wf.name;
+    wf.nodes.forEach(n=>{
+      const d=document.createElement('div'); d.className='node role-'+n.role; d.style.left=n.x+'%'; d.style.top=n.y+'%';
+      d.innerHTML=`<div class="burst"></div><div class="think">•••</div><span class="st"></span>`
+        +`<dotlottie-player class="bot" src="${n.bot}" autoplay loop></dotlottie-player>`
+        +`<div class="t"><b>${n.title}</b><span>${n.sub}</span></div>`;
+      flow.appendChild(d); nodeEls[n.id]=d;
+      const eng=n.eng; const tr=document.createElement('tr');
+      tr.innerHTML=`<td class="stat s-queued"><span class="d"></span>queued</td><td>${n.title.replace(/^[◉✓]\s*/,'')}</td><td>${n.sub}</td><td class="eng">${eng}</td>`;
+      tbody.appendChild(tr); rowEls[n.id]=tr;
+    });
+    const sy=wf.nodes.find(n=>n.role==='synth');
+    prchipEl=document.createElement('div'); prchipEl.className='prchip'; prchipEl.textContent='✓ PR #128 opened';
+    prchipEl.style.left=sy.x+'%'; prchipEl.style.top=(sy.y+17)+'%'; flow.appendChild(prchipEl);
+    wf.edges.forEach(([f,t,c])=>{
+      const path=document.createElementNS(NS,'path'); path.setAttribute('class','wire'); path.style.stroke=COL[c]; path.style.filter=`drop-shadow(0 0 5px ${COL[c]}66)`;
+      const dot=document.createElementNS(NS,'circle'); dot.setAttribute('r','3.4'); dot.setAttribute('fill',COL[c]); dot.style.filter=`drop-shadow(0 0 6px ${COL[c]})`; dot.style.opacity='0';
+      svg.appendChild(path); svg.appendChild(dot); edges.push({f,t,path,dot});
+    });
+  }
+  function setStatus(id,s){
+    const n=nodeEls[id]; n.classList.add('show'); n.classList.remove('thinking','run','done');
+    if(s==='thinking') n.classList.add('thinking'); else if(s==='running') n.classList.add('run'); else if(s==='done') n.classList.add('done');
+    const cell=rowEls[id].querySelector('.stat'); cell.className='stat s-'+s; cell.innerHTML='<span class="d"></span>'+s;
+  }
+  const shortName=id=> nodeEls[id].querySelector('.t b').textContent.replace(/^[◉✓]\s*/,'');
+
+  // ── camera + film ──
+  const cam=(s,tx,ty)=> world.style.transform=`translate(${tx},${ty}) scale(${s})`;
+  const capit=s=>capEl.textContent=s;
+  let timers=[]; const at=(t,fn)=>timers.push(setTimeout(fn,t));
+  function clearAll(){ timers.forEach(clearTimeout); timers=[]; }
+
+  function play(wf){
+    let T=0;
+    cam(1.12,'7%','6%'); capit('💻 a task is typed — workflow: '+wf.name);
+    T=1400; at(T,()=>{ setStatus('orch','thinking'); capit('✦ the orchestrator is thinking — planning the run'); });
+    T+=1200; at(T,()=> setStatus('orch','running'));
+    T+=650; at(T,()=>{ setStatus('orch','done'); cam(1,'0%','0%'); capit('⛓ it dispatches the '+wf.shape+' workflow'); });
+    T+=350;
+    if(wf.shape==='fan'){
+      wf.agents.forEach((id,i)=> at(T+i*240,()=> setStatus(id,'thinking')));
+      T+=wf.agents.length*240+150; at(T,()=> capit('🧠 agents are thinking…'));
+      T+=1000; at(T,()=>{ wf.agents.forEach(id=> setStatus(id,'running')); capit('⚙ running in parallel'); });
+      T+=1600; at(T,()=> wf.agents.forEach(id=> setStatus(id,'done')));
+      T+=300;
+    } else {
+      wf.agents.forEach(id=>{
+        at(T,()=>{ setStatus(id,'thinking'); capit('🧠 '+shortName(id)+' is thinking…'); }); T+=750;
+        at(T,()=>{ setStatus(id,'running'); capit('⚙ '+shortName(id)+' running'); }); T+=850;
+        at(T,()=> setStatus(id,'done')); T+=250;
+      });
+    }
+    at(T,()=>{ setStatus('synth','thinking'); cam(1.07,'-8%','0%'); capit('✓ the synthesizer merges every result'); });
+    T+=1100; at(T,()=>{ setStatus('synth','done'); nodeEls['synth'].classList.add('celebrate'); prchipEl.classList.add('show'); capit('✓ done · PR #128 opened'); });
+    T+=1700; at(T,()=>{ cam(1,'0%','0%'); capit(wf.name+' — complete'); });
+    T+=1500; at(T,()=> world.classList.add('fade'));
+    T+=600;  at(T,()=> next());
+  }
+  let idx=0;
+  function start(){ clearAll(); world.classList.remove('fade'); render(WORKFLOWS[idx]); play(WORKFLOWS[idx]); }
+  function next(){ idx=(idx+1)%WORKFLOWS.length; start(); }
+  el('replay').onclick=start;
+  start();
+
+  // review hook — freeze a representative mixed-state frame
+  window.__jump=p=>{ clearAll(); world.classList.remove('fade'); render(WORKFLOWS[idx]); cam(1,'0%','0%');
+    if(p==='flow'){ const wf=WORKFLOWS[idx]; setStatus('orch','done');
+      const states=['done','running','thinking','done']; wf.agents.forEach((id,i)=> setStatus(id, states[i%states.length]));
+      setStatus('synth','running'); capit('states: thinking 💭 · running ⚙ · done ✓'); } };
+})();
+</script>
+</body>
+</html>
