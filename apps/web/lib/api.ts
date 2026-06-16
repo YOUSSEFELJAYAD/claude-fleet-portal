@@ -371,7 +371,9 @@ export const api = {
   spend: () => j<SpendSummary>('/api/spend'),
 
   // F6 — approval inbox
-  inbox: () => j<{ items: Array<{ run: { id: string; task: string; cwd: string; model: string; status: string; startedAt: number; costUsd: number }; kind: 'permission' | 'input'; request?: { id: string; payload: { tool: string; input: unknown } }; lastText?: string }> }>('/api/inbox'),
+  inbox: () => j<{ items: Array<{ run: { id: string; task: string; cwd: string; model: string; status: string; startedAt: number; costUsd: number }; kind: 'permission' | 'input' | 'question'; request?: { id: string; payload: { tool: string; input: unknown } }; lastText?: string; question?: { id: string; sessionId: string; question: string; options: string[]; multiSelect: boolean; allowFreeText: boolean; createdAt: number } }> }>('/api/inbox'),
+  answerQuestion: (id: string, body: { selection: string[]; text?: string }) =>
+    j(`/api/inbox/questions/${id}/answer`, { method: 'POST', body: JSON.stringify(body) }),
   // Fleet cross-project scheduler (v2 #7).
   fleetStatus: () => j<FleetStatus>('/api/fleet/status'),
   fleetConfig: () => j<FleetConfig>('/api/fleet/config'),
