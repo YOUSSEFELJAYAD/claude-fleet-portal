@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useRunStream } from '@/lib/live';
+import { useRunStream, usePendingQuestions } from '@/lib/live';
 import { api, API } from '@/lib/api';
 import { statusMeta } from '@/lib/status';
 import { LIVE_STATUSES } from '@fleet/shared';
@@ -16,11 +16,13 @@ import { ScorePanel } from '@/components/ScorePanel'; // A7
 import { TagBar } from '@/components/TagBar'; // A8
 import { SessionPanel } from '@/components/SessionPanel'; // H11
 import { OtelOverlay } from '@/components/OtelOverlay'; // A12
+import { QuestionCard } from '@/components/QuestionCard';
 
 export default function RunDetail({ params }: { params: { id: string } }) {
   const { id } = params;
   const router = useRouter();
   const { run, nodes, tree, events, partials, connected, error, truncatedBefore } = useRunStream(id);
+  const { questions, refresh: refreshQuestions } = usePendingQuestions(id);
   const [selected, setSelected] = useState<string>(id);
   const [raw, setRaw] = useState(false);
   const [inputText, setInputText] = useState('');
@@ -198,6 +200,16 @@ export default function RunDetail({ params }: { params: { id: string } }) {
           <Btn variant="solid" disabled={busy} onClick={() => act(async () => { await api.resume(id, resumeText || 'Continue.', true); setShowResume(false); setResumeText(''); })}>Resume ▶</Btn>
         </Panel>
       )}
+
+      {/* ask_human inline gate — pending questions for this run/session */}
+      {questions.map((q) => (
+        <Panel key={q.id} className="p-4 mb-4" ticked>
+          <Kicker>human gate · awaiting your answer</Kicker>
+          <div className="mt-2">
+            <QuestionCard item={{ kind: 'question', question: q }} onAction={refreshQuestions} />
+          </div>
+        </Panel>
+      ))}
 
       {/* metrics strip */}
       <Panel className="p-4 mb-4">

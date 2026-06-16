@@ -12,7 +12,8 @@ import type {
   CampaignMessage,
   ChatSessionState,
 } from '@fleet/shared';
-import { API } from './api';
+import { API, api } from './api';
+import type { QuestionData } from '@/components/QuestionCard';
 
 /** Run statuses that mean "no turn is in flight" — a terminal turn lives in the persisted transcript. */
 const TERMINAL_STATUS = new Set(['completed', 'failed', 'killed']);
@@ -354,6 +355,60 @@ export function useChatStream(sessionId: string | null): ChatStreamState {
   }, [sessionId]);
 
   return { run, events, partials, state, live, runId, subagents, connected, error };
+}
+
+// ── pending ask_human questions for a session ────────────────────────────────
+const POLL_MS = 4000;
+
+/** Polls the inbox and returns the pending QuestionData items for the given sessionId.
+ *  Returns empty and does not poll when sessionId is null. */
+export function usePendingQuestions(sessionId: string | null): { questions: QuestionData[]; refresh: () => void } {
+  const [questions, setQuestions] = useState<QuestionData[]>([]);
+  const alive = useRef(true);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function rearm() {
+    if (!alive.current) return;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => fetchQuestions(), POLL_MS);
+  }
+
+  function fetchQuestions() {
+    api
+      .inbox()
+      .then((data) => {
+        if (!alive.current) return;
+        const filtered = data.items
+          .filter((i) => i.kind === 'question' && i.question && i.question.sessionId === sessionId)
+          .map((i) => i.question as QuestionData);
+        setQuestions(filtered);
+        rearm();
+      })
+      .catch(() => {
+        if (!alive.current) return;
+        rearm();
+      });
+  }
+
+  useEffect(() => {
+    if (!sessionId) return;
+    alive.current = true;
+    fetchQuestions();
+    return () => {
+      alive.current = false;
+      if (timer.current) clearTimeout(timer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  const refresh = useCallback(() => {
+    if (!sessionId) return;
+    if (timer.current) clearTimeout(timer.current);
+    fetchQuestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  return { questions, refresh };
 }
 
 // ── one-shot fetch helper for client components ─────────────────────────────
