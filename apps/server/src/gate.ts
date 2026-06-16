@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { GATE_TTL_MS } from './config.js';
 
 export interface GateAnswer { selection: string[]; text?: string }
 export interface PendingGate {
@@ -14,6 +15,7 @@ export interface PendingGate {
 interface GateInternal extends PendingGate {
   resolve: (a: GateAnswer) => void;
   reject: (e: Error) => void;
+  ttlTimer?: ReturnType<typeof setTimeout>;
 }
 
 const gates = new Map<string, GateInternal>();
@@ -34,8 +36,11 @@ export function enqueueGate(input: {
   gates.set(g.id, g);
   if (gates.size > MAX_GATES) {
     const oldest = [...gates.values()].sort((a, b) => a.createdAt - b.createdAt)[0];
-    if (oldest) { oldest.reject(new Error('gate evicted (queue full)')); gates.delete(oldest.id); }
+    if (oldest) { clearTimeout(oldest.ttlTimer); oldest.reject(new Error('gate evicted (queue full)')); gates.delete(oldest.id); }
   }
+  const ttlTimer = setTimeout(() => resolveGate(g.id, { selection: [] }), GATE_TTL_MS);
+  ttlTimer.unref?.();
+  g.ttlTimer = ttlTimer;
   return g;
 }
 
@@ -44,17 +49,18 @@ export function listGates(): PendingGate[] { return [...gates.values()]; }
 export function resolveGate(id: string, answer: GateAnswer): void {
   const g = gates.get(id);
   if (!g) return;
+  clearTimeout(g.ttlTimer);
   gates.delete(id);
   g.resolve(answer);
 }
 
 export function rejectGatesForSession(sessionId: string, reason: string): void {
   for (const g of [...gates.values()]) {
-    if (g.sessionId === sessionId) { gates.delete(g.id); g.reject(new Error(reason)); }
+    if (g.sessionId === sessionId) { clearTimeout(g.ttlTimer); gates.delete(g.id); g.reject(new Error(reason)); }
   }
 }
 
 export function __clearGatesForTests(): void {
-  for (const g of gates.values()) g.reject(new Error('cleared'));
+  for (const g of gates.values()) { clearTimeout(g.ttlTimer); g.reject(new Error('cleared')); }
   gates.clear();
 }
