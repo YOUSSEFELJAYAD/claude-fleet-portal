@@ -10,6 +10,23 @@
 
 Spec: `docs/superpowers/specs/2026-06-16-mid-run-human-gate-design.md`
 
+## Spike result (Task 1 — DONE)
+
+A real `claude -p` run **blocks on `ask_human` and resumes with the server's value** (verified, incl. a 35s block). Decisions locked in:
+
+- **Transport: hand-rolled, no dependency.** A plain JSON-RPC 2.0 handler over `application/json` is sufficient — **no SSE, no `@modelcontextprotocol/sdk`.** Serve it as a **route on the existing Fastify server** (no separate port/listener). Methods claude requires, all POST to `/mcp/:sessionId`:
+  - `initialize` → return `{ protocolVersion: params.protocolVersion ?? '2024-11-05', capabilities: { tools: {} }, serverInfo: { name:'fleet-gate', version } }`; set response header `Mcp-Session-Id`.
+  - `notifications/initialized` (and any `id == null` notification) → **202, empty body.**
+  - `tools/list` → `{ tools: [ ask_human w/ inputSchema ] }`.
+  - `tools/call` (name `ask_human`) → block on the gate, return `{ content: [{ type:'text', text }] }`.
+  - `GET /mcp/:sessionId` → 405 (no SSE needed). `DELETE` → 200 no-op. Unknown method → JSON-RPC error `-32601`.
+- **Run attribution: URL path** `/mcp/<sessionId>` (read from the route param). Confirmed to arrive on every request.
+- **`MCP_TOOL_TIMEOUT` (CRITICAL):** default ~60s caps how long `tools/call` may block; a human needs minutes. Set `MCP_TOOL_TIMEOUT=900000` in the **spawned claude's env** (15 min).
+- **Do NOT use `--strict-mcp-config`.** Without it, `--mcp-config` **merges** fleet-gate on top of the user's ambient MCP servers (personal-rag, context7, …), which we want to keep. (The spike used strict only to isolate the test.)
+- The URL port = the existing control-plane port (`config.PORT`). Bind 127.0.0.1 only (Fastify already does).
+
+These adjust **Task 3** (Fastify route, not a separate listener; no `GATE_PORT`) and **Task 6** (URL uses `config.PORT`; add `MCP_TOOL_TIMEOUT` to the spawn env in `registry.ts`).
+
 ---
 
 ### Task 1: Spike — minimal HTTP MCP endpoint with run attribution
@@ -176,8 +193,8 @@ git commit -m "feat(server): pending-gate store for ask_human mid-run gating"
 Wire the Task 1 transport to `gate.ts`. The handler validates args, calls `enqueueGate`, awaits `answer`, and returns the selection as MCP tool-result content. Uses the endpoint shape recorded in the Task 1 spike note.
 
 **Files:**
-- Create: `apps/server/src/gateServer.ts` (the in-process HTTP MCP listener)
-- Modify: `apps/server/src/server.ts` (start it in `buildServer`/boot; export its port)
+- Create: `apps/server/src/gateServer.ts` (`handleAskHuman` + `registerGateRoutes(app)` — a Fastify route, NOT a separate listener, per the spike)
+- Modify: `apps/server/src/server.ts` (call `registerGateRoutes(app)` alongside the other `register*Routes`)
 - Test: `apps/server/test/fn-gate-tool.test.ts`
 
 - [ ] **Step 1: Write the failing test** — exercise the tool handler directly (transport-agnostic), not the wire protocol:
@@ -249,10 +266,19 @@ export async function handleAskHuman(
   }
 }
 
-// startGateServer(): bind 127.0.0.1:<port> per the Task 1 spike; route ask_human tool calls to
-// handleAskHuman(sessionIdFromRequest, toolArgs). Export GATE_PORT for buildArgs to inject.
+// registerGateRoutes(app): POST /mcp/:sessionId speaking minimal JSON-RPC 2.0 (per the Spike result
+// above): initialize / notifications(202) / tools/list / tools/call→handleAskHuman(sessionId,args) /
+// GET→405 / DELETE→200 / unknown→-32601. Reply application/json; set Mcp-Session-Id on initialize.
+const ASK_HUMAN_TOOL = {
+  name: 'ask_human',
+  description: 'Ask the human operator a question and BLOCK until they answer in the portal Inbox. Use this for any decision you need from a human — AskUserQuestion will not reach them here.',
+  inputSchema: { type: 'object',
+    properties: { question: { type: 'string' }, options: { type: 'array', items: { type: 'string' } },
+      multiSelect: { type: 'boolean' }, allowFreeText: { type: 'boolean' } },
+    required: ['question', 'options'] },
+};
 ```
-Wire `startGateServer()` into the server boot in `server.ts` and expose its chosen port via `config.ts` (`GATE_PORT`, default `0` → ephemeral, stored after listen).
+Wire `registerGateRoutes(app)` into `buildServer` in `server.ts` (next to `registerInboxRoutes`). No separate port — the route lives on the existing control-plane server (`config.PORT`).
 
 - [ ] **Step 4: Run to verify it passes**
 Run: `cd apps/server && pnpm vitest run test/fn-gate-tool.test.ts`
@@ -386,7 +412,8 @@ git commit -m "feat(server): POST /api/inbox/questions/:id/answer resolves a gat
 ### Task 6: Launch wiring (`buildArgs` injects the gate server, tool, and nudge)
 
 **Files:**
-- Modify: `apps/server/src/processManager.ts:115` (`buildArgs`)
+- Modify: `apps/server/src/processManager.ts:115` (`buildArgs` — args)
+- Modify: `apps/server/src/registry.ts:730` (`startProcess` — add `MCP_TOOL_TIMEOUT` to the spawn `extraEnv`)
 - Test: `apps/server/test/fn-buildargs-gate.test.ts`
 
 - [ ] **Step 1: Write the failing test**
@@ -414,24 +441,28 @@ describe('buildArgs gate injection', () => {
 Run: `cd apps/server && pnpm vitest run test/fn-buildargs-gate.test.ts`
 Expected: FAIL — no `--mcp-config`.
 
-- [ ] **Step 3: Write minimal implementation** — in `buildArgs`, build the gate config from `GATE_PORT` and the `sessionId` (attribution shape from Task 1; URL-path form shown):
+- [ ] **Step 3: Write minimal implementation** — in `buildArgs`, build the gate config from `config.PORT` and the `sessionId` (URL-path attribution, per the Spike result):
 ```ts
-import { GATE_PORT } from './config.js';
+import { PORT } from './config.js';
 // after allowedTools handling: append the gate tool
 const gateTool = 'mcp__fleet-gate__ask_human';
 const allowed = [...(req.allowedTools ?? [])];
 if (!allowed.includes(gateTool)) allowed.push(gateTool);
 // (replace the existing allowedTools push with `allowed`)
 
-// add the mcp-config (merge with any future inline config carefully; gate-only for now)
-const gateUrl = `http://127.0.0.1:${GATE_PORT}/mcp/${sessionId}`;
+// inject the fleet-gate server (merges with the user's ambient MCP servers — NO --strict-mcp-config)
+const gateUrl = `http://127.0.0.1:${PORT}/mcp/${sessionId}`;
 args.push('--mcp-config', JSON.stringify({ mcpServers: { 'fleet-gate': { type: 'http', url: gateUrl } } }));
 
 // add to the appendSys array, before the `if (appendSys)` join:
 const gateNudge = 'To ask the operator a question, call the ask_human tool — AskUserQuestion will NOT reach them in this environment. Block on ask_human for any decision you need from a human.';
 // include gateNudge in the appendSys filter list
 ```
-Note: keep `--strict-mcp-config` OFF so the user's other MCP servers still load (unlike `learner.ts`, which isolates).
+Then in `registry.ts` `startProcess` (line ~730), add `MCP_TOOL_TIMEOUT` to the spawn env so a human has time to answer:
+```ts
+{ ...thinkingEnv(lr.req.thinkingLevel), MCP_TOOL_TIMEOUT: '900000' }, // 15 min: ask_human may block on a human
+```
+Note: do NOT pass `--strict-mcp-config` — `--mcp-config` must MERGE fleet-gate with the user's ambient MCP servers (personal-rag, context7, …), not replace them.
 
 - [ ] **Step 4: Run to verify it passes**
 Run: `cd apps/server && pnpm vitest run test/fn-buildargs-gate.test.ts`
