@@ -727,7 +727,7 @@ class Registry {
         onExit: (code, signal) => this.onExit(lr, code, signal),
       },
       lr.interactive,
-      thinkingEnv(lr.req.thinkingLevel),
+      { ...thinkingEnv(lr.req.thinkingLevel), MCP_TOOL_TIMEOUT: '900000' }, // 15 min — ask_human may block on a human
     );
     // Persist the OS pid so stop/reconcile can reach the process group across server restarts.
     lr.run.pid = lr.proc.pid ?? null;
