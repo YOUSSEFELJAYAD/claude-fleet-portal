@@ -69,9 +69,7 @@ describe('buildResumeArgs — resume a finished session (PRD §7.6)', () => {
     );
     expect(args[args.indexOf('--model') + 1]).toBe('claude-opus-4-8');
     expect(args[args.indexOf('--max-budget-usd') + 1]).toBe('5');
-    expect(args[args.indexOf('--allowedTools') + 1]).toContain('Read');
-    expect(args[args.indexOf('--allowedTools') + 1]).toContain('Write');
-    expect(args[args.indexOf('--allowedTools') + 1]).toContain('mcp__fleet-gate__ask_human');
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe('Read,Write');
     expect(args[args.indexOf('--add-dir') + 1]).toBe('/tmp/x');
   });
 });

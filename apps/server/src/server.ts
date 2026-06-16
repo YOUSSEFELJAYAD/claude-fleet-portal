@@ -349,6 +349,7 @@ export function buildServer() {
       model: body.model || 'claude-opus-4-8',
       effort: body.effort || 'high',
       permissionMode: body.permissionMode || 'default',
+      humanGate: body.humanGate ?? true,
     };
     // Engine add-on runs require async binary detection — branch before calling launch().
     const requestedEngine = normalizedBody.engine && normalizedBody.engine !== 'claude' ? normalizedBody.engine : null;

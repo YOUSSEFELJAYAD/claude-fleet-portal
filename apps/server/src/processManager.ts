@@ -129,14 +129,15 @@ export function buildArgs(req: LaunchRequest, sessionId: string, interactive: bo
   if (interactive) args.push('--input-format', 'stream-json');
   if (req.model) args.push('--model', req.model);
   if (req.budgetUsd && req.budgetUsd > 0) args.push('--max-budget-usd', String(req.budgetUsd));
+  const gate = !!req.humanGate;
   if (req.allowedTools && req.allowedTools.length) {
     const allowed = [...req.allowedTools];
-    if (!allowed.includes('mcp__fleet-gate__ask_human')) allowed.push('mcp__fleet-gate__ask_human');
+    if (gate && !allowed.includes('mcp__fleet-gate__ask_human')) allowed.push('mcp__fleet-gate__ask_human');
     args.push('--allowedTools', allowed.join(','));
   }
   // ask_human mid-run human gate: inject the fleet-hosted MCP server (sessionId in the URL for
   // run attribution). NO --strict-mcp-config, so this MERGES with the user's ambient MCP servers.
-  args.push('--mcp-config', JSON.stringify({ mcpServers: { 'fleet-gate': { type: 'http', url: `http://127.0.0.1:${PORT}/mcp/${sessionId}` } } }));
+  if (gate) args.push('--mcp-config', JSON.stringify({ mcpServers: { 'fleet-gate': { type: 'http', url: `http://127.0.0.1:${PORT}/mcp/${sessionId}` } } }));
   if (req.cwd) args.push('--add-dir', req.cwd);
   for (const dir of req.addDirs ?? []) {
     if (dir && dir !== req.cwd) args.push('--add-dir', dir);
@@ -155,7 +156,7 @@ export function buildArgs(req: LaunchRequest, sessionId: string, interactive: bo
       'and follow the loaded skill instructions over your defaults. If a listed skill is ' +
       'unavailable, proceed without it and note that in your final report.'
     : '';
-  const gateNudge = 'To ask the operator a question, call the ask_human tool — AskUserQuestion will NOT reach them in this environment. Block on ask_human for any decision you need from a human.';
+  const gateNudge = gate ? 'To ask the operator a question, call the ask_human tool — AskUserQuestion will NOT reach them in this environment. Block on ask_human for any decision you need from a human.' : '';
   const appendSys = [req.appendSystemPrompt, skillsNote, gateNudge].filter(Boolean).join('\n\n');
   if (appendSys) args.push('--append-system-prompt', appendSys);
   if (req.jsonSchema) args.push('--json-schema', JSON.stringify(req.jsonSchema));

@@ -3,7 +3,7 @@ import { buildArgs } from '../src/processManager.js';
 
 describe('buildArgs gate injection', () => {
   it('injects fleet-gate mcp-config, the ask_human tool, and a nudge', () => {
-    const args = buildArgs({ prompt: 'hi', cwd: '/tmp', permissionMode: 'default', effort: 'high', allowedTools: ['Read'] } as any, 'sess-1', false);
+    const args = buildArgs({ prompt: 'hi', cwd: '/tmp', permissionMode: 'default', effort: 'high', allowedTools: ['Read'], humanGate: true } as any, 'sess-1', false);
     const cfgIdx = args.indexOf('--mcp-config');
     expect(cfgIdx).toBeGreaterThan(-1);
     const cfg = JSON.parse(args[cfgIdx + 1]);
@@ -16,7 +16,15 @@ describe('buildArgs gate injection', () => {
   });
 
   it('does NOT pass --strict-mcp-config (gate must merge with the user\'s MCP servers)', () => {
-    const args = buildArgs({ prompt: 'hi', cwd: '/tmp', permissionMode: 'default', effort: 'high', allowedTools: ['Read'] } as any, 'sess-1', false);
+    const args = buildArgs({ prompt: 'hi', cwd: '/tmp', permissionMode: 'default', effort: 'high', allowedTools: ['Read'], humanGate: true } as any, 'sess-1', false);
     expect(args).not.toContain('--strict-mcp-config');
+  });
+
+  it('injects NOTHING gate-related when humanGate is not set', () => {
+    const args = buildArgs({ prompt: 'hi', cwd: '/tmp', permissionMode: 'default', effort: 'high', allowedTools: ['Read'] } as any, 'sess-1', false);
+    expect(args).not.toContain('--mcp-config');
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe('Read'); // exact, no gate tool
+    const i = args.indexOf('--append-system-prompt');
+    if (i > -1) expect(args[i + 1]).not.toMatch(/ask_human/);
   });
 });

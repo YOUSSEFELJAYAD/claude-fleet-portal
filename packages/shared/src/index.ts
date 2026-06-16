@@ -231,6 +231,10 @@ export interface LaunchRequest {
   _attempt?: number;
   /** §6 — `@`-mention dir attachments: paths added to `--add-dir` for this turn. */
   addDirs?: string[];
+  /** Opt-in: inject the ask_human human-gate (MCP server + tool + nudge + long MCP timeout).
+   *  Only user-initiated runs set this; internal autonomous runs (campaign/manager/review/
+   *  benchmark/loops) leave it false so they never block on an unwatched inbox. */
+  humanGate?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

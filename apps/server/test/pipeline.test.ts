@@ -182,23 +182,15 @@ describe('processManager.buildArgs — interactive stdin-prompt fix', () => {
     expect(args[i + 1]).not.toContain('graphify'); // deduped — only the OTHER skill is injected
   });
 
-  it('a /command prompt whose only skill IS the command → no skills note but gate nudge still present', () => {
+  it('a /command prompt whose only skill IS the command → no skills note at all', () => {
     const args = buildArgs({ ...base, prompt: '/commit-commands:commit', skills: ['commit-commands:commit'] }, 'sid-sk6', false);
-    // --append-system-prompt is always present now (gate nudge is always injected)
-    const i = args.indexOf('--append-system-prompt');
-    expect(i).toBeGreaterThan(-1);
-    expect(args[i + 1]).toContain('ask_human'); // gate nudge is present
-    expect(args[i + 1]).not.toContain('commit-commands:commit'); // deduped skill is absent
+    expect(args).not.toContain('--append-system-prompt');
   });
 
-  it('no skills → --append-system-prompt always present (gate nudge always injected)', () => {
-    // gate nudge is always appended so --append-system-prompt is always in the args
-    const noSys = buildArgs(base, 'sid-sk3', false);
-    const i = noSys.indexOf('--append-system-prompt');
-    expect(i).toBeGreaterThan(-1);
-    expect(noSys[i + 1]).toContain('ask_human'); // gate nudge
+  it('no skills → --append-system-prompt only when a template prompt exists (unchanged behavior)', () => {
+    expect(buildArgs(base, 'sid-sk3', false)).not.toContain('--append-system-prompt');
     const withSys = buildArgs({ ...base, appendSystemPrompt: 'X' }, 'sid-sk4', false);
-    expect(withSys[withSys.indexOf('--append-system-prompt') + 1]).toContain('X');
+    expect(withSys[withSys.indexOf('--append-system-prompt') + 1]).toBe('X');
   });
 
   it('interactive: NEVER passes the prompt as a positional (delivered via stdin) and adds --input-format', () => {
