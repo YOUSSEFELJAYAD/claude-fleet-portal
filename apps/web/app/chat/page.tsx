@@ -2,12 +2,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatSession, ChatMessage } from '@fleet/shared';
 import { api } from '@/lib/api';
-import { useChatStream } from '@/lib/live';
+import { useChatStream, usePendingQuestions } from '@/lib/live';
 import { ChatSessionList } from '@/components/ChatSessionList';
 import { ChatThread } from '@/components/ChatThread';
 import { ChatComposer } from '@/components/ChatComposer';
 import { RunningAgentsPanel } from '@/components/RunningAgentsPanel';
 import { ErrorBanner, Badge, Kicker } from '@/components/ui';
+import { QuestionCard } from '@/components/QuestionCard';
 import { chatStateMeta } from '@/lib/chatState';
 
 export default function ChatPage() {
@@ -28,6 +29,7 @@ export default function ChatPage() {
   // fix 10A — ONE subscription hoisted here (was 3: page + ChatThread + RunningAgentsPanel);
   // the derived stream values flow down to those children as props (1 EventSource per session).
   const { state: liveState, live, run, events, partials, error: streamError, runId: liveStreamRunId, subagents } = useChatStream(activeId);
+  const { questions: pendingQuestions, refresh: refreshQuestions } = usePendingQuestions(activeId);
   // derive `chatState` alias for ChatComposer (still expects `chatState === 'running'`)
   const chatState = liveState;
   // previews for the sidebar: last persisted message per session (cheap client derivation).
@@ -158,6 +160,9 @@ export default function ChatPage() {
                 </div>
               )}
               <ChatThread sessionId={activeId} messages={messages} run={run} events={events} partials={partials} error={streamError} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
+              {pendingQuestions.map((q) => (
+                <div key={q.id} className="px-4 pb-3"><QuestionCard item={{ kind: 'question', question: q }} onAction={refreshQuestions} /></div>
+              ))}
               <ChatComposer
                 disabled={busy}
                 running={chatState === 'running'}

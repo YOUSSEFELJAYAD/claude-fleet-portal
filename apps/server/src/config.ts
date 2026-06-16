@@ -46,6 +46,11 @@ export const CHAT_LIVE_MAX = Number(process.env.FLEET_CHAT_LIVE_MAX || 4);
  */
 export const CHAT_IDLE_SUSPEND_MS = Number(process.env.FLEET_CHAT_IDLE_SUSPEND_MS || 600_000);
 
+// ask_human gate auto-expiry. Slightly LONGER than the spawned run's MCP_TOOL_TIMEOUT (900000)
+// so claude's own tool timeout fires first; this is the server-side cleanup for a leaked/unanswered
+// gate so it can't linger in the inbox forever.
+export const GATE_TTL_MS = Number(process.env.FLEET_GATE_TTL_MS || 960_000);
+
 /**
  * H3 — DNS-rebinding defense for the unauthenticated localhost control plane (D-011).
  * The Host allowlist is the load-bearing guard: a rebound attacker domain becomes

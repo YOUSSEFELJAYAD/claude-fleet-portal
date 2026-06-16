@@ -203,6 +203,7 @@ export async function startTurn(sessionId: string, message: string, attachments?
   const baseOpts = {
     cwd: session.cwd, model: session.model, effort: session.effort, permissionMode: session.permissionMode,
     allowedTools: session.allowedTools ?? undefined, skills: session.skills ?? undefined,
+    humanGate: true,
     ...(addDirs.length ? { addDirs } : {}),
   };
 

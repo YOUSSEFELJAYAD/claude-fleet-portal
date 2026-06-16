@@ -112,6 +112,7 @@ class ChatLiveManager {
       allowedTools: session.allowedTools ?? undefined,
       skills: session.skills ?? undefined,
       interactive: true,
+      humanGate: true,
     } as any);
     const handle: LiveHandle = { runId: run.id, idleTimer: null };
     this.handles.set(session.id, handle);

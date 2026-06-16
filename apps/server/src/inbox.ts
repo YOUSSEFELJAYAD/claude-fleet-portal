@@ -14,6 +14,7 @@ import type { FastifyInstance } from 'fastify';
 import type { NormalizedEvent, ChatCommandResult } from '@fleet/shared';
 import { registry } from './registry.js';
 import { repo } from './db.js';
+import { listGates, resolveGate } from './gate.js';
 
 export interface SlimRun {
   id: string;
@@ -33,6 +34,16 @@ export interface InboxPermissionRequest {
   };
 }
 
+export interface InboxQuestion {
+  id: string;
+  sessionId: string;
+  question: string;
+  options: string[];
+  multiSelect: boolean;
+  allowFreeText: boolean;
+  createdAt: number;
+}
+
 /** A destructive slash-command parked for operator approval (it did NOT execute). */
 export interface CommandApproval {
   id: string;
@@ -47,11 +58,13 @@ export interface CommandApproval {
 export interface InboxItem {
   /** present for derived run items; omitted for parked command approvals. */
   run?: SlimRun;
-  kind: 'permission' | 'input' | 'command';
+  kind: 'permission' | 'input' | 'command' | 'question';
   request?: InboxPermissionRequest;
   lastText?: string;
   /** present iff kind === 'command'. */
   approval?: CommandApproval;
+  /** present iff kind === 'question'. */
+  question?: InboxQuestion;
 }
 
 // ── command-approval queue (destructive slash commands park here, see commands.ts) ──
@@ -170,6 +183,13 @@ export function getInboxItems(): InboxItem[] {
     items.push({ kind: 'command', approval });
   }
 
+  for (const g of listGates()) {
+    items.push({
+      kind: 'question',
+      question: { id: g.id, sessionId: g.sessionId, question: g.question, options: g.options, multiSelect: g.multiSelect, allowFreeText: g.allowFreeText, createdAt: g.createdAt },
+    });
+  }
+
   return items;
 }
 
@@ -186,5 +206,12 @@ export function registerInboxRoutes(app: FastifyInstance) {
   app.post('/api/inbox/commands/:id/deny', async (req) => {
     const { id } = req.params as { id: string };
     return resolveApproval(id, 'deny');
+  });
+
+  app.post('/api/inbox/questions/:id/answer', async (req) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { selection?: string[]; text?: string };
+    resolveGate(id, { selection: Array.isArray(body.selection) ? body.selection.map(String) : [], text: body.text });
+    return { ok: true };
   });
 }

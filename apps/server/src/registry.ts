@@ -27,6 +27,7 @@ import { spawnClaude, buildArgs, buildResumeArgs, killProcessGroup, thinkingEnv,
 import { createWorktree } from './git.js';
 import { getEngineBin, engineLaunchConfig, isEngineEnabled, addonRunEnvForEngine } from './addons.js';
 import { buildEngineArgs, parseEngineLine, spawnEngine, type ManagedEngineProcess } from './engines.js';
+import { rejectGatesForSession } from './gate.js';
 
 const TERMINAL: RunStatus[] = ['completed', 'failed', 'killed'];
 const isTerminal = (s: RunStatus) => TERMINAL.includes(s);
@@ -133,6 +134,7 @@ class Registry {
         /* ignore */
       }
     }
+    rejectGatesForSession(lr.run.sessionId, `run ${lr.run.status}`);
   }
 
   /** Evict a terminal run from memory after a grace window (review #6). Reads fall back to DB. */
@@ -727,7 +729,7 @@ class Registry {
         onExit: (code, signal) => this.onExit(lr, code, signal),
       },
       lr.interactive,
-      thinkingEnv(lr.req.thinkingLevel),
+      lr.req.humanGate ? { ...thinkingEnv(lr.req.thinkingLevel), MCP_TOOL_TIMEOUT: '900000' } : thinkingEnv(lr.req.thinkingLevel), // 15 min only for gated (user-attended) runs
     );
     // Persist the OS pid so stop/reconcile can reach the process group across server restarts.
     lr.run.pid = lr.proc.pid ?? null;
