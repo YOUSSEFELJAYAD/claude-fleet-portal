@@ -114,6 +114,12 @@ export function useNotificationStream(): { latest: NotificationRow | null } {
       const row = m.notification;
       if (seen.current.has(row.id)) return;
       seen.current.add(row.id);
+      // Bound the dedupe set so a portal tab left open for days can't grow it without limit. The
+      // server never replays history, so a recent-id window is enough to keep one-popup-per-row.
+      if (seen.current.size > 1000) {
+        const oldest = seen.current.values().next().value;
+        if (oldest !== undefined) seen.current.delete(oldest);
+      }
       setLatest(row);
     };
     return () => es.close();

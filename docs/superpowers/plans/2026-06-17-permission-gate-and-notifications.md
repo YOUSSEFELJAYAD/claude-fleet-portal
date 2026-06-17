@@ -315,9 +315,9 @@ subscribeGateEnqueued((g) => {
 
 ### Task 13: full test + real E2E
 
-- [ ] **Step 1:** `pnpm -r typecheck && pnpm -r test` → GREEN.
-- [ ] **Step 2:** Real E2E (real claude): launch with `requirePermission:true`; agent hits Bash → `/inbox` permission card + browser Notification fires → Approve → tool runs; relaunch → Deny → tool blocked. Verify via Playwright + server state.
-- [ ] **Step 3:** Final adversarial review (workflow): correctness (fail-closed, dedupe, cleanup), security (localhost-only callback, no allow-on-error), desktop path resolution. Fix findings.
+- [x] **Step 1:** `pnpm -r typecheck && pnpm -r test` → GREEN (typecheck all 3 projects; server 150 files / 1775 tests; web build OK).
+- [~] **Step 2:** Real E2E (real claude + Playwright approve/deny) — **DEFERRED to manual QA** (needs a real `claude` binary + Playwright harness not in CI). The fail-closed enforcement round-trip is instead covered by an automated process-level test, `apps/server/test/fn-permission-hook-script.test.ts`, which spawns the real `tools/fleet-permission-hook.mjs` and asserts DENY on unreachable / non-2xx / non-JSON / non-allow and ALLOW only on explicit `{decision:'allow'}`.
+- [x] **Step 3:** Final adversarial review (two-pass workflow, 33 agents): correctness (fail-closed, dedupe, terminal/reset cleanup), security (matcher escaping, localhost-only callback, no allow-on-error), desktop path resolution. All confirmed findings fixed (see review pass 2026-06-17).
 - [ ] **Step 4:** Commit + open PR.
 
 ## Self-review notes

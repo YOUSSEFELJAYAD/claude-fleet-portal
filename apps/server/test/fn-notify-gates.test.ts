@@ -28,7 +28,9 @@ describe('notifier gate alerts', () => {
     const off = subscribeNotifications((r: any) => rows.push(r));
     enqueuePermission({ sessionId: 'r1', tool: 'Bash', input: { command: 'rm x' }, toolUseId: 't', cwd: '/tmp' });
     off();
-    expect(rows.some((r) => r.kind === 'awaiting-permission' && r.message.includes('Bash'))).toBe(true);
+    // EXACTLY one row per enqueue — a count assertion (not .some()) so a double-fire regression
+    // (e.g. a duplicate subscriber from a second initNotifier) would actually fail this test.
+    expect(rows.filter((r) => r.kind === 'awaiting-permission' && r.message.includes('Bash'))).toHaveLength(1);
     __clearPermissionsForTests();
   });
 
@@ -37,7 +39,7 @@ describe('notifier gate alerts', () => {
     const off = subscribeNotifications((r: any) => rows.push(r));
     enqueueGate({ sessionId: 'r2', question: 'Deploy to prod?', options: ['yes', 'no'], multiSelect: false, allowFreeText: false });
     off();
-    expect(rows.some((r) => r.kind === 'awaiting-question' && r.message.includes('Deploy to prod?'))).toBe(true);
+    expect(rows.filter((r) => r.kind === 'awaiting-question' && r.message.includes('Deploy to prod?'))).toHaveLength(1);
     __clearGatesForTests();
   });
 });

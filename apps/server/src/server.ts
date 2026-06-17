@@ -346,6 +346,12 @@ export function buildServer() {
       reply.code(400);
       return { error: 'prompt and cwd are required' };
     }
+    // F-perm — permissionTools is typed string[] but arrives unvalidated; reject a malformed value
+    // with a clean 400 instead of letting it 500 + orphan a 'starting' run deeper in buildArgs.
+    if (body.permissionTools !== undefined && (!Array.isArray(body.permissionTools) || !body.permissionTools.every((t) => typeof t === 'string'))) {
+      reply.code(400);
+      return { error: 'permissionTools must be an array of strings' };
+    }
     const normalizedBody: LaunchRequest = {
       ...body,
       model: body.model || 'claude-opus-4-8',

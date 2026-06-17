@@ -182,8 +182,12 @@ function createWindow(mock) {
     title: 'Claude Fleet Portal',
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
-  // focusing the window means the operator has seen what's pending — clear the macOS dock badge.
-  win.on('focus', () => app.dock?.setBadge?.(''));
+  // focusing the window means the operator has seen what's pending — clear the macOS dock badge and
+  // stop any taskbar flash (Windows/Linux).
+  win.on('focus', () => {
+    app.dock?.setBadge?.('');
+    if (process.platform !== 'darwin') win.flashFrame(false);
+  });
   win.on('closed', () => {
     win = null;
   });
@@ -219,7 +223,12 @@ function showNotification(notification) {
     }
   });
   notif.show();
-  app.dock?.setBadge?.('●');
+  // A focused operator has already seen it; only raise a persistent cue when the window is in the
+  // background. macOS → dock badge; Windows/Linux (no app.dock) → flash the taskbar entry.
+  if (!win || !win.isFocused()) {
+    app.dock?.setBadge?.('●');
+    if (process.platform !== 'darwin' && win) win.flashFrame(true);
+  }
 }
 
 /**
@@ -267,6 +276,12 @@ function startNotificationStream(backoffMs = 1000) {
   });
   notifReq = req;
   req.on('error', reconnect);
+  // Guard against a socket that connects but never sends headers (server event loop wedged, or a
+  // half-open socket surviving a restart): none of the res/req 'error'/'end' handlers would ever
+  // fire, pinning notifReq and silently stopping native notifications for the session. The server
+  // sends a ': ping' keepalive every 15s, so a 30s first-byte/idle deadline won't false-trip a
+  // healthy stream. Re-armed on each data chunk above is unnecessary — destroy routes to reconnect.
+  req.setTimeout(30000, () => req.destroy(new Error('sse idle timeout')));
 }
 
 app.whenReady().then(async () => {

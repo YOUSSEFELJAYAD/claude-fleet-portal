@@ -486,23 +486,30 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
                   <Toggle on={requirePermission} onChange={setRequirePermission} label={requirePermission ? 'gated' : 'off'} />
                 </div>
                 {requirePermission && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {['Bash', 'Write', 'Edit', 'WebFetch', 'Read'].map((t) => {
-                      const on = permissionTools.includes(t);
-                      return (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() =>
-                            setPermissionTools((prev) => (on ? prev.filter((x) => x !== t) : [...prev, t]))
-                          }
-                          className={`font-mono text-[11px] px-2 py-1 border ${on ? 'border-amber/60 text-amber bg-amber/10' : 'border-line2 text-faint'}`}
-                        >
-                          {t}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {['Bash', 'Write', 'Edit', 'WebFetch', 'Read'].map((t) => {
+                        const on = permissionTools.includes(t);
+                        return (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() =>
+                              setPermissionTools((prev) => (on ? prev.filter((x) => x !== t) : [...prev, t]))
+                            }
+                            className={`font-mono text-[11px] px-2 py-1 border ${on ? 'border-amber/60 text-amber bg-amber/10' : 'border-line2 text-faint'}`}
+                          >
+                            {t}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {permissionTools.length === 0 && (
+                      <div className="mt-1.5 font-mono text-[10px] text-faint">
+                        no tools selected → gating falls back to the defaults (Bash, Write, Edit)
+                      </div>
+                    )}
+                  </>
                 )}
               </Field>
             )}

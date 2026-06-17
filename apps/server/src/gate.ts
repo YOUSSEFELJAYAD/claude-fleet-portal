@@ -71,6 +71,12 @@ export function rejectGatesForSession(sessionId: string, reason: string): void {
   }
 }
 
+/** Reject every pending gate (called on destructive resets so the in-memory store can't outlive
+ *  the wiped DB and leave orphaned inbox questions). */
+export function rejectAllGates(reason: string): void {
+  for (const g of [...gates.values()]) { clearTimeout(g.ttlTimer); gates.delete(g.id); g.reject(new Error(reason)); }
+}
+
 export function __clearGatesForTests(): void {
   for (const g of gates.values()) { clearTimeout(g.ttlTimer); g.reject(new Error('cleared')); }
   gates.clear();

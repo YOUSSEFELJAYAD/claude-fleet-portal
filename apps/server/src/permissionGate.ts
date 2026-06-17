@@ -111,12 +111,22 @@ export function listPermissions(): PendingPermission[] {
   return [...perms.values()].map(toPublic);
 }
 
-export function resolvePermission(id: string, answer: PermissionAnswer): void {
+/** Resolve a pending permission. Returns true if a live entry was resolved, false if the id was
+ *  already decided/expired/evicted (idempotent no-op) — callers use this to avoid reporting a
+ *  decision on a request that no longer exists. */
+export function resolvePermission(id: string, answer: PermissionAnswer): boolean {
   const p = perms.get(id);
-  if (!p) return;
+  if (!p) return false;
   clearTimeout(p.ttl);
   perms.delete(id);
   p.resolve(answer);
+  return true;
+}
+
+/** Deny every pending request (called on destructive resets so the in-memory store can't outlive
+ *  the wiped DB and leave orphaned, approvable inbox cards). */
+export function rejectAllPermissions(reason: string): void {
+  for (const p of [...perms.values()]) resolvePermission(p.id, { decision: 'deny', reason });
 }
 
 /** Deny every pending request for a session (called when its run goes terminal). */

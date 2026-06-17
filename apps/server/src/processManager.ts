@@ -185,13 +185,23 @@ export function buildArgs(req: LaunchRequest, sessionId: string, interactive: bo
   // a localhost callback until the operator approves/denies in /inbox. Opt-in (requirePermission),
   // independent of humanGate so it never silently fires on unattended runs. Must precede `--`.
   if (req.requirePermission) {
-    const tools = req.permissionTools?.length ? req.permissionTools : [...DEFAULT_PERMISSION_TOOLS];
+    // Escape each tool name so the matcher matches LITERAL tool names — a user-supplied entry
+    // like ".*" or "Bash|" can't widen/break the gate via regex injection. Fall back to defaults
+    // if nothing usable remains. The hook path is quoted in case the install path has spaces.
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Coerce defensively: permissionTools is typed string[] but reaches here unvalidated (the
+    // /api/agents body, stored templates, loops, scheduler and portability imports all flow in). A
+    // non-array value or a non-string element must NOT throw — buildArgs runs AFTER the run is
+    // persisted/registered, so a throw here would orphan a permanent 'starting' run.
+    const rawTools = Array.isArray(req.permissionTools) ? req.permissionTools : [];
+    const requested = rawTools.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter(Boolean);
+    const tools = (requested.length ? requested : [...DEFAULT_PERMISSION_TOOLS]).map(escapeRe);
     const settings = {
       hooks: {
         PreToolUse: [
           {
             matcher: tools.join('|'),
-            hooks: [{ type: 'command', command: `node ${permissionHookPath()} ${PORT}`, timeout: 900 }],
+            hooks: [{ type: 'command', command: `node "${permissionHookPath()}" ${PORT}`, timeout: 900 }],
           },
         ],
       },

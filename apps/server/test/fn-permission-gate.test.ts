@@ -3,6 +3,7 @@ import {
   __clearPermissionsForTests,
   enqueuePermission,
   resolvePermission,
+  rejectAllPermissions,
   listPermissions,
   rejectPermissionsForSession,
   subscribePermissionEnqueued,
@@ -37,6 +38,38 @@ describe('permission gate store', () => {
 
   it('resolvePermission on an unknown id is a no-op', () => {
     expect(() => resolvePermission('nope', { decision: 'allow' })).not.toThrow();
+  });
+
+  it('resolvePermission reports whether a live entry was resolved (true once, false thereafter)', async () => {
+    const p = mk();
+    expect(resolvePermission(p.id, { decision: 'allow' })).toBe(true);
+    // already removed → stale decide must report false, not a phantom success
+    expect(resolvePermission(p.id, { decision: 'allow' })).toBe(false);
+    expect(resolvePermission('never-existed', { decision: 'deny' })).toBe(false);
+    await expect(p.answer).resolves.toEqual({ decision: 'allow' });
+  });
+
+  it('evicts and DENIES the OLDEST when the cap is exceeded, never the just-added one', async () => {
+    // MAX_PERMISSIONS = 64; the 65th enqueue evicts the 1st (oldest) with a deny.
+    const first = mk({ toolUseId: 'first' });
+    const rest = Array.from({ length: 63 }, (_, i) => mk({ toolUseId: `t${i}` }));
+    expect(listPermissions()).toHaveLength(64);
+    const last = mk({ toolUseId: 'last' }); // 65th → over cap
+    await expect(first.answer).resolves.toEqual({ decision: 'deny', reason: 'evicted (too many pending permissions)' });
+    const ids = listPermissions().map((p) => p.id);
+    expect(listPermissions()).toHaveLength(64);
+    expect(ids).not.toContain(first.id); // oldest gone
+    expect(ids).toContain(last.id); // newest survives (oldest !== id guard)
+    expect(rest.length).toBe(63);
+  });
+
+  it('rejectAllPermissions DENIES every pending entry (destructive-reset drain)', async () => {
+    const a = mk({ sessionId: 'sa' });
+    const b = mk({ sessionId: 'sb' });
+    rejectAllPermissions('portal data was reset');
+    await expect(a.answer).resolves.toEqual({ decision: 'deny', reason: 'portal data was reset' });
+    await expect(b.answer).resolves.toEqual({ decision: 'deny', reason: 'portal data was reset' });
+    expect(listPermissions()).toHaveLength(0);
   });
 
   it('fires subscribers on enqueue', () => {

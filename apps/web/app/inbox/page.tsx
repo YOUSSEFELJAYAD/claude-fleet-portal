@@ -395,7 +395,10 @@ export default function InboxPage() {
               <div className="flex flex-col gap-4">
                 {filtered.map((item) =>
                   item.kind === 'permission' ? (
-                    <PermissionCard key={`${item.run?.id ?? item.request?.id}:permission`} item={item} onAction={() => loadInbox(true)} />
+                    // Key by the unique permission request id first: a run can have several
+                    // concurrent hook gates (parallel Bash/Edit/Write in one turn), all sharing the
+                    // same run id — keying on run id would collide and mis-associate card state.
+                    <PermissionCard key={`${item.request?.id ?? item.run?.id}:permission`} item={item} onAction={() => loadInbox(true)} />
                   ) : item.kind === 'question' ? (
                     <QuestionCard key={`${item.question?.id}:question`} item={item} onAction={() => loadInbox(true)} />
                   ) : (

@@ -574,6 +574,11 @@ export function initNotifier(): void {
   registry.subscribeFleet((msg) => {
     try {
       if (msg.kind !== 'run') return;
+      // Honor the operator's notification preferences here too — this legacy status-flip path must
+      // obey cfg.enabled / cfg.onAwaitingPermission exactly like the hook-gate subscriber below, or
+      // it leaks external Slack/Discord/webhook posts after notifications were disabled.
+      const cfg = getNotifConfig();
+      if (!cfg.enabled || !cfg.onAwaitingPermission) return;
       const run = msg.run;
       if (run.status !== 'awaiting-permission') {
         // If the run left awaiting-permission (e.g. resumed running), clear the flag

@@ -17,6 +17,21 @@ import { repo } from './db.js';
 import { listGates, resolveGate } from './gate.js';
 import { listPermissions, resolvePermission } from './permissionGate.js';
 
+/** Cap an agent-supplied permission tool_input for over-the-wire transport. The inbox is polled
+ *  frequently and a single Write/Edit input can approach the 4MB body limit; the operator only
+ *  needs a readable preview to decide, and the card truncates for display anyway. */
+const MAX_INPUT_CHARS = 4000;
+function truncateInput(input: unknown): unknown {
+  let s: string;
+  try {
+    s = typeof input === 'string' ? input : JSON.stringify(input);
+  } catch {
+    return '[unserializable tool input]';
+  }
+  if (s == null) return input; // undefined/null serialize to undefined — keep as-is
+  return s.length > MAX_INPUT_CHARS ? `${s.slice(0, MAX_INPUT_CHARS)}… [${s.length - MAX_INPUT_CHARS} more chars truncated]` : input;
+}
+
 export interface SlimRun {
   id: string;
   task: string;
@@ -204,7 +219,10 @@ export function getInboxItems(): InboxItem[] {
         : { id: p.sessionId, task: '(permission request)', cwd: p.cwd, model: '', status: 'awaiting-permission', startedAt: p.createdAt, costUsd: 0 },
       kind: 'permission',
       viaHook: true,
-      request: { id: p.id, payload: { tool: p.tool, input: p.input } },
+      // Truncate the agent-controlled tool_input on the wire: a Write/Edit can carry a multi-MB
+      // payload (bodyLimit 4MB) and up to MAX_PERMISSIONS of them; the inbox is polled every few
+      // seconds (the Shell badge only needs the count), so shipping full inputs amplifies badly.
+      request: { id: p.id, payload: { tool: p.tool, input: truncateInput(p.input) } },
     });
   }
 
@@ -234,8 +252,10 @@ export function registerInboxRoutes(app: FastifyInstance) {
       reply.code(400);
       return { error: "decision must be 'approve' or 'deny'" };
     }
-    resolvePermission(id, { decision: decision === 'approve' ? 'allow' : 'deny', reason: `operator ${decision}` });
-    return { ok: true };
+    // Report whether a live request was actually resolved: a stale card (already decided/expired)
+    // must not be falsely acknowledged as a successful approve.
+    const resolved = resolvePermission(id, { decision: decision === 'approve' ? 'allow' : 'deny', reason: `operator ${decision}` });
+    return { ok: resolved };
   });
 
   app.post('/api/inbox/questions/:id/answer', async (req) => {
