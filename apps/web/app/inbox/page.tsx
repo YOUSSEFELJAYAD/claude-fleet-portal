@@ -35,6 +35,8 @@ interface InboxItem {
   kind: 'permission' | 'input' | 'question';
   request?: { id: string; payload: { tool: string; input: unknown } };
   lastText?: string;
+  /** F-perm — true when the permission item is from the PreToolUse hook store. */
+  viaHook?: boolean;
   question?: QuestionData;
 }
 
@@ -130,7 +132,10 @@ function PermissionCard({ item, onAction }: { item: InboxItem; onAction: () => v
     setBusy(true);
     setErr(null);
     try {
-      await api.permission(item.run.id, item.request.id, decision);
+      // F-perm — hook-based gates resolve via the inbox decide route; the legacy stdin path
+      // (dormant under headless -p) still uses /api/agents/:id/permission.
+      if (item.viaHook) await api.decidePermissionGate(item.request.id, decision);
+      else await api.permission(item.run.id, item.request.id, decision);
       onAction();
     } catch (e: any) {
       setErr(e.message ?? 'Error');

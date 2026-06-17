@@ -346,6 +346,9 @@ export const api = {
     j<Run>(`/api/agents/${id}/resume`, { method: 'POST', body: JSON.stringify({ prompt, interactive }) }),
   permission: (id: string, requestId: string, decision: 'approve' | 'deny') =>
     j(`/api/agents/${id}/permission`, { method: 'POST', body: JSON.stringify({ requestId, decision }) }),
+  // F-perm — decide a PreToolUse permission gate (hook-based path; resolves the blocked hook).
+  decidePermissionGate: (id: string, decision: 'approve' | 'deny') =>
+    j(`/api/inbox/permissions/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision }) }),
   meta: () => j<MetaResponse>('/api/meta'),
   mcp: () => j<{ servers: McpServerInfo[]; error?: string }>('/api/mcp'),
   skills: (cwd?: string) => j<SkillInfo[]>('/api/skills' + (cwd ? `?cwd=${encodeURIComponent(cwd)}` : '')),
@@ -371,7 +374,7 @@ export const api = {
   spend: () => j<SpendSummary>('/api/spend'),
 
   // F6 — approval inbox
-  inbox: () => j<{ items: Array<{ run: { id: string; task: string; cwd: string; model: string; status: string; startedAt: number; costUsd: number }; kind: 'permission' | 'input' | 'question'; request?: { id: string; payload: { tool: string; input: unknown } }; lastText?: string; question?: { id: string; sessionId: string; question: string; options: string[]; multiSelect: boolean; allowFreeText: boolean; createdAt: number } }> }>('/api/inbox'),
+  inbox: () => j<{ items: Array<{ run: { id: string; task: string; cwd: string; model: string; status: string; startedAt: number; costUsd: number }; kind: 'permission' | 'input' | 'question'; request?: { id: string; payload: { tool: string; input: unknown } }; lastText?: string; viaHook?: boolean; question?: { id: string; sessionId: string; question: string; options: string[]; multiSelect: boolean; allowFreeText: boolean; createdAt: number } }> }>('/api/inbox'),
   answerQuestion: (id: string, body: { selection: string[]; text?: string }) =>
     j(`/api/inbox/questions/${id}/answer`, { method: 'POST', body: JSON.stringify(body) }),
   // Fleet cross-project scheduler (v2 #7).
