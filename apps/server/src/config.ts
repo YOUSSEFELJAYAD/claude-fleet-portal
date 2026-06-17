@@ -51,6 +51,12 @@ export const CHAT_IDLE_SUSPEND_MS = Number(process.env.FLEET_CHAT_IDLE_SUSPEND_M
 // gate so it can't linger in the inbox forever.
 export const GATE_TTL_MS = Number(process.env.FLEET_GATE_TTL_MS || 960_000);
 
+// F-perm — PreToolUse permission-gate auto-expiry. Matches the hook command `timeout` (900s);
+// on expiry the pending request is auto-DENIED (fail-closed) so a missed prompt never silently allows.
+export const PERMISSION_GATE_TTL_MS = Number(process.env.FLEET_PERMISSION_GATE_TTL_MS || 900_000);
+// Default tools the permission gate intercepts when requirePermission is on (matcher alternation).
+export const DEFAULT_PERMISSION_TOOLS = ['Bash', 'Write', 'Edit'] as const;
+
 /**
  * H3 — DNS-rebinding defense for the unauthenticated localhost control plane (D-011).
  * The Host allowlist is the load-bearing guard: a rebound attacker domain becomes

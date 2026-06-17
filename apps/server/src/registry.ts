@@ -28,6 +28,7 @@ import { createWorktree } from './git.js';
 import { getEngineBin, engineLaunchConfig, isEngineEnabled, addonRunEnvForEngine } from './addons.js';
 import { buildEngineArgs, parseEngineLine, spawnEngine, type ManagedEngineProcess } from './engines.js';
 import { rejectGatesForSession } from './gate.js';
+import { rejectPermissionsForSession } from './permissionGate.js';
 
 const TERMINAL: RunStatus[] = ['completed', 'failed', 'killed'];
 const isTerminal = (s: RunStatus) => TERMINAL.includes(s);
@@ -135,6 +136,7 @@ class Registry {
       }
     }
     rejectGatesForSession(lr.run.sessionId, `run ${lr.run.status}`);
+    rejectPermissionsForSession(lr.run.sessionId, `run ${lr.run.status}`); // F-perm — deny dangling hooks
   }
 
   /** Evict a terminal run from memory after a grace window (review #6). Reads fall back to DB. */

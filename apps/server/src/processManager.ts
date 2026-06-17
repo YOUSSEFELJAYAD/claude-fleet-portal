@@ -4,9 +4,23 @@
  * Spawned `detached` so the whole process group can be killed together (§7.6).
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { CLAUDE_BIN, OTEL_ENABLED, OTLP_ENDPOINT, PORT } from './config.js';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { CLAUDE_BIN, DEFAULT_PERMISSION_TOOLS, OTEL_ENABLED, OTLP_ENDPOINT, PORT } from './config.js';
 import { addonRunEnv } from './addons.js';
 import type { LaunchRequest } from '@fleet/shared';
+
+/** Absolute path to the PreToolUse permission-gate hook script. Env override wins (the desktop
+ *  bundle copies the hook elsewhere and sets FLEET_PERMISSION_HOOK_PATH); otherwise resolve it
+ *  relative to this module (repo `tools/`), falling back to cwd if import.meta is unavailable. */
+function permissionHookPath(): string {
+  if (process.env.FLEET_PERMISSION_HOOK_PATH) return process.env.FLEET_PERMISSION_HOOK_PATH;
+  try {
+    return join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tools', 'fleet-permission-hook.mjs');
+  } catch {
+    return join(process.cwd(), 'tools', 'fleet-permission-hook.mjs');
+  }
+}
 
 /**
  * H6 — telemetry env pointing claude's OTLP exporter at the control plane's own /v1/* receiver.
@@ -167,6 +181,23 @@ export function buildArgs(req: LaunchRequest, sessionId: string, interactive: bo
   if (req.disallowedTools && req.disallowedTools.length) args.push('--disallowedTools', req.disallowedTools.join(','));
   if (req.agentsJson) args.push('--agents', JSON.stringify(req.agentsJson));
   if (req.brief) args.push('--brief'); // H22 — enable agent→user SendUserMessage tool
+  // F-perm — operator permission gate: inject a PreToolUse hook that blocks gated tool calls on
+  // a localhost callback until the operator approves/denies in /inbox. Opt-in (requirePermission),
+  // independent of humanGate so it never silently fires on unattended runs. Must precede `--`.
+  if (req.requirePermission) {
+    const tools = req.permissionTools?.length ? req.permissionTools : [...DEFAULT_PERMISSION_TOOLS];
+    const settings = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: tools.join('|'),
+            hooks: [{ type: 'command', command: `node ${permissionHookPath()} ${PORT}`, timeout: 900 }],
+          },
+        ],
+      },
+    };
+    args.push('--settings', JSON.stringify(settings));
+  }
   // CRITICAL (verified vs real claude): in stream-json INPUT mode the positional `-p` prompt is
   // ignored — claude blocks waiting for a user message on stdin. So pass the prompt as a positional
   // ONLY for one-shot runs; interactive runs deliver the initial prompt via stdin after spawn.

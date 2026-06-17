@@ -235,6 +235,11 @@ export interface LaunchRequest {
    *  Only user-initiated runs set this; internal autonomous runs (campaign/manager/review/
    *  benchmark/loops) leave it false so they never block on an unwatched inbox. */
   humanGate?: boolean;
+  /** F-perm — inject the PreToolUse permission-gate hook so the operator approves gated tool
+   *  calls (Bash/Write/Edit by default) mid-run. Default false; off for unattended runs. */
+  requirePermission?: boolean;
+  /** F-perm — tools the permission gate intercepts (matcher alternation). Default DEFAULT_PERMISSION_TOOLS. */
+  permissionTools?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import { listTeams, readTeam, watchTeam, isSafeId } from './teamWatcher.js';
 import { registerMetricsRoutes } from './metrics.js';
 import { registerInboxRoutes } from './inbox.js'; // F6 — approval inbox
 import { registerGateRoutes } from './gateServer.js'; // Task 3 — ask_human MCP gate
+import { registerPermissionHookRoutes } from './permissionHookServer.js'; // F-perm — PreToolUse permission gate
 import { registerScheduleRoutes, startScheduler } from './scheduler.js';
 import { registerMcpRoutes } from './mcp.js';
 import { registerNotifierRoutes, initNotifier } from './notifier.js';
@@ -217,6 +218,7 @@ export function buildServer() {
   registerMetricsRoutes(app); // A2
   registerInboxRoutes(app); // F6 — approval inbox
   registerGateRoutes(app); // Task 3 — ask_human MCP gate
+  registerPermissionHookRoutes(app); // F-perm — PreToolUse permission gate callback
   registerScheduleRoutes(app); // A4
   startScheduler(); // A4 — interval tick (unref'd)
   registerMcpRoutes(app); // A5

@@ -15,6 +15,7 @@ import type { NormalizedEvent, ChatCommandResult } from '@fleet/shared';
 import { registry } from './registry.js';
 import { repo } from './db.js';
 import { listGates, resolveGate } from './gate.js';
+import { listPermissions, resolvePermission } from './permissionGate.js';
 
 export interface SlimRun {
   id: string;
@@ -65,6 +66,9 @@ export interface InboxItem {
   approval?: CommandApproval;
   /** present iff kind === 'question'. */
   question?: InboxQuestion;
+  /** F-perm — true when a 'permission' item comes from the PreToolUse hook store (resolved via
+   *  /api/inbox/permissions/:id/decide) rather than the dormant stdin control path. */
+  viaHook?: boolean;
 }
 
 // ── command-approval queue (destructive slash commands park here, see commands.ts) ──
@@ -190,6 +194,20 @@ export function getInboxItems(): InboxItem[] {
     });
   }
 
+  // F-perm — pending PreToolUse permission requests (sessionId === runId). Surfaced as the
+  // existing 'permission' card; resolved via /api/inbox/permissions/:id/decide (viaHook).
+  for (const p of listPermissions()) {
+    const run = registry.getRun(p.sessionId);
+    items.push({
+      run: run
+        ? toSlim(run)
+        : { id: p.sessionId, task: '(permission request)', cwd: p.cwd, model: '', status: 'awaiting-permission', startedAt: p.createdAt, costUsd: 0 },
+      kind: 'permission',
+      viaHook: true,
+      request: { id: p.id, payload: { tool: p.tool, input: p.input } },
+    });
+  }
+
   return items;
 }
 
@@ -206,6 +224,18 @@ export function registerInboxRoutes(app: FastifyInstance) {
   app.post('/api/inbox/commands/:id/deny', async (req) => {
     const { id } = req.params as { id: string };
     return resolveApproval(id, 'deny');
+  });
+
+  // F-perm — decide a pending PreToolUse permission request (resolves the blocked hook callback).
+  app.post('/api/inbox/permissions/:id/decide', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { decision } = (req.body as any) ?? {};
+    if (decision !== 'approve' && decision !== 'deny') {
+      reply.code(400);
+      return { error: "decision must be 'approve' or 'deny'" };
+    }
+    resolvePermission(id, { decision: decision === 'approve' ? 'allow' : 'deny', reason: `operator ${decision}` });
+    return { ok: true };
   });
 
   app.post('/api/inbox/questions/:id/answer', async (req) => {
