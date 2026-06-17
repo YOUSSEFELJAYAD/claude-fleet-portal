@@ -16,6 +16,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Run } from '@fleet/shared';
 import db from './db.js';
 import { registry } from './registry.js';
+import { subscribePermissionEnqueued } from './permissionGate.js';
+import { subscribeGateEnqueued } from './gate.js';
 
 // ── schema (idempotent) ───────────────────────────────────────────────────────
 db.exec(`
@@ -52,6 +54,10 @@ interface NotifConfig {
   costThresholdUsd: number;
   durationThresholdMs: number;
   webhookUrl: string;
+  /** F-notify — alert when a run pauses for an operator permission decision (PreToolUse gate). */
+  onAwaitingPermission: boolean;
+  /** F-notify — alert when an agent asks the operator a question (ask_human gate). */
+  onAwaitingQuestion: boolean;
 }
 
 const DEFAULT_NOTIF_CONFIG: NotifConfig = {
@@ -60,6 +66,8 @@ const DEFAULT_NOTIF_CONFIG: NotifConfig = {
   costThresholdUsd: 5,
   durationThresholdMs: 0,
   webhookUrl: '',
+  onAwaitingPermission: true,
+  onAwaitingQuestion: true,
 };
 
 function getNotifConfig(): NotifConfig {
@@ -111,6 +119,8 @@ function validateConfig(body: any): NotifConfig {
     costThresholdUsd: num(body.costThresholdUsd, cur.costThresholdUsd),
     durationThresholdMs: num(body.durationThresholdMs, cur.durationThresholdMs),
     webhookUrl,
+    onAwaitingPermission: bool(body.onAwaitingPermission, cur.onAwaitingPermission),
+    onAwaitingQuestion: bool(body.onAwaitingQuestion, cur.onAwaitingQuestion),
   };
 }
 
@@ -128,6 +138,15 @@ const insertNotifStmt = db.prepare(
   'INSERT INTO notifications (id, run_id, kind, message, ts, read) VALUES (@id, @run_id, @kind, @message, @ts, @read)',
 );
 
+// F-notify — in-memory pub/sub so the web (browser Notification) and desktop (Electron
+// Notification) can react in real time via GET /api/notifications/stream, without polling.
+type NotifSub = (row: NotificationRow) => void;
+const notifSubs = new Set<NotifSub>();
+export function subscribeNotifications(cb: NotifSub): () => void {
+  notifSubs.add(cb);
+  return () => notifSubs.delete(cb);
+}
+
 function insertNotification(kind: string, message: string, runId: string | null): NotificationRow {
   const row = {
     id: randomUUID(),
@@ -138,7 +157,15 @@ function insertNotification(kind: string, message: string, runId: string | null)
     read: 0,
   };
   insertNotifStmt.run(row);
-  return { id: row.id, runId, kind, message, ts: row.ts, read: false };
+  const pub: NotificationRow = { id: row.id, runId, kind, message, ts: row.ts, read: false };
+  for (const cb of notifSubs) {
+    try {
+      cb(pub);
+    } catch {
+      /* a bad subscriber must not break notification writes */
+    }
+  }
+  return pub;
 }
 
 function listNotifications(limit = 50): NotificationRow[] {
@@ -163,6 +190,8 @@ const VALID_CHANNEL_EVENTS = [
   'run-completed',
   'run-killed',
   'awaiting-permission',
+  'awaiting-question',
+  'awaiting-input',
   'spend-threshold',
 ] as const;
 type ChannelEvent = (typeof VALID_CHANNEL_EVENTS)[number];
@@ -567,6 +596,34 @@ export function initNotifier(): void {
       }
     } catch {
       /* best-effort — fleet subscriber must not throw */
+    }
+  });
+
+  // F-notify — the PreToolUse permission gate stores requests without flipping run status, so the
+  // fleet path above can't see them. Fire once per enqueue: an in-app row + channel fan-out.
+  subscribePermissionEnqueued((p) => {
+    try {
+      const cfg = getNotifConfig();
+      if (!cfg.enabled || !cfg.onAwaitingPermission) return;
+      const run = registry.getRun(p.sessionId);
+      const task = run?.task ?? p.sessionId;
+      insertNotification('awaiting-permission', `Permission requested: ${p.tool} — ${task.slice(0, 80)}`, p.sessionId);
+      if (run) dispatchToChannels('awaiting-permission', run);
+    } catch {
+      /* best-effort */
+    }
+  });
+
+  // F-notify — ask_human questions never touch run status either; alert on enqueue.
+  subscribeGateEnqueued((g) => {
+    try {
+      const cfg = getNotifConfig();
+      if (!cfg.enabled || !cfg.onAwaitingQuestion) return;
+      const run = registry.getRun(g.sessionId);
+      insertNotification('awaiting-question', `Agent question: ${g.question.slice(0, 80)}`, g.sessionId);
+      if (run) dispatchToChannels('awaiting-question', run);
+    } catch {
+      /* best-effort */
     }
   });
 }

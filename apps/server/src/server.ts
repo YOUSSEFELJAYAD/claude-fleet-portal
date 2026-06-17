@@ -19,7 +19,7 @@ import { registerGateRoutes } from './gateServer.js'; // Task 3 — ask_human MC
 import { registerPermissionHookRoutes } from './permissionHookServer.js'; // F-perm — PreToolUse permission gate
 import { registerScheduleRoutes, startScheduler } from './scheduler.js';
 import { registerMcpRoutes } from './mcp.js';
-import { registerNotifierRoutes, initNotifier } from './notifier.js';
+import { registerNotifierRoutes, initNotifier, subscribeNotifications } from './notifier.js';
 import { registerExportRoutes } from './exporter.js';
 import { registerScoreRoutes } from './scores.js';
 import { registerTagsRoutes } from './tags.js';
@@ -510,6 +510,19 @@ export function buildServer() {
     if (!s) return; // 503 already sent (connection cap, H18)
     const { send, stop } = s;
     const unsub = registry.subscribeFleet(send);
+    reply.raw.on('close', () => {
+      unsub();
+      stop();
+    });
+  });
+
+  // ── notification stream (F-notify) — feeds the web browser-Notification watcher and the
+  //    desktop Electron-Notification listener so a pending gate reaches the operator in real time.
+  app.get('/api/notifications/stream', (req, reply) => {
+    const s = sse(reply, req);
+    if (!s) return;
+    const { send, stop } = s;
+    const unsub = subscribeNotifications((notification) => send({ kind: 'notification', notification }));
     reply.raw.on('close', () => {
       unsub();
       stop();
