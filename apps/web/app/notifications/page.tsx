@@ -22,6 +22,10 @@ interface NotifConfig {
   costThresholdUsd: number;
   durationThresholdMs: number;
   webhookUrl: string;
+  /** F-notify — alert when a run pauses for an operator permission decision (PreToolUse gate). */
+  onAwaitingPermission: boolean;
+  /** F-notify — alert when an agent asks the operator a question (ask_human gate). */
+  onAwaitingQuestion: boolean;
 }
 
 // ── F8: channel types ──────────────────────────────────────────────────────────
@@ -95,8 +99,44 @@ export default function NotificationsPage() {
   // every post-fetch setState and wedging the page on "loading…".
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
+  // F-notify — reflect the current per-browser opt-in + grant state on mount.
+  useEffect(() => {
+    if (typeof Notification === 'undefined') {
+      setNotifPerm('unsupported');
+      return;
+    }
+    setNotifPerm(Notification.permission);
+    try {
+      setBrowserNotif(localStorage.getItem('fleetBrowserNotif') === 'on');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Request the OS grant (needs a user gesture) and, on grant, persist the opt-in.
+  async function enableBrowserNotif() {
+    if (typeof Notification === 'undefined') return;
+    let perm: NotificationPermission = Notification.permission;
+    if (perm !== 'granted') perm = await Notification.requestPermission();
+    setNotifPerm(perm);
+    if (perm === 'granted') {
+      try { localStorage.setItem('fleetBrowserNotif', 'on'); } catch { /* ignore */ }
+      setBrowserNotif(true);
+    }
+  }
+
+  function disableBrowserNotif() {
+    try { localStorage.setItem('fleetBrowserNotif', 'off'); } catch { /* ignore */ }
+    setBrowserNotif(false);
+  }
+
   const [items, setItems] = useState<Notification[]>([]);
   const [cfg, setCfg] = useState<NotifConfig | null>(null);
+  // F-notify — browser Notification opt-in is per-browser (the grant can't be persisted
+  // server-side), so it lives in localStorage. `browserNotif` mirrors that flag; `notifPerm`
+  // mirrors the page-load grant state so the control can explain why it's disabled.
+  const [browserNotif, setBrowserNotif] = useState(false);
+  const [notifPerm, setNotifPerm] = useState<NotificationPermission | 'unsupported'>('default');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -343,6 +383,45 @@ export default function NotificationsPage() {
           )}
         </Panel>
 
+        {/* ── block 1b · browser notifications (per-browser, localStorage opt-in) ── */}
+        <Panel ticked>
+          <div className="px-4 py-3 border-b hairline flex items-center gap-2">
+            <Dot color={browserNotif && notifPerm === 'granted' ? '#54e08a' : '#5b626d'} size={6} />
+            <Kicker>browser notifications</Kicker>
+          </div>
+          <div className="p-4 space-y-3">
+            <p className="text-faint font-mono text-[10px] leading-relaxed">
+              Pop a native browser notification when a run awaits permission, asks a question, or
+              finishes. Per-browser — the grant lives on this device only.
+            </p>
+            {notifPerm === 'unsupported' ? (
+              <div className="font-mono text-[11px] text-faint">
+                This browser does not support the Notification API.
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                {browserNotif && notifPerm === 'granted' ? (
+                  <>
+                    <Badge label="enabled" color="#54e08a" />
+                    <Btn variant="ghost" onClick={disableBrowserNotif}>
+                      disable
+                    </Btn>
+                  </>
+                ) : (
+                  <Btn variant="solid" onClick={enableBrowserNotif}>
+                    enable browser notifications
+                  </Btn>
+                )}
+                {notifPerm === 'denied' && (
+                  <span className="font-mono text-[10px] text-sig-failed">
+                    blocked in browser settings — re-allow notifications for this site
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </Panel>
+
         {/* ── block 2 · rules ── */}
         <Panel ticked>
           <div className="px-4 py-3 border-b hairline">
@@ -362,6 +441,16 @@ export default function NotificationsPage() {
                     on={cfg.onFailed}
                     onChange={(v) => setCfg({ ...cfg, onFailed: v })}
                     label="alert on failed / killed"
+                  />
+                  <Toggle
+                    on={cfg.onAwaitingPermission}
+                    onChange={(v) => setCfg({ ...cfg, onAwaitingPermission: v })}
+                    label="alert on awaiting permission"
+                  />
+                  <Toggle
+                    on={cfg.onAwaitingQuestion}
+                    onChange={(v) => setCfg({ ...cfg, onAwaitingQuestion: v })}
+                    label="alert on agent question"
                   />
 
                   <Field label="cost threshold" hint="usd">

@@ -2,7 +2,8 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useFleet } from '@/lib/live';
+import { useRouter } from 'next/navigation';
+import { useFleet, useNotificationStream } from '@/lib/live';
 import { api } from '@/lib/api';
 import { usd } from '@/lib/format';
 import type { ReleaseStatus, AddonInfo } from '@fleet/shared';
@@ -36,8 +37,14 @@ const NAV = [
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { spend, connected, runs } = useFleet();
+  const { latest: latestNotif } = useNotificationStream();
   const [launchOpen, setLaunchOpen] = useState(false);
+  // F-notify — inbox badge is sourced from a poll of api.inbox() (every ~5s) rather than the
+  // run-status signal alone: ask_human questions and the new PreToolUse permission gates are
+  // pending inbox items that never flip run status, so a status-only count under-reports them.
+  const [inboxItems, setInboxItems] = useState(0);
   // release status drives: the amber dot on the Releases nav entry, the version line at the
   // bottom of the sidebar, and the update popup (snoozed per-version via localStorage).
   // The update itself runs in the BACKGROUND — Shell owns the phase, so the popup can be
@@ -61,6 +68,54 @@ export function Shell({ children }: { children: React.ReactNode }) {
     window.addEventListener('fleet:addons', refresh);
     return () => window.removeEventListener('fleet:addons', refresh);
   }, [pathname]);
+
+  // F-notify — inbox badge poll: count ALL pending operator items (permission + input +
+  // question), not just runs whose status flipped. Polls every ~5s; unmount-safe.
+  useEffect(() => {
+    let alive = true;
+    let t: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      api
+        .inbox()
+        .then((d) => {
+          if (alive) setInboxItems(d.items.length);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (alive) t = setTimeout(tick, 5000);
+        });
+    };
+    tick();
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, []);
+
+  // F-notify — browser Notification watcher: pop one native notification per NEW row from the
+  // notification stream (the hook already dedupes by id, so `latestNotif` only advances to an
+  // unseen row). Gated on the per-browser opt-in (localStorage) + a granted permission.
+  useEffect(() => {
+    if (!latestNotif) return;
+    let on = false;
+    try {
+      on = localStorage.getItem('fleetBrowserNotif') === 'on';
+    } catch {
+      /* ignore */
+    }
+    if (!on) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try {
+      const n = new Notification('Claude Fleet', { body: latestNotif.message });
+      n.onclick = () => {
+        window.focus();
+        router.push('/inbox');
+      };
+    } catch {
+      /* ignore — browser refused (e.g. not a user-gesture context) */
+    }
+  }, [latestNotif, router]);
+
   useEffect(() => {
     api
       .releaseStatus()
@@ -107,8 +162,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
     }
   }
   const active = runs.filter((r) => ['starting', 'running', 'orchestrating', 'awaiting-input', 'awaiting-permission'].includes(r.status));
-  // F6 — inbox count: runs waiting on operator (zero new polling — derived from existing useFleet runs)
-  const inboxCount = runs.filter((r) => r.status === 'awaiting-permission' || r.status === 'awaiting-input').length;
+  // F6 / F-notify — inbox count = pending inbox items from the poll (permissions + inputs +
+  // ask_human questions). Merge with the live run-status signal so the badge still reacts the
+  // instant a run flips to awaiting-* between polls; the poll is the accurate source of truth.
+  const inboxCount = Math.max(
+    inboxItems,
+    runs.filter((r) => r.status === 'awaiting-permission' || r.status === 'awaiting-input').length,
+  );
   const dailyCap = 50; // soft visual reference for the daily-spend gauge
 
   // enabled add-ons slot their page directly under the Add-ons entry

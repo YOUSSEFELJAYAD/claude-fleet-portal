@@ -80,6 +80,48 @@ export function useFleet() {
   return { runs: runList, spend, connected };
 }
 
+// ── notification stream (F-notify) ──────────────────────────────────────────
+/** One row off GET /api/notifications/stream (mirrors the server NotificationRow). */
+export interface NotificationRow {
+  id: string;
+  runId: string | null;
+  kind: string;
+  message: string;
+  ts: number;
+  read: boolean;
+}
+
+/** Subscribes to GET /api/notifications/stream and surfaces the newest unseen row.
+ *  Mirrors useFleet()'s EventSource lifecycle. Dedupes by notification.id (the stream can
+ *  replay or a StrictMode double-mount can re-deliver), so `latest` only advances to a row
+ *  no consumer has seen before — letting a Shell effect fire exactly one browser Notification
+ *  per new row. */
+export function useNotificationStream(): { latest: NotificationRow | null } {
+  const [latest, setLatest] = useState<NotificationRow | null>(null);
+  // Survives re-renders so the dedupe set isn't reset on every state update.
+  const seen = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const es = new EventSource(`${API}/api/notifications/stream`);
+    es.onmessage = (e) => {
+      let m: { kind?: string; notification?: NotificationRow };
+      try {
+        m = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      if (m.kind !== 'notification' || !m.notification) return;
+      const row = m.notification;
+      if (seen.current.has(row.id)) return;
+      seen.current.add(row.id);
+      setLatest(row);
+    };
+    return () => es.close();
+  }, []);
+
+  return { latest };
+}
+
 // ── per-run live channel ────────────────────────────────────────────────────
 export interface RunLiveState {
   run: Run | null;
