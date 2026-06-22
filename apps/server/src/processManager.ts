@@ -4,9 +4,23 @@
  * Spawned `detached` so the whole process group can be killed together (§7.6).
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { CLAUDE_BIN, OTEL_ENABLED, OTLP_ENDPOINT, PORT } from './config.js';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { CLAUDE_BIN, DEFAULT_PERMISSION_TOOLS, OTEL_ENABLED, OTLP_ENDPOINT, PORT } from './config.js';
 import { addonRunEnv } from './addons.js';
 import type { LaunchRequest } from '@fleet/shared';
+
+/** Absolute path to the PreToolUse permission-gate hook script. Env override wins (the desktop
+ *  bundle copies the hook elsewhere and sets FLEET_PERMISSION_HOOK_PATH); otherwise resolve it
+ *  relative to this module (repo `tools/`), falling back to cwd if import.meta is unavailable. */
+function permissionHookPath(): string {
+  if (process.env.FLEET_PERMISSION_HOOK_PATH) return process.env.FLEET_PERMISSION_HOOK_PATH;
+  try {
+    return join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'tools', 'fleet-permission-hook.mjs');
+  } catch {
+    return join(process.cwd(), 'tools', 'fleet-permission-hook.mjs');
+  }
+}
 
 /**
  * H6 — telemetry env pointing claude's OTLP exporter at the control plane's own /v1/* receiver.
@@ -167,6 +181,33 @@ export function buildArgs(req: LaunchRequest, sessionId: string, interactive: bo
   if (req.disallowedTools && req.disallowedTools.length) args.push('--disallowedTools', req.disallowedTools.join(','));
   if (req.agentsJson) args.push('--agents', JSON.stringify(req.agentsJson));
   if (req.brief) args.push('--brief'); // H22 — enable agent→user SendUserMessage tool
+  // F-perm — operator permission gate: inject a PreToolUse hook that blocks gated tool calls on
+  // a localhost callback until the operator approves/denies in /inbox. Opt-in (requirePermission),
+  // independent of humanGate so it never silently fires on unattended runs. Must precede `--`.
+  if (req.requirePermission) {
+    // Escape each tool name so the matcher matches LITERAL tool names — a user-supplied entry
+    // like ".*" or "Bash|" can't widen/break the gate via regex injection. Fall back to defaults
+    // if nothing usable remains. The hook path is quoted in case the install path has spaces.
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Coerce defensively: permissionTools is typed string[] but reaches here unvalidated (the
+    // /api/agents body, stored templates, loops, scheduler and portability imports all flow in). A
+    // non-array value or a non-string element must NOT throw — buildArgs runs AFTER the run is
+    // persisted/registered, so a throw here would orphan a permanent 'starting' run.
+    const rawTools = Array.isArray(req.permissionTools) ? req.permissionTools : [];
+    const requested = rawTools.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter(Boolean);
+    const tools = (requested.length ? requested : [...DEFAULT_PERMISSION_TOOLS]).map(escapeRe);
+    const settings = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: tools.join('|'),
+            hooks: [{ type: 'command', command: `node "${permissionHookPath()}" ${PORT}`, timeout: 900 }],
+          },
+        ],
+      },
+    };
+    args.push('--settings', JSON.stringify(settings));
+  }
   // CRITICAL (verified vs real claude): in stream-json INPUT mode the positional `-p` prompt is
   // ignored — claude blocks waiting for a user message on stdin. So pass the prompt as a positional
   // ONLY for one-shot runs; interactive runs deliver the initial prompt via stdin after spawn.

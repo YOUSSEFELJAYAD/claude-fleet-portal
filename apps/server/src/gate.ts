@@ -21,6 +21,14 @@ interface GateInternal extends PendingGate {
 const gates = new Map<string, GateInternal>();
 const MAX_GATES = 64; // runaway guard, mirrors inbox pendingApprovals
 
+// F-notify — fire on each enqueue so the notifier can alert the operator about a new question.
+type GateEnqueuedCb = (g: PendingGate) => void;
+const enqueuedSubs = new Set<GateEnqueuedCb>();
+export function subscribeGateEnqueued(cb: GateEnqueuedCb): () => void {
+  enqueuedSubs.add(cb);
+  return () => enqueuedSubs.delete(cb);
+}
+
 export function enqueueGate(input: {
   sessionId: string; question: string; options: string[]; multiSelect: boolean; allowFreeText: boolean;
 }): PendingGate {
@@ -41,6 +49,9 @@ export function enqueueGate(input: {
   const ttlTimer = setTimeout(() => resolveGate(g.id, { selection: [] }), GATE_TTL_MS);
   ttlTimer.unref?.();
   g.ttlTimer = ttlTimer;
+  for (const cb of enqueuedSubs) {
+    try { cb(g); } catch { /* a bad subscriber must not break enqueue */ }
+  }
   return g;
 }
 
@@ -58,6 +69,12 @@ export function rejectGatesForSession(sessionId: string, reason: string): void {
   for (const g of [...gates.values()]) {
     if (g.sessionId === sessionId) { clearTimeout(g.ttlTimer); gates.delete(g.id); g.reject(new Error(reason)); }
   }
+}
+
+/** Reject every pending gate (called on destructive resets so the in-memory store can't outlive
+ *  the wiped DB and leave orphaned inbox questions). */
+export function rejectAllGates(reason: string): void {
+  for (const g of [...gates.values()]) { clearTimeout(g.ttlTimer); gates.delete(g.id); g.reject(new Error(reason)); }
 }
 
 export function __clearGatesForTests(): void {

@@ -149,13 +149,16 @@ export function ContractEditor({
         <div className="grid gap-2">
           {draft.riskRubric.map((r, i) => (
             <div key={i} className="flex items-center gap-2">
-              <Input value={r.glob} onChange={(e) => setRule(i, { glob: e.target.value })} placeholder="**/auth/**" className="flex-1" />
-              <Select value={r.forceRisk} onChange={(e) => setRule(i, { forceRisk: e.target.value as RiskLevel })} className="w-28">
+              {/* min-w-0 lets the glob input actually shrink/grow in the flex row; the Select needs
+                  !w-28 + shrink-0 to beat inputCls's baked-in `w-full` (otherwise it stretches full
+                  width and collapses the glob field to ~0). */}
+              <Input value={r.glob} onChange={(e) => setRule(i, { glob: e.target.value })} placeholder="**/auth/**" className="flex-1 min-w-0" />
+              <Select value={r.forceRisk} onChange={(e) => setRule(i, { forceRisk: e.target.value as RiskLevel })} className="!w-28 shrink-0">
                 <option value="low">low</option>
                 <option value="medium">medium</option>
                 <option value="high">high</option>
               </Select>
-              <Btn variant="danger" onClick={() => removeRule(i)} className="!px-2 !py-1">✕</Btn>
+              <Btn variant="danger" onClick={() => removeRule(i)} className="!px-2 !py-1 shrink-0">✕</Btn>
             </div>
           ))}
           <Btn variant="ghost" onClick={addRule} className="justify-center">＋ add rule</Btn>

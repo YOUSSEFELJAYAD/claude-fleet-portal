@@ -16,9 +16,10 @@ import { listTeams, readTeam, watchTeam, isSafeId } from './teamWatcher.js';
 import { registerMetricsRoutes } from './metrics.js';
 import { registerInboxRoutes } from './inbox.js'; // F6 — approval inbox
 import { registerGateRoutes } from './gateServer.js'; // Task 3 — ask_human MCP gate
+import { registerPermissionHookRoutes } from './permissionHookServer.js'; // F-perm — PreToolUse permission gate
 import { registerScheduleRoutes, startScheduler } from './scheduler.js';
 import { registerMcpRoutes } from './mcp.js';
-import { registerNotifierRoutes, initNotifier } from './notifier.js';
+import { registerNotifierRoutes, initNotifier, subscribeNotifications } from './notifier.js';
 import { registerExportRoutes } from './exporter.js';
 import { registerScoreRoutes } from './scores.js';
 import { registerTagsRoutes } from './tags.js';
@@ -217,6 +218,7 @@ export function buildServer() {
   registerMetricsRoutes(app); // A2
   registerInboxRoutes(app); // F6 — approval inbox
   registerGateRoutes(app); // Task 3 — ask_human MCP gate
+  registerPermissionHookRoutes(app); // F-perm — PreToolUse permission gate callback
   registerScheduleRoutes(app); // A4
   startScheduler(); // A4 — interval tick (unref'd)
   registerMcpRoutes(app); // A5
@@ -343,6 +345,12 @@ export function buildServer() {
     if (!body?.prompt || !body?.cwd) {
       reply.code(400);
       return { error: 'prompt and cwd are required' };
+    }
+    // F-perm — permissionTools is typed string[] but arrives unvalidated; reject a malformed value
+    // with a clean 400 instead of letting it 500 + orphan a 'starting' run deeper in buildArgs.
+    if (body.permissionTools !== undefined && (!Array.isArray(body.permissionTools) || !body.permissionTools.every((t) => typeof t === 'string'))) {
+      reply.code(400);
+      return { error: 'permissionTools must be an array of strings' };
     }
     const normalizedBody: LaunchRequest = {
       ...body,
@@ -508,6 +516,19 @@ export function buildServer() {
     if (!s) return; // 503 already sent (connection cap, H18)
     const { send, stop } = s;
     const unsub = registry.subscribeFleet(send);
+    reply.raw.on('close', () => {
+      unsub();
+      stop();
+    });
+  });
+
+  // ── notification stream (F-notify) — feeds the web browser-Notification watcher and the
+  //    desktop Electron-Notification listener so a pending gate reaches the operator in real time.
+  app.get('/api/notifications/stream', (req, reply) => {
+    const s = sse(reply, req);
+    if (!s) return;
+    const { send, stop } = s;
+    const unsub = subscribeNotifications((notification) => send({ kind: 'notification', notification }));
     reply.raw.on('close', () => {
       unsub();
       stop();

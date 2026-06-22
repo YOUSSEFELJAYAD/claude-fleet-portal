@@ -9,8 +9,8 @@
     "bundle:web": "node scripts/copy-web.cjs",
     "prepare:app": "npm run bundle:server && npm run bundle:web",
     "dev": "electron .",
-    "dist": "electron-builder --publish never",
-    "release": "electron-builder --publish always"
+    "dist": "npm run prepare:app && electron-builder --publish never",
+    "release": "npm run prepare:app && electron-builder --publish always"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0"

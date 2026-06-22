@@ -10,7 +10,7 @@
  * locations — GUI apps don't inherit the shell PATH). Without it, the app falls back to
  * the bundled deterministic mock so the portal is still fully explorable.
  */
-const { app, BrowserWindow, utilityProcess, shell, dialog } = require('electron');
+const { app, BrowserWindow, Notification, utilityProcess, shell, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -19,7 +19,21 @@ const http = require('node:http');
 const WEB_PORT = 4318;
 const API_PORT = 4319; // fixed: the web bundle bakes NEXT_PUBLIC_FLEET_API at build time
 
+// Windows toasts require a stable AppUserModelID; harmless elsewhere. Set before any window.
+app.setAppUserModelId('com.youssefeljayad.claude-fleet-portal');
+
 const children = [];
+
+// Single main-process SSE consumer of /api/notifications/stream (one per app instance).
+let notifReq = null; // module-level so before-quit can destroy it
+let notifStopped = false; // set on before-quit to halt reconnect backoff
+
+/** Absolute path to the bundled PreToolUse permission-gate hook. In dev (`electron .`)
+ *  __dirname is desktop/; in the packaged app it's the resources dir — same layout as
+ *  bundle/server.cjs, which is forked via path.join(appDir, 'bundle', 'server.cjs'). */
+function permissionHookPath() {
+  return path.join(__dirname, 'bundle', 'fleet-permission-hook.mjs');
+}
 
 /** GUI apps get a minimal PATH on macOS/Linux — extend it with the usual install dirs. */
 function augmentedPath() {
@@ -126,6 +140,9 @@ async function bootStack() {
       FLEET_SERVER_PORT: String(API_PORT),
       FLEET_WEB_PORT: String(WEB_PORT),
       CLAUDE_BIN: claudeBin,
+      // the packaged app has no repo `tools/` dir; point the server's permissionHookPath()
+      // at the hook bundle-server.cjs copies next to server.cjs (path agrees with both sides).
+      FLEET_PERMISSION_HOOK_PATH: permissionHookPath(),
       // release checks in the packaged app: no checkout → version comes from the app's own
       // package.json (FLEET_REPO_ROOT) and updates are checked against the GitHub repo;
       // self-update is impossible (no git), so the popup offers the download page instead.
@@ -153,8 +170,10 @@ async function bootStack() {
   return { attached: false, mock };
 }
 
+let win = null; // module-level: notification clicks/focus need the active window
+
 function createWindow(mock) {
-  const win = new BrowserWindow({
+  win = new BrowserWindow({
     width: 1480,
     height: 940,
     minWidth: 980,
@@ -162,6 +181,15 @@ function createWindow(mock) {
     backgroundColor: '#0a0c10',
     title: 'Claude Fleet Portal',
     webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  // focusing the window means the operator has seen what's pending — clear the macOS dock badge and
+  // stop any taskbar flash (Windows/Linux).
+  win.on('focus', () => {
+    app.dock?.setBadge?.('');
+    if (process.platform !== 'darwin') win.flashFrame(false);
+  });
+  win.on('closed', () => {
+    win = null;
   });
   win.loadURL(`http://127.0.0.1:${WEB_PORT}/`);
   // external links (GitHub releases, PR urls, …) open in the system browser
@@ -184,9 +212,84 @@ function createWindow(mock) {
   }
 }
 
+/** Pop a native OS notification; clicking it surfaces the window. macOS also gets a dock badge. */
+function showNotification(notification) {
+  if (!(Notification.isSupported && Notification.isSupported())) return;
+  const notif = new Notification({ title: 'Claude Fleet', body: notification.message || 'A run needs attention.' });
+  notif.on('click', () => {
+    if (win) {
+      win.show();
+      win.focus();
+    }
+  });
+  notif.show();
+  // A focused operator has already seen it; only raise a persistent cue when the window is in the
+  // background. macOS → dock badge; Windows/Linux (no app.dock) → flash the taskbar entry.
+  if (!win || !win.isFocused()) {
+    app.dock?.setBadge?.('●');
+    if (process.platform !== 'darwin' && win) win.flashFrame(true);
+  }
+}
+
+/**
+ * Main-process consumer of the server's notification SSE bus
+ * (GET /api/notifications/stream — emits `data: {"kind":"notification","notification":{...}}`).
+ * Uses the same node:http http.get pattern as httpOk(). Resilient: reconnects with a small
+ * backoff if the request errors or the stream closes while the app is running. Only one
+ * consumer per app instance (notifReq guards re-entry); before-quit stops it.
+ */
+function startNotificationStream(backoffMs = 1000) {
+  if (notifStopped || notifReq) return; // already running or shutting down
+  const url = `http://127.0.0.1:${API_PORT}/api/notifications/stream`;
+  let buffer = '';
+  const reconnect = () => {
+    notifReq = null;
+    if (notifStopped) return;
+    const next = Math.min(backoffMs * 2, 15000); // cap backoff at 15s
+    setTimeout(() => startNotificationStream(next), backoffMs).unref?.();
+  };
+  const req = http.get(url, { headers: { accept: 'text/event-stream' } }, (res) => {
+    if (res.statusCode == null || res.statusCode >= 400) {
+      res.resume();
+      reconnect();
+      return;
+    }
+    backoffMs = 1000; // healthy connection — reset backoff
+    res.setEncoding('utf8');
+    res.on('data', (chunk) => {
+      buffer += chunk;
+      let nl;
+      while ((nl = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        try {
+          const evt = JSON.parse(line.slice(5).trim());
+          if (evt && evt.kind === 'notification' && evt.notification) showNotification(evt.notification);
+        } catch {
+          /* keepalive/comment/partial — ignore */
+        }
+      }
+    });
+    res.on('end', reconnect);
+    res.on('error', reconnect);
+  });
+  notifReq = req;
+  req.on('error', reconnect);
+  // Guard against a socket that connects but never sends headers (server event loop wedged, or a
+  // half-open socket surviving a restart): none of the res/req 'error'/'end' handlers would ever
+  // fire, pinning notifReq and silently stopping native notifications for the session. The server
+  // sends a ': ping' keepalive every 15s, so a 30s first-byte/idle deadline won't false-trip a
+  // healthy stream. Re-armed on each data chunk above is unnecessary — destroy routes to reconnect.
+  req.setTimeout(30000, () => req.destroy(new Error('sse idle timeout')));
+}
+
 app.whenReady().then(async () => {
   const { mock } = await bootStack();
   createWindow(mock);
+  // window is up and the server health-check passed (or we attached to a running stack) —
+  // subscribe the main process to the notification bus for native OS notifications.
+  startNotificationStream();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(false);
   });
@@ -197,6 +300,15 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  notifStopped = true; // halt reconnect backoff
+  if (notifReq) {
+    try {
+      notifReq.destroy();
+    } catch {
+      /* already gone */
+    }
+    notifReq = null;
+  }
   for (const c of children) {
     try {
       c.kill();

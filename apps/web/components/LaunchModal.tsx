@@ -52,6 +52,8 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [workflows, setWorkflows] = useState(true);
   const [interactive, setInteractive] = useState(false);
   const [brief, setBrief] = useState(false); // H22 — enable agent→user messages
+  const [requirePermission, setRequirePermission] = useState(false); // F-perm — PreToolUse gate
+  const [permissionTools, setPermissionTools] = useState<string[]>(['Bash', 'Write', 'Edit']);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
   const [allowedTools, setAllowedTools] = useState<string[]>([]);
   const [disallowedTools, setDisallowedTools] = useState<string[]>([]); // H10
@@ -198,6 +200,8 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             workflowsEnabled: workflows,
             interactive,
             brief,
+            requirePermission,
+            permissionTools: requirePermission && permissionTools.length ? permissionTools : undefined,
             permissionMode,
             allowedTools: (() => {
               // F9 — union mcp__personal-rag into allowedTools when memory recall is on
@@ -473,6 +477,41 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
                   </div>
                 </div>
               </div>
+            )}
+
+            {/* F-perm — require approval: gate sensitive tool calls behind operator approve/deny */}
+            {!isEngineRun && (
+              <Field label="require approval" hint="pause for your approval before gated tool calls (PreToolUse hook)">
+                <div className="flex items-center gap-3">
+                  <Toggle on={requirePermission} onChange={setRequirePermission} label={requirePermission ? 'gated' : 'off'} />
+                </div>
+                {requirePermission && (
+                  <>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {['Bash', 'Write', 'Edit', 'WebFetch', 'Read'].map((t) => {
+                        const on = permissionTools.includes(t);
+                        return (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() =>
+                              setPermissionTools((prev) => (on ? prev.filter((x) => x !== t) : [...prev, t]))
+                            }
+                            className={`font-mono text-[11px] px-2 py-1 border ${on ? 'border-amber/60 text-amber bg-amber/10' : 'border-line2 text-faint'}`}
+                          >
+                            {t}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {permissionTools.length === 0 && (
+                      <div className="mt-1.5 font-mono text-[10px] text-faint">
+                        no tools selected → gating falls back to the defaults (Bash, Write, Edit)
+                      </div>
+                    )}
+                  </>
+                )}
+              </Field>
             )}
 
             {/* effort dial — claude only */}

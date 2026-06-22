@@ -27,7 +27,8 @@ import { spawnClaude, buildArgs, buildResumeArgs, killProcessGroup, thinkingEnv,
 import { createWorktree } from './git.js';
 import { getEngineBin, engineLaunchConfig, isEngineEnabled, addonRunEnvForEngine } from './addons.js';
 import { buildEngineArgs, parseEngineLine, spawnEngine, type ManagedEngineProcess } from './engines.js';
-import { rejectGatesForSession } from './gate.js';
+import { rejectGatesForSession, rejectAllGates } from './gate.js';
+import { rejectPermissionsForSession, rejectAllPermissions } from './permissionGate.js';
 
 const TERMINAL: RunStatus[] = ['completed', 'failed', 'killed'];
 const isTerminal = (s: RunStatus) => TERMINAL.includes(s);
@@ -124,7 +125,13 @@ class Registry {
     return () => this.terminalSubs.delete(cb);
   }
   private notifyTerminal(lr: LiveRun) {
-    if (this.notified.has(lr.run.id)) return; // stop()+onExit can both fire — dedupe
+    // Deny dangling gates/permissions on EVERY terminal call (stop() then onExit both fire). These
+    // are idempotent — they only resolve still-pending entries — so running them BEFORE the
+    // notified-dedupe guard denies a permission enqueued in the SIGTERM→SIGKILL window even though
+    // the terminal-subscriber fan-out below only runs once.
+    rejectGatesForSession(lr.run.sessionId, `run ${lr.run.status}`);
+    rejectPermissionsForSession(lr.run.sessionId, `run ${lr.run.status}`); // F-perm — deny dangling hooks
+    if (this.notified.has(lr.run.id)) return; // stop()+onExit can both fire — dedupe the fan-out
     this.notified.add(lr.run.id);
     const snap = { ...lr.run };
     for (const cb of this.terminalSubs) {
@@ -134,7 +141,6 @@ class Registry {
         /* ignore */
       }
     }
-    rejectGatesForSession(lr.run.sessionId, `run ${lr.run.status}`);
   }
 
   /** Evict a terminal run from memory after a grace window (review #6). Reads fall back to DB. */
@@ -1076,6 +1082,11 @@ class Registry {
     this.evictTimers.clear();
     this.live.clear();
     this.notified.clear();
+    // Drain the in-memory gate/permission stores too — they are decoupled from the DB, so a wipe
+    // would otherwise leave pending entries (and synthetic "(permission request)" inbox cards)
+    // pointing at runs that no longer exist, until their own TTLs fire.
+    rejectAllGates('portal data was reset');
+    rejectAllPermissions('portal data was reset');
 
     repo.resetAllData();
     this.config = repo.getConfig();
