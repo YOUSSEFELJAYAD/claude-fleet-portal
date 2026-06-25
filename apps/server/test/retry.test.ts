@@ -70,16 +70,52 @@ process.env.FAKE_MODE = 'fail';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const TERMINAL = ['completed', 'failed', 'killed'];
 
-async function waitTerminal(registry: any, runId: string, timeoutMs = 5000): Promise<any> {
-  const TERMINAL = ['completed', 'failed', 'killed'];
+/** Condition-based waiting (replaces fixed sleeps): poll every 25ms until `cond` is true or
+ *  timeout. Fixed `sleep()` waits for async, real-process retries are flaky under the full
+ *  suite's parallel load — a child can spawn/exit slower than the guessed delay, and a late
+ *  retry can bleed into the next test's freshly-cleared counter. Waiting for the actual
+ *  condition removes both failure modes. */
+async function waitFor(cond: () => boolean, desc: string, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const r = registry.getRun(runId);
-    if (r && TERMINAL.includes(r.status)) return r;
-    await sleep(50);
+    if (cond()) return;
+    await sleep(25);
   }
+  throw new Error(`timeout waiting for ${desc} after ${timeoutMs}ms`);
+}
+
+async function waitTerminal(registry: any, runId: string, timeoutMs = 8000): Promise<any> {
+  await waitFor(() => {
+    const r = registry.getRun(runId);
+    return !!r && TERMINAL.includes(r.status);
+  }, `run ${runId} terminal`, timeoutMs);
   return registry.getRun(runId);
+}
+
+/** Follow retryOf links from the original run → [original, retry1, retry2, …]. */
+function retryChain(originalId: string): any[] {
+  const all = repo.listRuns();
+  const chain: any[] = [];
+  let cur = all.find((r: any) => r.id === originalId);
+  while (cur) {
+    chain.push(cur);
+    cur = all.find((r: any) => r.retryOf === cur.id);
+  }
+  return chain;
+}
+
+/** Wait until the retry chain has produced `expectedInvocations` bin calls AND every run in
+ *  the chain is terminal — i.e. nothing is still in-flight. Removes the fixed-sleep guesswork
+ *  and guarantees the test drains its own chain before the next test clears the shared counter
+ *  (kills the cross-test pollution that doubled counts under load). */
+async function waitChainSettled(originalId: string, expectedInvocations: number): Promise<void> {
+  await waitFor(() => {
+    if (readCounter().length < expectedInvocations) return false;
+    const chain = retryChain(originalId);
+    return chain.length >= 1 && chain.every((r) => TERMINAL.includes(r.status));
+  }, `chain ${originalId} → ${expectedInvocations} invocations + settled`);
 }
 
 function clearCounter() {
@@ -137,8 +173,8 @@ describe('F3 basic retry', () => {
     const failed = await waitTerminal(registry, run.id);
     expect(failed?.status).toBe('failed');
 
-    // Give the retry time to launch and complete.
-    await sleep(800);
+    // Wait for the full chain (original + 1 retry) to fire and settle — no fixed sleep.
+    await waitChainSettled(run.id, 2);
 
     const lines = readCounter();
     // 2 invocations: original + 1 retry.
@@ -159,8 +195,8 @@ describe('F3 basic retry', () => {
     });
 
     await waitTerminal(registry, run.id);
-    // Wait for both retries to fire and settle.
-    await sleep(1800);
+    // Wait for both retries to fire and settle — condition-based, no fixed sleep.
+    await waitChainSettled(run.id, 3);
 
     const lines = readCounter();
     // 3 invocations: original + retry1 + retry2.
@@ -195,7 +231,7 @@ describe('F3 retry_of persistence', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(800);
+    await waitChainSettled(run.id, 2);
 
     const allRuns = repo.listRuns();
     const retryRun = allRuns.find((r: any) => r.retryOf === run.id);
@@ -217,7 +253,7 @@ describe('F3 retry_of persistence', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(800);
+    await waitChainSettled(run.id, 2);
 
     const res = await app.inject({ method: 'GET', url: `/api/agents/${run.id}`, headers: H() });
     expect(res.statusCode).toBe(200);
@@ -248,9 +284,9 @@ describe('F3 never retry on completed or killed', () => {
     });
 
     const final = await waitTerminal(registry, run.id);
-    await sleep(400);
 
     expect(final?.status).toBe('failed');
+    // No retryPolicy → maybeRetry returns synchronously in onExit; no retry can ever appear.
     const allRuns = repo.listRuns();
     const retryRun = allRuns.find((r: any) => r.retryOf === run.id);
     expect(retryRun).toBeUndefined();
@@ -275,7 +311,14 @@ describe('F3 never retry on completed or killed', () => {
     registry.stop(run.id, 'user');
 
     const final = await waitTerminal(registry, run.id);
-    await sleep(400);
+    // If stop() lost the race the run failed → a retry fired; drain it so a straggler can't
+    // append to the next test's freshly-cleared counter under load.
+    if (final?.status === 'failed') {
+      await waitFor(
+        () => retryChain(run.id).every((r) => TERMINAL.includes(r.status)),
+        'killed-race retry chain drain',
+      );
+    }
 
     // The run should be killed (stop() won the race) or failed (onExit won).
     // Either way, NO retry run should exist: killed → maybeRetry guards on status;
@@ -315,10 +358,10 @@ describe('F3 never retry on completed or killed', () => {
     // Stop all — simulates stop-all/timeout killing the run mid-chain.
     registry.stopAll();
 
-    await waitTerminal(registry, run.id);
-    await sleep(500);
-
-    // At most 1 invocation (the original run). stopAll kills it before retry fires.
+    await waitTerminal(registry, run.id); // stopAll → killed; killed runs never retry
+    // Killed → maybeRetry is skipped, so nothing is in-flight: only the original (if it
+    // managed to append before being killed) can be in the counter.
+    expect(retryChain(run.id).length).toBe(1);
     const lines = readCounter();
     expect(lines.length).toBeLessThanOrEqual(1);
   }, 10_000);
@@ -342,8 +385,7 @@ describe('F3 never retry campaign/project runs', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(400);
-
+    // campaignId/projectId set → maybeRetry returns synchronously in onExit; no retry appears.
     const allRuns = repo.listRuns();
     const retryRun = allRuns.find((r: any) => r.retryOf === run.id);
     expect(retryRun).toBeUndefined();
@@ -363,8 +405,7 @@ describe('F3 never retry campaign/project runs', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(400);
-
+    // campaignId/projectId set → maybeRetry returns synchronously in onExit; no retry appears.
     const allRuns = repo.listRuns();
     const retryRun = allRuns.find((r: any) => r.retryOf === run.id);
     expect(retryRun).toBeUndefined();
@@ -389,7 +430,7 @@ describe('F3 escalation', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(800);
+    await waitChainSettled(run.id, 2);
 
     const lines = readCounter();
     // 2 invocations: original (haiku) + 1 retry (opus, the final attempt).
@@ -412,7 +453,7 @@ describe('F3 escalation', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(1800);
+    await waitChainSettled(run.id, 3);
 
     const lines = readCounter();
     // 3 invocations: original + retry1 (haiku, not final) + retry2 (opus, final).
@@ -522,7 +563,11 @@ describe('F3 daily-cap suppresses retry', () => {
     registry.setConfig({ ...registry.getConfig(), dailySpendCeilingUsd: 50 });
 
     await waitTerminal(registry, run.id);
-    await sleep(600);
+    // Wait for the drop note the blocked retry appends asynchronously (no fixed sleep).
+    await waitFor(
+      () => /auto-retry skipped/.test(repo.getRun(run.id)?.error ?? ''),
+      'daily-cap drop note on failed run',
+    );
 
     // The bin was called exactly once (retry was blocked by cap).
     const lines = readCounter();
@@ -676,8 +721,8 @@ describe('F3 §27 review fixes', () => {
       retryPolicy: { maxRetries: 2 },
     });
     const final = await waitTerminal(registry, run.id);
-    await sleep(400);
     expect(final?.status).toBe('completed');
+    // Completed → maybeRetry guards on status; no retry can appear.
     expect(repo.listRuns().find((r: any) => r.retryOf === run.id)).toBeUndefined();
     process.env.FAKE_MODE = 'fail';
   }, 10_000);
@@ -703,12 +748,10 @@ describe('F3 §27 review fixes', () => {
     const launched = res.json();
     expect(launched.retryOf ?? null).toBeNull(); // forged lineage stripped
     await waitTerminal(registry, launched.id);
-    await sleep(700); // let the (single) retry fire and fail
+    await waitChainSettled(launched.id, 2); // original + exactly one retry, both settled
     const chain = repo.listRuns().filter((r: any) => r.retryOf === launched.id);
     expect(chain.length).toBe(1); // exactly ONE retry — not a billion
     if (chain[0]) {
-      await waitTerminal(registry, chain[0].id);
-      await sleep(400);
       expect(repo.listRuns().find((r: any) => r.retryOf === chain[0].id)).toBeUndefined();
     }
   }, 15_000);
@@ -743,7 +786,7 @@ describe('F3 §27 review fixes', () => {
       retryPolicy: { maxRetries: 1 },
     });
     await waitTerminal(registry, original.id);
-    await sleep(700);
+    await waitChainSettled(original.id, 2);
     const retry = repo.listRuns().find((r: any) => r.retryOf === original.id);
     expect(retry).toBeDefined();
     await waitTerminal(registry, retry!.id);
