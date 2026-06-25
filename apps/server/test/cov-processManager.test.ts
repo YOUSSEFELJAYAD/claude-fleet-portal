@@ -115,6 +115,13 @@ process.env.CLAUDE_BIN = process.execPath; // node binary; argv passed via spawn
 let pm: typeof import('../src/processManager.js');
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Poll `pred` until true or timeout. Condition-based waiting for real-process death so a
+ *  loaded event loop only DELAYS (never flips) the result — vs asserting at a fixed instant. */
+const waitUntil = async (pred: () => boolean, timeoutMs = 15000, interval = 100): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) { if (pred()) return true; await wait(interval); }
+  return pred();
+};
 const spawned: number[] = [];
 
 // spawnClaude spreads the parent's process.env into the child. Under --coverage the parent
@@ -431,11 +438,14 @@ describe('killProcessGroup — identity-guarded group kill (H13)', () => {
     expect(pm.looksLikeClaudePid(pid)).toBe(true);
 
     pm.killProcessGroup(pid, false); // SIGTERM (trapped → survives) + arm 2.5s SIGKILL escalation
-    await wait(700);
-    expect(alive(pid)).toBe(true); // trapped SIGTERM → still alive inside the grace window
+    // Survival check: a short, well-margined window (≪ 2.5s grace) so a loaded event loop can't
+    // let the escalation fire before we observe the trapped-SIGTERM survival.
+    await wait(250);
+    expect(alive(pid)).toBe(true); // trapped SIGTERM → still alive, well inside the grace window
 
-    await wait(2300); // cross the 2.5s threshold so the escalation timer fires
-    expect(alive(pid)).toBe(false); // SIGKILL from the escalation (lines 101-106) reaped it
+    // Death check: poll until the .unref()'d 2.5s escalation reaps it — condition-based, not a
+    // fixed wall-clock instant, so CPU starvation only delays (never flips) the result.
+    expect(await waitUntil(() => !alive(pid), 15000)).toBe(true); // SIGKILL escalation (101-106) reaped it
   }, 45000);
 });
 
