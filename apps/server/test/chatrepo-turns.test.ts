@@ -118,8 +118,10 @@ describe('chatRepo.listTurns pagination', () => {
     const allTurns = chatRepo.listTurns(sid);
     expect(allTurns.length).toBe(2);
 
-    // allTurns[0] is newest (t2, base+10); before = base+10 → only t1 (base) qualifies
-    const newerCreatedAt = allTurns[0].createdAt;
+    // allTurns is oldest-first: allTurns[0]=t1 (base), allTurns[last]=t2 (base+10)
+    expect(allTurns[0].createdAt).toBeLessThan(allTurns[allTurns.length - 1].createdAt);
+    // before = newest.createdAt → only t1 (base) qualifies
+    const newerCreatedAt = allTurns[allTurns.length - 1].createdAt;
     const filtered = chatRepo.listTurns(sid, { before: newerCreatedAt });
     expect(filtered.length).toBe(1);
     expect(filtered[0].id).toBe(t1);
@@ -172,8 +174,8 @@ describe('chatRepo.listTurns stable sort', () => {
     const order2 = chatRepo.listTurns(sid).map(t => t.id);
     // deterministic: same order on every call
     expect(order1).toEqual(order2);
-    // t3 is newest → always first
-    expect(order1[0]).toBe(t3);
+    // t3 is newest → always last in oldest-first order
+    expect(order1[order1.length - 1]).toBe(t3);
 
     // before = sameTs+1 → both t1 and t2 qualify, neither is dropped or duplicated
     const page = chatRepo.listTurns(sid, { before: sameTs + 1 });

@@ -11,7 +11,7 @@ import { dispatchCommand } from './commands.js';
 import { chatLive } from './chatLive.js';
 import { chatTurns, buildEnginePrompt, containDirs } from './chatTurn.js';
 import type {
-  ChatSession, AddChatMessageRequest, ChatAttachment, ChatSessionState,
+  ChatSession, ChatAttachment, ChatSessionState,
   CreateChatSessionRequest,
 } from '@fleet/shared';
 
@@ -45,19 +45,6 @@ export function engineSafeState(engine: string, derived: { state?: ChatSessionSt
   if (engine === 'claude') return derived;
   const state = derived.state === 'live' ? 'idle' : derived.state;
   return { state, live: false };
-}
-
-/** The chat-control envelope the old run-proxy SSE emitted (kept for test compat with
- *  fn-chat-stream-strip.test.ts which imports stripHelloEvents from chat.ts). */
-export interface SessionStateEnvelope { kind: 'session_state'; state: ChatSessionState; live: boolean; runId?: string | null; }
-
-/** Chat-stream frame transform: strip the historical `events` from a run's `hello` snapshot
- *  (kept exported — fn-chat-stream-strip.test.ts imports it from chat.ts). */
-export function stripHelloEvents(m: unknown): unknown {
-  if (m && typeof m === 'object' && (m as any).kind === 'hello') {
-    return { ...(m as any), events: [] };
-  }
-  return m;
 }
 
 // Task 1.4 — re-export the new turn-scoped stream route from chatStream.ts.
@@ -126,17 +113,6 @@ export function registerChatRoutes(app: FastifyInstance) {
     } catch (e: any) {
       return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'turn failed' });
     }
-  });
-
-  // Generic add-message — the client persists the assistant reply on stream-terminal (plan note 1).
-  app.post('/api/chat/sessions/:id/messages', async (req, reply) => {
-    const id = (req.params as any).id;
-    if (!chatRepo.getSession(id)) return reply.code(404).send({ error: 'not found' });
-    const b = (req.body ?? {}) as AddChatMessageRequest;
-    if (typeof b.content !== 'string') return reply.code(400).send({ error: 'content is required' });
-    // ponytail: reuse the session's current turn so an assistant reply groups with its user message
-    const turnId = b.turnId ?? chatRepo.lastTurnId(id) ?? chatRepo.newTurnId();
-    return chatRepo.addMessage({ sessionId: id, role: b.role, kind: b.kind, content: b.content, runId: b.runId ?? null, turnId });
   });
 
   app.post('/api/chat/sessions/:id/command', async (req, reply) => {

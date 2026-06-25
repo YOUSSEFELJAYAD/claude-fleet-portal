@@ -245,6 +245,9 @@ export const chatRepo = {
     // Limit
     groups = groups.slice(0, limit);
 
+    // Return oldest-first for display: we selected the newest `limit` above, now reverse.
+    groups = groups.reverse();
+
     return groups.map(g => ({
       id: g.id,
       sessionId,

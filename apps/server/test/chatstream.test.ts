@@ -238,7 +238,7 @@ describe('GET /api/chat/sessions/:id → { session, turns }', () => {
     expect('messages' in body).toBe(false);
   });
 
-  it('returns turns after a completed turn (newest first)', async () => {
+  it('returns turns after a completed turn (oldest-first)', async () => {
     const id = (await post('/api/chat/sessions', { cwd: '/tmp' })).json().id;
     // add messages directly (turn-based) to avoid spawning a real process
     const t1 = (await import('../src/chatRepo.js')).chatRepo.newTurnId();
@@ -277,12 +277,13 @@ describe('GET /api/chat/sessions/:id/turns?before=&limit= (pagination)', () => {
     ins.run({ id: randomUUID(), session_id: id, role: 'user', kind: 'text', content: 'first', run_id: null, turn_id: t1, created_at: base });
     ins.run({ id: randomUUID(), session_id: id, role: 'user', kind: 'text', content: 'second', run_id: null, turn_id: t2, created_at: base + 100 });
 
-    // GET all turns — newest first: t2 then t1
+    // GET all turns — oldest-first: t1 then t2
     const all = (await get(`/api/chat/sessions/${id}/turns`)).json();
     expect(all.length).toBe(2);
-    expect(all[0].id).toBe(t2);
+    expect(all[0].id).toBe(t1);           // oldest first
+    expect(all[all.length - 1].id).toBe(t2); // newest last
 
-    // Paginate: before = t2.createdAt → only t1
+    // Paginate: before = t2.createdAt → only t1 (still oldest-first in result)
     const page = (await get(`/api/chat/sessions/${id}/turns?before=${base + 100}`)).json();
     expect(page.length).toBe(1);
     expect(page[0].id).toBe(t1);

@@ -1129,15 +1129,6 @@ export interface ChatTurnRequest {
 }
 export interface ChatTurnResponse { runId: string; userMessage: ChatMessage }
 
-export interface AddChatMessageRequest {
-  role: ChatRole;
-  kind: ChatMessageKind;
-  content: string;
-  runId?: string | null;
-  /** Optional: when set, the server uses this turn id; when absent, reuses the session's current turn. */
-  turnId?: string;
-}
-
 export interface ChatCommandResult {
   ok: boolean;
   kind: 'text' | 'table' | 'error';
@@ -1198,6 +1189,7 @@ export interface ChatTurn {
   messages: ChatMessage[]; // user + assistant/command-result/error rows for this turn
   createdAt: number;
   settledAt: number | null;
+  error?: string;          // error text on failed turns (client-side for synthetic failed turns)
 }
 
 /** Turn-scoped SSE frames for the chat stream (GET /api/chat/sessions/:id/stream). */
