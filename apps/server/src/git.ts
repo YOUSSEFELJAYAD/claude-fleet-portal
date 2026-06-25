@@ -229,7 +229,7 @@ export async function initRepo(dir: string, branch: string): Promise<InitRepoRes
   if (probe.ok && probe.stdout.trim() === 'true') return { ok: true };
 
   const init = await gitExec(dir, ['-C', dir, 'init', '-b', branch]);
-  if (!init.ok) return { ok: false, error: gitErr(init) };
+  if (!init.ok) return { ok: false, error: gitErrText(init) };
 
   // Seed a minimal .gitignore (only the worktrees rule). Don't clobber an existing file.
   const gi = path.join(dir, '.gitignore');
@@ -251,7 +251,7 @@ export async function initRepo(dir: string, branch: string): Promise<InitRepoRes
   // would keep the main worktree perpetually dirty, so mergeBranch would refuse every merge.
   // The .gitignore (written above) is already in place, so `add -A` correctly excludes .claude/worktrees/.
   const add = await gitExec(dir, ['-C', dir, 'add', '-A']);
-  if (!add.ok) return { ok: false, error: gitErr(add) };
+  if (!add.ok) return { ok: false, error: gitErrText(add) };
 
   const commit = await gitExec(dir, [
     '-C',
@@ -267,7 +267,7 @@ export async function initRepo(dir: string, branch: string): Promise<InitRepoRes
     '-m',
     'chore: initialize repository (fleet attach)',
   ]);
-  if (!commit.ok) return { ok: false, error: gitErr(commit) };
+  if (!commit.ok) return { ok: false, error: gitErrText(commit) };
 
   return { ok: true };
 }
@@ -304,7 +304,7 @@ export async function lsTree(root: string, rev: string, dir: string): Promise<{ 
   args.push('--');
   if (spec) args.push(spec);
   const r = await gitExec(root, args);
-  if (!r.ok) return { entries: [], error: gitErr(r) };
+  if (!r.ok) return { entries: [], error: gitErrText(r) };
   const entries: LsTreeEntry[] = [];
   for (const rec of r.stdout.split('\0')) {
     if (!rec) continue;
@@ -372,7 +372,7 @@ export async function showFile(root: string, rev: string, relpath: string): Prom
   const isImage = IMAGE_EXTS.has(ext);
   const r = await gitExec(root, ['-C', root, 'show', `${rev}:${relpath}`]);
   if (!r.ok) {
-    return { binary: false, content: '', truncated: false, size: 0, isImage: false, ext, error: gitErr(r) };
+    return { binary: false, content: '', truncated: false, size: 0, isImage: false, ext, error: gitErrText(r) };
   }
   const content = r.stdout;
   const byteLen = Buffer.byteLength(content, 'utf8');
@@ -405,7 +405,7 @@ export interface StatusEntry {
  */
 export async function statusPorcelain(root: string): Promise<{ entries: StatusEntry[]; error?: string }> {
   const r = await gitExec(root, ['-C', root, 'status', '--porcelain=v2', '-z']);
-  if (!r.ok) return { entries: [], error: gitErr(r) };
+  if (!r.ok) return { entries: [], error: gitErrText(r) };
   const toks = r.stdout.split('\0');
   const entries: StatusEntry[] = [];
   for (let i = 0; i < toks.length; i++) {
@@ -449,7 +449,7 @@ export async function changedDiff(root: string, relpath: string): Promise<Change
   // diff when HEAD is unborn (fresh repo with no commits yet).
   let r = await gitExec(root, ['-C', root, 'diff', 'HEAD', '--', relpath]);
   if (!r.ok) r = await gitExec(root, ['-C', root, 'diff', '--', relpath]);
-  if (!r.ok) return { diff: '', truncated: false, binary: false, error: gitErr(r) };
+  if (!r.ok) return { diff: '', truncated: false, binary: false, error: gitErrText(r) };
   let raw = r.stdout;
   if (!raw.trim()) {
     // Neither HEAD nor the index knows the file — untracked entries ('??') need an
@@ -468,7 +468,7 @@ export async function changedDiff(root: string, relpath: string): Promise<Change
       }
       const nx = await gitExec(root, ['-C', root, 'diff', '--no-index', '--', '/dev/null', relpath]);
       if (nx.stdout) raw = nx.stdout;
-      else if (!nx.ok) return { diff: '', truncated: false, binary: false, error: gitErr(nx) };
+      else if (!nx.ok) return { diff: '', truncated: false, binary: false, error: gitErrText(nx) };
     }
   }
   if (/^Binary files .* differ$/m.test(raw)) {
@@ -505,7 +505,7 @@ export async function gitLog(root: string, opts: { branch?: string; max?: number
   if (opts.branch) args.push(opts.branch);
   args.push('--');
   const r = await gitExec(root, args);
-  if (!r.ok) return { entries: [], error: gitErr(r) };
+  if (!r.ok) return { entries: [], error: gitErrText(r) };
   const entries: GitLogEntry[] = [];
   for (const line of r.stdout.split('\n')) {
     if (!line) continue;
@@ -539,7 +539,7 @@ export async function gitShow(root: string, hash: string): Promise<GitShowResult
     return { text: '', truncated: false, error: 'invalid commit hash' };
   }
   const r = await gitExec(root, ['-C', root, 'show', hash, '--']);
-  if (!r.ok) return { text: '', truncated: false, error: gitErr(r) };
+  if (!r.ok) return { text: '', truncated: false, error: gitErrText(r) };
   const capped = capDiff(r.stdout);
   return { text: capped.diff, truncated: capped.truncated };
 }
@@ -787,11 +787,11 @@ export async function mergeBranch(root: string, branch: string, expectedBase?: s
     }
   }
   const st = await gitExec(root, ['-C', root, 'status', '--porcelain']);
-  if (!st.ok) return { ok: false, error: gitErr(st) };
+  if (!st.ok) return { ok: false, error: gitErrText(st) };
   if (st.stdout.trim() !== '') return { ok: false, error: 'main worktree is not clean; refusing to merge' };
 
   const pre = await gitExec(root, ['-C', root, 'rev-parse', 'HEAD']);
-  if (!pre.ok) return { ok: false, error: gitErr(pre) };
+  if (!pre.ok) return { ok: false, error: gitErrText(pre) };
   const origHead = pre.stdout.trim();
 
   // Backup ref for manual recovery (refs/fleet-backup/<branch>) — point at the branch we merge.
@@ -816,7 +816,7 @@ export async function mergeBranch(root: string, branch: string, expectedBase?: s
     // roll main back to exactly the pre-merge state (clears any in-progress merge state too)
     await gitExec(root, ['-C', root, 'merge', '--abort']);
     await gitExec(root, ['-C', root, 'reset', '--hard', origHead]);
-    return { ok: false, error: gitErr(merge) };
+    return { ok: false, error: gitErrText(merge) };
   }
 
   const post = await gitExec(root, ['-C', root, 'rev-parse', 'HEAD']);
@@ -887,7 +887,7 @@ export async function cleanupWorktree(root: string, worktreeName: string, branch
 // ── internal helpers ──────────────────────────────────────────────────────────
 
 /** Cap a diff/patch body at ~600 lines / ~64KB and append a truncation marker when cut. */
-function capDiff(raw: string): ChangedDiff {
+export function capDiff(raw: string): ChangedDiff {
   let truncated = false;
   let body = raw;
   const lines = body.split('\n');
@@ -929,14 +929,19 @@ export function scrubCredentials(s: string): string {
   return s.replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/g, '$1***@');
 }
 
-/** Compose a stable error string from a failed gitExec result (stderr-first, like mcp.ts). */
-function gitErr(r: GitExecResult): string {
+/**
+ * Compose a stable error string from a failed gitExec result (stderr-first, like mcp.ts).
+ * Pass `{ scrub: true }` to credential-scrub the message before it surfaces (used by the
+ * write surface in fileedit.ts); read paths leave it off to preserve their existing output.
+ */
+export function gitErrText(r: GitExecResult, opts?: { scrub?: boolean }): string {
   if (r.code === 127) return 'git binary not found';
   if (r.code === 124) return 'git command timed out';
-  return r.stderr.trim() || r.stdout.trim() || `git failed (exit ${r.code})`;
+  const msg = r.stderr.trim() || r.stdout.trim() || `git failed (exit ${r.code})`;
+  return opts?.scrub ? scrubCredentials(msg) : msg;
 }
 
 /** Build an engine Error from an unexpected git result (caller treats as non-recoverable). */
 function engineErr(msg: string, r: GitExecResult): Error {
-  return new Error(`${msg}: ${gitErr(r)}`);
+  return new Error(`${msg}: ${gitErrText(r)}`);
 }

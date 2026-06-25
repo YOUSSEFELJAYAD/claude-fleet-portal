@@ -235,11 +235,9 @@ export class RunTree {
 
       case 'status':
         if (parsed.usage) this.addUsage(owner, parsed.usage, parsed.messageId);
-        emitType = 'status';
         break;
 
       case 'rate_limit':
-        emitType = 'rate_limit';
         break;
 
       default:
@@ -295,21 +293,10 @@ export class RunTree {
     return [...this.nodes.values()];
   }
 
-  /** Assemble the nested tree rooted at the run's root node (for the UI). */
+  /** Assemble the nested tree rooted at the run's root node (for the UI). The root always
+   *  exists (seeded by the constructor), so this never returns null. */
   assembleTree(): RunNode {
-    const byParent = new Map<string | null, RunNode[]>();
-    for (const n of this.nodes.values()) {
-      const list = byParent.get(n.parentId) ?? [];
-      list.push({ ...n, children: [] });
-      byParent.set(n.parentId, list);
-    }
-    const attach = (node: RunNode): RunNode => {
-      const kids = byParent.get(node.id) ?? [];
-      node.children = kids.map(attach).sort((a, b) => a.startedAt - b.startedAt);
-      return node;
-    };
-    const root = this.nodes.get(this.runId)!;
-    return attach({ ...root, children: [] });
+    return assembleTree(this.flatNodes(), this.runId)!;
   }
 
   /** Mark the whole subtree killed (cascade stop, PRD §7.6). */
@@ -321,4 +308,28 @@ export class RunTree {
       }
     }
   }
+}
+
+/**
+ * Assemble a nested tree from a flat node list, rooted at `rootId` (falls back to the
+ * parentless node). Children sorted by startedAt. Returns null when no root exists.
+ * Shared by RunTree.assembleTree (live) and the registry DB-replay path.
+ */
+export function assembleTree(nodes: RunNode[], rootId: string): RunNode | null {
+  const byParent = new Map<string | null, RunNode[]>();
+  const byId = new Map<string, RunNode>();
+  for (const n of nodes) {
+    const copy = { ...n, children: [] as RunNode[] };
+    byId.set(n.id, copy);
+    const list = byParent.get(n.parentId) ?? [];
+    list.push(copy);
+    byParent.set(n.parentId, list);
+  }
+  const root = byId.get(rootId) ?? nodes.find((n) => n.parentId === null);
+  if (!root) return null;
+  const attach = (node: RunNode): RunNode => {
+    node.children = (byParent.get(node.id) ?? []).map(attach).sort((a, b) => a.startedAt - b.startedAt);
+    return node;
+  };
+  return attach(byId.get(root.id)!);
 }

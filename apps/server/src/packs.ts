@@ -66,7 +66,7 @@ export function validatePack(input: unknown): { name: string; description: strin
   return { name, description, tools: list('tools'), skills: list('skills') };
 }
 
-function rowToPack(row: any): ToolPack {
+export function rowToPack(row: any): ToolPack {
   const arr = (s: string): string[] => {
     try {
       const v = JSON.parse(s);

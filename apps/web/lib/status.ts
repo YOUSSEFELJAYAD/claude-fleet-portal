@@ -33,11 +33,6 @@ export const roleColor = (role: string): string =>
     synthesizer: AMBER,
   })[role] ?? '#7b828c';
 
-export const effortMeta = (e: string): { label: string; hot: number } => {
-  const hot = { low: 0, medium: 1, high: 2, xhigh: 3, max: 4 }[e] ?? 2;
-  return { label: e.toUpperCase(), hot };
-};
-
 export const campaignStatusColor = (s: string): string =>
   ({
     planning: '#b08cff',

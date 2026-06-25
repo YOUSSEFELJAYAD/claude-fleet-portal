@@ -21,7 +21,7 @@ import type {
 import { MODELS, CLAUDE_MODELS, engineForModel } from '@fleet/shared';
 import { validateConfig } from './config.js';
 import { repo, type RunQuery } from './db.js';
-import { RunTree } from './tree.js';
+import { RunTree, assembleTree } from './tree.js';
 import { normalize } from './parser.js';
 import { spawnClaude, buildArgs, buildResumeArgs, killProcessGroup, thinkingEnv, type ManagedProcess } from './processManager.js';
 import { createWorktree } from './git.js';
@@ -91,6 +91,30 @@ interface LiveRun {
   deleted?: boolean;
 }
 
+/** Build a fresh LiveRun with the default lifecycle flags/buffers — the only per-call
+ *  variants are run/req/tree and the interactive flag. */
+function freshLiveRun(run: Run, req: LaunchRequest, tree: RunTree, interactive: boolean): LiveRun {
+  return {
+    run,
+    req,
+    tree,
+    proc: null,
+    engineProc: null,
+    invocationStartedAt: Date.now(),
+    interactive,
+    killed: false,
+    resultSeen: false,
+    resultError: false,
+    awaitingPermission: false,
+    permissionSent: false,
+    pendingNodes: new Map(),
+    pendingEvents: [],
+    runDirty: false,
+    flushTimer: null,
+    lastStderr: '',
+  };
+}
+
 function modelRates(modelId: string, fast: boolean) {
   // Unknown ids price as the DEFAULT model (opus), not whatever happens to be first
   // in the catalog — Fable 5 sits at MODELS[0] and costs 2× opus.
@@ -141,6 +165,35 @@ class Registry {
         /* ignore */
       }
     }
+  }
+
+  /**
+   * Resolve when a run reaches a terminal state (or `timeoutMs` elapses → resolves with the
+   * latest snapshot). Already-terminal → resolves now. Event-driven via onRunTerminal with a
+   * getRun fast-path and a timeout fallback. Used by the loop/manager/review judge paths, which
+   * must await terminal before reading run.structuredOutput (launch returns a still-running run).
+   */
+  awaitRunTerminal(runId: string, timeoutMs: number): Promise<Run | null> {
+    return new Promise((resolve) => {
+      const current = this.getRun(runId);
+      if (current && isTerminal(current.status)) {
+        resolve(current);
+        return;
+      }
+      let done = false;
+      const finish = (r: Run | null) => {
+        if (done) return;
+        done = true;
+        unsub();
+        clearTimeout(timer);
+        resolve(r);
+      };
+      const unsub = this.onRunTerminal((run) => {
+        if (run.id === runId) finish(this.getRun(runId) ?? run);
+      });
+      const timer = setTimeout(() => finish(this.getRun(runId)), timeoutMs);
+      timer.unref?.();
+    });
   }
 
   /** Evict a terminal run from memory after a grace window (review #6). Reads fall back to DB. */
@@ -431,25 +484,7 @@ class Registry {
 
     const interactive = !!req.interactive;
     const tree = new RunTree(sessionId, sessionId, modelRates(req.model, run.fastMode), now);
-    const lr: LiveRun = {
-      run,
-      req,
-      tree,
-      proc: null,
-      engineProc: null,
-      invocationStartedAt: Date.now(),
-      interactive,
-      killed: false,
-      resultSeen: false,
-      resultError: false,
-      awaitingPermission: false,
-      permissionSent: false,
-      pendingNodes: new Map(),
-      pendingEvents: [],
-      runDirty: false,
-      flushTimer: null,
-      lastStderr: '',
-    };
+    const lr = freshLiveRun(run, req, tree, interactive);
     this.live.set(sessionId, lr);
 
     const args = buildArgs(req, sessionId, interactive);
@@ -573,25 +608,7 @@ class Registry {
 
     // Engine runs don't use a cost-aware tree (no model rates known); use a dummy rate.
     const tree = new RunTree(sessionId, sessionId, { inputPerM: 0, outputPerM: 0 }, now);
-    const lr: LiveRun = {
-      run,
-      req: reqIn,
-      tree,
-      proc: null,
-      engineProc: null,
-      invocationStartedAt: Date.now(),
-      interactive: false,
-      killed: false,
-      resultSeen: false,
-      resultError: false,
-      awaitingPermission: false,
-      permissionSent: false,
-      pendingNodes: new Map(),
-      pendingEvents: [],
-      runDirty: false,
-      flushTimer: null,
-      lastStderr: '',
-    };
+    const lr = freshLiveRun(run, reqIn, tree, false);
     this.live.set(sessionId, lr);
 
     // reqIn.cwd may differ from the run's effective cwd (worktree) — codex embeds
@@ -1155,25 +1172,7 @@ class Registry {
     existing.exitCode = null;
     existing.killReason = null;
     existing.error = null;
-    const lr: LiveRun = {
-      run: existing,
-      req,
-      tree,
-      proc: null,
-      engineProc: null,
-      invocationStartedAt: Date.now(),
-      interactive: !!req.interactive,
-      killed: false,
-      resultSeen: false,
-      resultError: false,
-      awaitingPermission: false,
-      permissionSent: false,
-      pendingNodes: new Map(),
-      pendingEvents: [],
-      runDirty: false,
-      flushTimer: null,
-      lastStderr: '',
-    };
+    const lr = freshLiveRun(existing, req, tree, !!req.interactive);
     this.live.set(runId, lr);
     repo.upsertRun(existing);
     const args = buildResumeArgs(req, runId, lr.interactive);
@@ -1248,7 +1247,7 @@ class Registry {
     if (lr) return lr.tree.assembleTree();
     const nodes = repo.getNodes(runId);
     if (nodes.length === 0) return null;
-    return assembleFromFlat(nodes, runId);
+    return assembleTree(nodes, runId);
   }
 
   private snapshot(runId: string): { run: Run; nodes: RunNode[]; events: NormalizedEvent[]; truncatedBefore?: number } | null {
@@ -1263,26 +1262,6 @@ class Registry {
     const events = repo.getEventsTail(runId);
     return { run, nodes: repo.getNodes(runId), events, truncatedBefore: tailTruncatedBefore(events) };
   }
-}
-
-/** Assemble a nested tree from a flat node list (DB replay path). */
-function assembleFromFlat(nodes: RunNode[], rootId: string): RunNode | null {
-  const byParent = new Map<string | null, RunNode[]>();
-  const byId = new Map<string, RunNode>();
-  for (const n of nodes) {
-    const copy = { ...n, children: [] as RunNode[] };
-    byId.set(n.id, copy);
-    const list = byParent.get(n.parentId) ?? [];
-    list.push(copy);
-    byParent.set(n.parentId, list);
-  }
-  const root = byId.get(rootId) ?? nodes.find((n) => n.parentId === null);
-  if (!root) return null;
-  const attach = (node: RunNode): RunNode => {
-    node.children = (byParent.get(node.id) ?? []).map(attach).sort((a, b) => a.startedAt - b.startedAt);
-    return node;
-  };
-  return attach(byId.get(root.id)!);
 }
 
 export const registry = new Registry();

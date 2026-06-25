@@ -10,7 +10,7 @@
 import type { FastifyInstance } from 'fastify';
 import type {
   ControlPlaneKind, GenerateLoopResponse, LoopContract, LoopKind,
-  MergePosture, Project, RiskLevel, RiskRule, Run,
+  MergePosture, Project, RiskLevel, RiskRule,
 } from '@fleet/shared';
 import { registry } from './registry.js';
 import { projectsRepo } from './projects.js';
@@ -147,22 +147,9 @@ function buildGenPrompt(userPrompt: string, context: string): string {
   ].join('\n');
 }
 
-// ── launch + await (copied from loopEval.ts — same trusted plumbing) ─────────────────────
+// ── launch + await ───────────────────────────────────────────────────────────────────
 
-const TERMINAL: Run['status'][] = ['completed', 'failed', 'killed'];
 const GEN_TIMEOUT_MS = 3 * 60_000;
-
-function awaitTerminal(runId: string): Promise<Run | null> {
-  return new Promise((resolve) => {
-    const current = registry.getRun(runId);
-    if (current && TERMINAL.includes(current.status)) { resolve(current); return; }
-    let done = false;
-    const finish = (r: Run | null) => { if (done) return; done = true; unsub(); clearTimeout(timer); resolve(r); };
-    const unsub = registry.onRunTerminal((run) => { if (run.id === runId) finish(registry.getRun(runId) ?? run); });
-    const timer = setTimeout(() => finish(registry.getRun(runId)), GEN_TIMEOUT_MS);
-    timer.unref?.();
-  });
-}
 
 const httpErr = (code: number, message: string) => Object.assign(new Error(message), { statusCode: code });
 
@@ -190,7 +177,7 @@ export async function generateLoopDraft(opts: { prompt: string; projectId: strin
     projectId: project.id,
     interactive: false,
   });
-  const run = await awaitTerminal(launched.id);
+  const run = await registry.awaitRunTerminal(launched.id, GEN_TIMEOUT_MS);
   if (!run || run.status !== 'completed') {
     throw httpErr(502, `AI did not return a config (status: ${run?.status ?? 'unknown'}) — retry or use a template`);
   }

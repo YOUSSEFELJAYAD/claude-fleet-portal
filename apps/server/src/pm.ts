@@ -1098,7 +1098,7 @@ class PmEngine {
           // 5. SHIP. Branch on merge_mode (v2 #2). 'local' (default) → today's local merge --no-ff
           //    into main; 'pr' (requires push_enabled) → fetch+FF-sync the default branch, push the
           //    task branch, open a GitHub PR, and park in Review (a human merges on GitHub — locked
-          //    decision §10.1; the portal NEVER calls prMerge). Everything above this point is shared.
+          //    decision §10.1; the portal never auto-merges). Everything above this point is shared.
           if (project.mergeMode === 'pr') {
             await this.doMergePr(cardId, project, card, wtName, branch, base);
             return;
@@ -1408,7 +1408,7 @@ class PmEngine {
    *   2. pushBranch(root, remote, branch) — park on failure (rejected push / auth error). Never force.
    *   3. prCreate(root, base, branch, title, body) — park on failure.
    *   4. success → record pr_url + pr_state='open' and park the card in REVIEW (NOT Done; the portal
-   *      does NOT call prMerge — a human merges the PR on GitHub, locked decision §10.1). The persisted
+   *      does NOT auto-merge — a human merges the PR on GitHub, locked decision §10.1). The persisted
    *      phase is 'idle' (NOT 'merging') so the safety tick's Review+merging re-drive never re-fires
    *      this push/PR flow; the pr_state badge carries the signal.
    *
@@ -1465,7 +1465,7 @@ class PmEngine {
       return;
     }
 
-    // 4. success → park in Review with the PR badge; a human merges on GitHub (NOT prMerge here).
+    // 4. success → park in Review with the PR badge; a human merges on GitHub (the portal never auto-merges).
     //    phase 'idle' (NOT 'merging') so the safety tick never re-drives the push/PR flow.
     kanbanRepo.updateTask(cardId, {
       column: 'Review',

@@ -42,14 +42,12 @@ import {
   gitExec,
   repoRoot,
   lsFiles,
+  capDiff,
+  gitErrText,
 } from './git.js';
 
 const execFileAsync = promisify(execFile);
 
-// Caps for the locally-built proposed-merge diff (git.ts's capDiff/constants are not
-// exported, so this route reimplements the same ~600-line / ~64KB bound — see manifest caveat).
-const DIFF_LINE_CAP = 600;
-const DIFF_BYTE_CAP = 64 * 1024;
 const DIFF_MAX_BUFFER = 16 * 1024 * 1024; // 16MB (SPEC §7)
 const IMAGE_MAX_BUFFER = 16 * 1024 * 1024;
 
@@ -90,23 +88,6 @@ function classifyText(ext: string, binary: boolean, truncated: boolean): FileTyp
   if (MARKDOWN_EXTS.has(ext)) return 'markdown';
   if (JSON_EXTS.has(ext)) return 'json';
   return 'code';
-}
-
-/** Cap a patch body at ~600 lines / ~64KB with a truncation marker (parity with git.ts capDiff). */
-function capDiffLocal(raw: string): { diff: string; truncated: boolean } {
-  let truncated = false;
-  let body = raw;
-  const lines = body.split('\n');
-  if (lines.length > DIFF_LINE_CAP) {
-    body = lines.slice(0, DIFF_LINE_CAP).join('\n');
-    truncated = true;
-  }
-  if (Buffer.byteLength(body, 'utf8') > DIFF_BYTE_CAP) {
-    body = body.slice(0, DIFF_BYTE_CAP);
-    truncated = true;
-  }
-  if (truncated) body += '\n... [diff truncated]';
-  return { diff: body, truncated };
 }
 
 const FIND_WALK_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'coverage', '.turbo']);
@@ -336,8 +317,7 @@ export function registerFileviewRoutes(app: FastifyInstance) {
       if (!r.ok) return { diff: '', truncated: false, binary: false, error: gitErrText(r) };
       const raw = r.stdout;
       if (relpath && /^Binary files .* differ$/m.test(raw)) return { diff: '', truncated: false, binary: true };
-      const capped = capDiffLocal(raw);
-      return { diff: capped.diff, truncated: capped.truncated, binary: false };
+      return capDiff(raw);
     }
 
     // Working-tree mode: path is required.
@@ -425,11 +405,4 @@ export function registerFileviewRoutes(app: FastifyInstance) {
     scored.sort((a, b) => b.score - a.score || a.path.length - b.path.length || a.path.localeCompare(b.path));
     return scored.slice(0, limit);
   });
-}
-
-/** Stable error string from a failed gitExec result (stderr-first, mirrors git.ts/mcp.ts). */
-function gitErrText(r: { code: number; stderr: string; stdout: string }): string {
-  if (r.code === 127) return 'git binary not found';
-  if (r.code === 124) return 'git command timed out';
-  return r.stderr.trim() || r.stdout.trim() || `git failed (exit ${r.code})`;
 }

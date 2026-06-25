@@ -8,7 +8,7 @@
  * The Manager NEVER writes code — it runs under the read-only `Manager` template (templates.ts)
  * with allowedTools Read/Grep/Glob and no Edit/Write/Bash.
  */
-import type { Project, TriageVerdict, RiskRule, RiskLevel, WorkType, Run, Loop } from '@fleet/shared';
+import type { Project, TriageVerdict, RiskRule, RiskLevel, WorkType, Loop } from '@fleet/shared';
 import { RISK_LABELS, TYPE_LABELS, ROUTING } from '@fleet/shared';
 import { registry } from './registry.js';
 import { repo } from './db.js';
@@ -43,9 +43,6 @@ function ruleMatches(item: WorkItem, glob: string): boolean {
   return item.labels.some((l) => re.test(l));
 }
 
-/** Numeric rank for risk comparison: higher number = higher risk. */
-const RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
-
 /**
  * PURE deterministic rubric hard-floor (§12). If the item touches a configured sensitive glob,
  * FORCE risk to at least rule.forceRisk (hard-floor: only raises, never lowers) and set
@@ -58,7 +55,7 @@ export function applyRubricFloors(item: WorkItem, verdict: TriageVerdict, rubric
     if (ruleMatches(item, rule.glob)) {
       // Hard-floor: the rule can only RAISE risk, never lower it.
       const prevRisk = next.risk;
-      next.risk = RANK[rule.forceRisk] >= RANK[next.risk] ? rule.forceRisk : next.risk;
+      next.risk = RISK_RANK[rule.forceRisk] >= RISK_RANK[next.risk] ? rule.forceRisk : next.risk;
       next.agentReady = false;
       const riskNote = next.risk !== prevRisk
         ? ` raised risk:${prevRisk}→${next.risk},`
@@ -73,38 +70,7 @@ export function applyRubricFloors(item: WorkItem, verdict: TriageVerdict, rubric
 // ── runManagerLoop internals ─────────────────────────────────────────────────
 
 const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
-const TERMINAL: Run['status'][] = ['completed', 'failed', 'killed'];
 const MANAGER_RUN_TIMEOUT_MS = 5 * 60_000;
-
-/**
- * Resolve when the launched run reaches a terminal state. Already-terminal → resolves now.
- * `registry.launch` returns a still-running run with `structuredOutput === null` for the claude
- * path (it is only populated once the engine result lands — registry.ts; benchmarks.ts reads it
- * later via its onRunTerminal handler, never at launch). So we must await terminal before reading
- * structuredOutput. Mirrors loopEval.ts `awaitTerminal` (module-private there, so duplicated).
- */
-function awaitTerminal(runId: string): Promise<Run | null> {
-  return new Promise((resolve) => {
-    const current = registry.getRun(runId);
-    if (current && TERMINAL.includes(current.status)) {
-      resolve(current);
-      return;
-    }
-    let done = false;
-    const finish = (r: Run | null) => {
-      if (done) return;
-      done = true;
-      unsub();
-      clearTimeout(timer);
-      resolve(r);
-    };
-    const unsub = registry.onRunTerminal((run) => {
-      if (run.id === runId) finish(registry.getRun(runId) ?? run);
-    });
-    const timer = setTimeout(() => finish(registry.getRun(runId)), MANAGER_RUN_TIMEOUT_MS);
-    timer.unref?.(); // never keep the process alive on the fallback timer
-  });
-}
 
 /** Resolve the read-only Manager template (falls back to a minimal read-only envelope). */
 function managerTemplate() {
@@ -190,7 +156,7 @@ export async function runManagerLoop(loop: Loop, project: Project, cp: ControlPl
       });
       // launch returns a STILL-RUNNING run (structuredOutput === null on the claude path);
       // await terminal first, then read the structured verdict off the resolved run.
-      const run = await awaitTerminal(launched.id);
+      const run = await registry.awaitRunTerminal(launched.id, MANAGER_RUN_TIMEOUT_MS);
       const so = run?.status === 'completed' ? (run.structuredOutput as Partial<TriageVerdict> | null) : null;
       if (so && so.risk && so.type && typeof so.agentReady === 'boolean' && typeof so.reason === 'string') {
         verdict = {

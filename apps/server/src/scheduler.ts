@@ -304,14 +304,22 @@ function validateTrigger(body: any): { ok: true; intervalMs: number | null; dail
  * campaigns.launchWorker's template application. Returns a new LaunchRequest
  * with template fields overlaid (appendSystemPrompt, model, effort,
  * permissionMode, allowedTools, skills, budgetUsd).
+ *
+ * `templateWins` controls ONLY the model field: scheduled launches carry a
+ * user-supplied model so the request wins (`templateWins: false`); triggers
+ * build the base request without a model, so the template wins
+ * (`templateWins: true`). Effort is always template-wins in both callers.
  */
-function applyTemplateProfile(lr: LaunchRequest, templateName: string): LaunchRequest {
+export function applyTemplateProfile(
+  lr: LaunchRequest,
+  templateName: string,
+  opts: { templateWins: boolean },
+): LaunchRequest {
   const tpl = repo.getTemplateByName(templateName);
   if (!tpl) return lr; // template not found → launch as-is
   return {
     ...lr,
-    // template's model only if the launch_request doesn't override it
-    model: lr.model || tpl.model,
+    model: opts.templateWins ? tpl.model || lr.model : lr.model || tpl.model,
     effort: (tpl.effort as LaunchRequest['effort']) || lr.effort,
     permissionMode: tpl.permissionMode || lr.permissionMode,
     allowedTools: tpl.allowedTools.length ? tpl.allowedTools : (lr.allowedTools ?? []),
@@ -371,7 +379,7 @@ async function tickOnce(): Promise<void> {
         let parsed: LaunchRequest = JSON.parse(row.launch_request);
         // F2: apply template profile first (template wins for unset fields), then fill defaults.
         if (row.template) {
-          parsed = applyTemplateProfile(parsed, row.template);
+          parsed = applyTemplateProfile(parsed, row.template, { templateWins: false });
         }
         // Apply defaults for any fields still unset after template merge.
         parsed = {
@@ -655,7 +663,7 @@ export function registerScheduleRoutes(app: FastifyInstance) {
     }
     // F2: apply template profile first, then fill any still-unset defaults.
     if (existing.template) {
-      parsed = applyTemplateProfile(parsed, existing.template);
+      parsed = applyTemplateProfile(parsed, existing.template, { templateWins: false });
     }
     parsed = {
       ...parsed,

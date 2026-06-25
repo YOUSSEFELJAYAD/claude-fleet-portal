@@ -21,11 +21,11 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import db from './db.js';
-import { repo } from './db.js';
 import { registry } from './registry.js';
 import { kanbanRepo } from './kanban.js';
 import { projectsRepo } from './projects.js';
 import { ghExec } from './gh.js';
+import { applyTemplateProfile } from './scheduler.js';
 import type { LaunchRequest } from '@fleet/shared';
 
 // ── schema (idempotent) ───────────────────────────────────────────────────────
@@ -154,31 +154,6 @@ function addToSeen(seen: number[], id: number, latestPage?: number[]): number[] 
   // Remove oldest evictable entries until we're at MAX_SEEN
   const excess = next.length - MAX_SEEN;
   return [...evictable.slice(excess), ...keep];
-}
-
-// ── template profile application (mirrors campaigns.launchWorker / scheduler.ts) ─
-
-function applyTemplateProfile(lr: LaunchRequest, templateName: string): LaunchRequest {
-  const tpl = repo.getTemplateByName(templateName);
-  if (!tpl) return lr;
-  // Template wins for model/effort when the base request has no explicit user choice.
-  // Triggers have no user-supplied model field — the base LaunchRequest is built WITHOUT
-  // model/effort so the template's values always apply (mirrors campaigns.launchWorker
-  // precedence: `campaign.model || t.model`).
-  return {
-    ...lr,
-    model: tpl.model || lr.model,
-    effort: (tpl.effort as LaunchRequest['effort']) || lr.effort,
-    permissionMode: tpl.permissionMode || lr.permissionMode,
-    allowedTools: tpl.allowedTools.length ? tpl.allowedTools : (lr.allowedTools ?? []),
-    skills: tpl.skills.length ? tpl.skills : (lr.skills ?? []),
-    budgetUsd: tpl.budgetUsd ?? lr.budgetUsd,
-    appendSystemPrompt: tpl.systemPrompt
-      ? lr.appendSystemPrompt
-        ? `${lr.appendSystemPrompt}\n\n${tpl.systemPrompt}`
-        : tpl.systemPrompt
-      : lr.appendSystemPrompt,
-  };
 }
 
 // ── gh API polling helpers ────────────────────────────────────────────────────
@@ -357,7 +332,7 @@ async function _doTickTrigger(row: TriggerRow): Promise<void> {
         interactive: false,
       };
       if (view.template) {
-        lr = applyTemplateProfile(lr, view.template);
+        lr = applyTemplateProfile(lr, view.template, { templateWins: true });
       }
       try {
         await registry.launch(lr);

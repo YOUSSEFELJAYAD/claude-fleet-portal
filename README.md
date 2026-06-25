@@ -115,8 +115,8 @@ pnpm -r typecheck
 Env knobs: `CLAUDE_BIN`, `FLEET_WEB_PORT` (4318), `FLEET_SERVER_PORT` (4319), `FLEET_DATA_DIR`
 (./data), `FLEET_GITHUB_REPO` / `GITHUB_TOKEN` (release checks), `MOCK_FIXTURE`, `MOCK_DELAY_MS`.
 
-Engineering history: every decision is logged in [`DC.md`](./DC.md); the original spec lives in
-[`PRD-Claude-Fleet-Portal.md`](./PRD-Claude-Fleet-Portal.md).
+Architecture overview for contributors (and Claude Code): [`CLAUDE.md`](./CLAUDE.md). The original
+`DC.md` decision log and PRD are preserved in the git history (`git log`).
 
 ---
 

@@ -11,7 +11,7 @@
  * structuredOutput) returns { clean:false, score:0, notes } — uncertainty is NEVER
  * treated as a clean run, so it can never advance the escalation counter (spec §18).
  */
-import type { Loop, LoopEvalResult, Project, Run } from '@fleet/shared';
+import type { Loop, LoopEvalResult, Project } from '@fleet/shared';
 import type { IntendedAction } from './controlplane.js';
 import { registry } from './registry.js';
 
@@ -100,32 +100,7 @@ export function buildEvalPrompt(loop: Loop, intended: IntendedAction[]): string 
 // ── gradeLoopRun ─────────────────────────────────────────────────────────────
 
 const FAILED_EVAL: LoopEvalResult = { clean: false, score: 0, notes: '' };
-const TERMINAL: Run['status'][] = ['completed', 'failed', 'killed'];
 const EVAL_TIMEOUT_MS = 5 * 60_000;
-
-/** Resolve when the launched run reaches a terminal state. Already-terminal → resolves now. */
-function awaitTerminal(runId: string): Promise<Run | null> {
-  return new Promise((resolve) => {
-    const current = registry.getRun(runId);
-    if (current && TERMINAL.includes(current.status)) {
-      resolve(current);
-      return;
-    }
-    let done = false;
-    const finish = (r: Run | null) => {
-      if (done) return;
-      done = true;
-      unsub();
-      clearTimeout(timer);
-      resolve(r);
-    };
-    const unsub = registry.onRunTerminal((run) => {
-      if (run.id === runId) finish(registry.getRun(runId) ?? run);
-    });
-    const timer = setTimeout(() => finish(registry.getRun(runId)), EVAL_TIMEOUT_MS);
-    timer.unref?.();
-  });
-}
 
 /** Coerce a raw structuredOutput object into a LoopEvalResult, or null if it is not gradeable. */
 function parseEvalResult(so: unknown): LoopEvalResult | null {
@@ -158,7 +133,7 @@ export async function gradeLoopRun(
       projectId: project.id,
       interactive: false,
     });
-    const run = await awaitTerminal(launched.id);
+    const run = await registry.awaitRunTerminal(launched.id, EVAL_TIMEOUT_MS);
     if (!run || run.status !== 'completed') {
       return { ...FAILED_EVAL, notes: `loopEval judge did not complete (status: ${run?.status ?? 'unknown'})` };
     }
