@@ -3,13 +3,11 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ChatSession, ChatTurn, ChatAttachment } from '@fleet/shared';
 import { api } from '@/lib/api';
 import { useChatStream, usePendingQuestions } from '@/lib/live';
-import type { ChatActiveTurn, ChatSubagent } from '@/lib/live';
 import { ChatSessionList } from '@/components/ChatSessionList';
 import { ChatSearch } from '@/components/ChatSearch';
 import { ChatThread } from '@/components/ChatThread';
 import { ChatComposer } from '@/components/ChatComposer';
-import { RunningAgentsPanel } from '@/components/RunningAgentsPanel';
-import { ErrorBanner, Badge, Kicker } from '@/components/ui';
+import { ErrorBanner, Badge } from '@/components/ui';
 import { QuestionCard } from '@/components/QuestionCard';
 import { chatStateMeta } from '@/lib/chatState';
 
@@ -23,10 +21,8 @@ export default function ChatPage() {
 
   // §3 — chat-scoped SSE: ONE subscription per session, derived values flow down as props.
   const { state: liveState, activeTurn, error: streamError, clearError: clearStreamError } = useChatStream(activeId);
-  // ponytail: run/live/liveStreamRunId/subagents stubbed — RunningAgentsPanel still wired
+  // ponytail: live stubbed false; the LIVE badge still reads it.
   const live = false;
-  const liveStreamRunId: string | null = null;
-  const subagents: ChatSubagent[] = [];
   const { questions: pendingQuestions, refresh: refreshQuestions } = usePendingQuestions(activeId);
   const chatState = liveState;
 
@@ -154,63 +150,86 @@ export default function ChatPage() {
 
   // App-shell layout: viewport − 58px sticky header − 48px (main p-6).
   return (
-    <div className="flex flex-col h-[calc(100vh-106px)] min-h-0">
-      <div className="mb-4 flex-none">
-        <Kicker>chat · live control</Kicker>
-        <h1 className="font-display text-[22px] tracking-wide text-ink mt-1">Chat</h1>
-        <p className="font-mono text-[11px] text-faint mt-0.5">Talk to a live Claude session — drive the fleet with / commands, attach workspace files with @.</p>
-      </div>
-      <div className="flex flex-1 min-h-0 border border-line2 bg-panel">
-        <ChatSessionList sessions={sessions} activeId={activeId} previews={previews}
-          onSelect={loadSession} onNew={newSession} onRename={renameSession}
-          onKill={killSession} onResume={resumeSession} onDelete={deleteSession} />
-        <div className="flex-1 flex flex-col min-w-0 border-x border-line2">
-          <ChatSearch activeId={activeId} onOpenAtTurn={openSessionAtTurn} />
-          {session ? (
-            <>
-              <div className="px-4 py-2.5 border-b hairline text-[12px] flex items-center gap-2">
-                <span>{session.title} · {session.engine} · {session.model} · {session.cwd}</span>
-                {session.engine !== 'claude' && <span className="text-faint">(one-shot per turn · limited memory)</span>}
-                {effectiveState === 'idle' && (
-                  <Badge label="RESUMABLE" color={chatStateMeta('idle').color} />
-                )}
-                {(effectiveState === 'live' || live) && (
-                  <Badge label="LIVE" color={chatStateMeta('live').color} live />
-                )}
-              </div>
-              {(err || streamError) && (
-                <div className="px-4 pt-3">
-                  <ErrorBanner onRetry={err ? () => setErr(null) : clearStreamError}>{err ?? streamError}</ErrorBanner>
-                </div>
-              )}
-              <ChatThread
-                sessionId={activeId}
-                turns={turns}
-                activeTurn={activeTurn}
-                onRetry={handleRetry}
-              />
-              {pendingQuestions.map((q) => (
-                <div key={q.id} className="px-4 pb-3">
-                  <QuestionCard item={{ kind: 'question', question: q }} onAction={refreshQuestions} />
-                </div>
-              ))}
-              <ChatComposer
-                disabled={busy}
-                running={chatState === 'running'}
-                engine={session.engine}
-                cwd={session.cwd}
-                sessionId={session.id}
-                onSend={(message, attachments) => sendTurn(message, attachments)}
-                onCommand={(line) => runCommand(line)}
-                onStop={() => api.chatInterrupt(session.id)}
-              />
-            </>
-          ) : (
-            <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
-          )}
+    <div className="flex flex-col h-[calc(100vh-106px)] min-h-0 font-sans">
+      {/* TOP BAR — session switcher (left) · search + model/engine + new chat (right).
+          Sessions live on the same level here, not in a left column. */}
+      <header className="flex-none flex items-center gap-3 px-3 py-2 mb-3 rounded-xl border border-white/[0.08] bg-[#16181d]">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-[14px] font-medium text-ink shrink-0">Chat</span>
+          <ChatSessionList sessions={sessions} activeId={activeId} previews={previews}
+            onSelect={loadSession} onNew={newSession} onRename={renameSession}
+            onKill={killSession} onResume={resumeSession} onDelete={deleteSession} />
         </div>
-        <RunningAgentsPanel sessionId={activeId} state={liveState} live={live} runId={liveStreamRunId} subagents={subagents} />
-      </div>
+        <div className="flex items-center gap-3 ml-auto min-w-0">
+          <ChatSearch activeId={activeId} onOpenAtTurn={openSessionAtTurn} />
+          {session && (
+            <div className="flex items-center gap-2 min-w-0">
+              {effectiveState === 'idle' && (
+                <Badge label="RESUMABLE" color={chatStateMeta('idle').color} />
+              )}
+              {(effectiveState === 'live' || live) && (
+                <Badge label="LIVE" color={chatStateMeta('live').color} live />
+              )}
+              <span
+                className="text-[12px] text-dim whitespace-nowrap truncate max-w-[200px]"
+                title={`${session.title} · ${session.cwd}`}
+              >
+                {session.engine} · {session.model}
+                {session.engine !== 'claude' && <span className="text-faint"> · one-shot</span>}
+              </span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={newSession}
+            className="shrink-0 rounded-lg border border-white/[0.08] bg-[#1b1e26] text-[12px] text-ink px-3 py-1.5 hover:border-[#4f7fff]/60 hover:text-[#4f7fff] transition-colors"
+          >
+            + New chat
+          </button>
+        </div>
+      </header>
+
+      {session ? (
+        <>
+          {(err || streamError) && (
+            <div className="flex-none w-full max-w-[800px] mx-auto px-4 mb-2">
+              <ErrorBanner onRetry={err ? () => setErr(null) : clearStreamError}>{err ?? streamError}</ErrorBanner>
+            </div>
+          )}
+
+          {/* CONVERSATION — centered scroll column (max-w-800), fills remaining height. */}
+          <ChatThread
+            sessionId={activeId}
+            turns={turns}
+            activeTurn={activeTurn}
+            onRetry={handleRetry}
+          />
+
+          {pendingQuestions.length > 0 && (
+            <div className="flex-none w-full max-w-[800px] mx-auto px-4 pb-2 space-y-2">
+              {pendingQuestions.map((q) => (
+                <QuestionCard key={q.id} item={{ kind: 'question', question: q }} onAction={refreshQuestions} />
+              ))}
+            </div>
+          )}
+
+          {/* COMPOSER — docked at the bottom, same centered max-w-800 column. */}
+          <div className="flex-none w-full max-w-[800px] mx-auto px-4 pb-3">
+            <ChatComposer
+              disabled={busy}
+              running={chatState === 'running'}
+              engine={session.engine}
+              cwd={session.cwd}
+              sessionId={session.id}
+              onSend={(message, attachments) => sendTurn(message, attachments)}
+              onCommand={(line) => runCommand(line)}
+              onStop={() => api.chatInterrupt(session.id)}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
+      )}
     </div>
   );
 }

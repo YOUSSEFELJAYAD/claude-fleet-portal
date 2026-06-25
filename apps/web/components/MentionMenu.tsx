@@ -117,6 +117,7 @@ export function MentionMenu({
       onClose={onClose}
       emptyText="no files"
       footer="↑↓ navigate · ↵ attach · esc dismiss"
+      className="rounded-xl border-white/[0.08]"
     />
   );
 }

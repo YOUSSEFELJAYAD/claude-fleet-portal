@@ -74,6 +74,7 @@ export function ArgMenu({
       onClose={onClose}
       emptyText="no suggestions"
       footer="↑↓ navigate · ↵ select · esc dismiss"
+      className="rounded-xl border-white/[0.08]"
     />
   );
 }
@@ -231,6 +232,7 @@ export function SlashMenu({
       onClose={onClose}
       emptyText="no commands"
       footer="↑↓ navigate · ↵ select · esc dismiss"
+      className="rounded-xl border-white/[0.08]"
     />
   );
 }

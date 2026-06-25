@@ -68,34 +68,38 @@ export function ChatThread({
   const historyIds = existingIds;
   const showActive = activeTurn != null && !historyIds.has(activeTurn.turnId);
 
+  // Centered conversation column (max-w-800, mx-auto): the scroll container itself,
+  // sans font, comfortable padding, clear gaps between turns.
   return (
-    <div className="flex-1 overflow-auto p-4">
+    <div className="flex-1 overflow-auto w-full max-w-[800px] mx-auto px-4 py-6 font-sans">
       {allTurns.length > 0 && hasMore && (
-        <div className="flex justify-center mb-2">
+        <div className="flex justify-center mb-6">
           <button
             type="button"
             onClick={loadOlder}
             disabled={loadingOlder}
             data-testid="load-older"
-            className="text-[11px] text-faint hover:text-ink transition-colors disabled:opacity-40"
+            className="text-[12px] text-faint hover:text-ink transition-colors disabled:opacity-40"
           >
             {loadingOlder ? 'loading…' : 'load older'}
           </button>
         </div>
       )}
-      {allTurns.map((turn) => (
-        // id anchor lets openSessionAtTurn(sessionId, turnId) scroll to this turn
-        <div key={turn.id} id={`turn-${turn.id}`}>
-          <Turn turn={turn} onRetry={() => onRetry(turn)} />
-        </div>
-      ))}
-      {showActive && (
-        <div id={`turn-${activeTurn.turnId}`}>
-          <Turn active={activeTurn} onRetry={() => onRetry(activeTurn.turn)} />
-        </div>
-      )}
+      <div className="flex flex-col gap-6">
+        {allTurns.map((turn) => (
+          // id anchor lets openSessionAtTurn(sessionId, turnId) scroll to this turn
+          <div key={turn.id} id={`turn-${turn.id}`}>
+            <Turn turn={turn} onRetry={() => onRetry(turn)} />
+          </div>
+        ))}
+        {showActive && (
+          <div id={`turn-${activeTurn.turnId}`}>
+            <Turn active={activeTurn} onRetry={() => onRetry(activeTurn.turn)} />
+          </div>
+        )}
+      </div>
       {showActive && activeTurn.status !== 'failed' && activeTurn.status !== 'settled' && (
-        <div className="sticky bottom-0 flex justify-center py-2">
+        <div className="sticky bottom-0 flex justify-center py-3">
           <Btn
             variant="danger"
             onClick={() => { if (sessionId) api.chatInterrupt(sessionId).catch(() => {}); }}
