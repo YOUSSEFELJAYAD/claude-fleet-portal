@@ -3,136 +3,28 @@
  * A chat session maps to one run id, advanced resume-per-turn (DC §D-029). This module owns
  * turn orchestration and the HTTP routes; pure persistence lives in chatRepo.ts (Task 1.2).
  */
-import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import db from './db.js';
 import { chatRepo } from './chatRepo.js';
 import { registry } from './registry.js';
 import { dispatchCommand } from './commands.js';
 import { chatLive } from './chatLive.js';
-import { safePath, repoRoot } from './git.js';
+import { chatTurns, buildEnginePrompt, containDirs } from './chatTurn.js';
 import type {
-  ChatSession, ChatTurnResponse, AddChatMessageRequest, ChatAttachment, ChatSessionState,
+  ChatSession, AddChatMessageRequest, ChatAttachment, ChatSessionState,
   CreateChatSessionRequest,
 } from '@fleet/shared';
 
 export default db;
 export { chatRepo };
+// Turn orchestration + attachment helpers moved to chatTurn.ts (Task 1.3); re-exported for the
+// existing callers/tests that still import them from chat.ts.
+export { chatTurns, buildEnginePrompt, containDirs } from './chatTurn.js';
 
-const ENGINE_PROMPT_CAP = 6_000;
-
-/** Engines (codex/opencode) cannot resume, so reconstruct a capped transcript prefix into each
- *  turn's prompt (DC §D-030). Keeps the most recent turns when over the cap. */
-export function buildEnginePrompt(history: Array<{ role: string; content: string }>, message: string): string {
-  const tail = `\nUser: ${message}\nAssistant:`;
-  const turns = history.map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`);
-  let body = '';
-  for (let i = turns.length - 1; i >= 0; i--) {
-    const next = turns[i] + '\n' + body;
-    if (next.length + tail.length > ENGINE_PROMPT_CAP) break;
-    body = next;
-  }
-  return (body + tail).trimStart();
-}
-
-/**
- * Fix 07 (security) — containment-check @-attachment paths against a SERVER-TRUSTED workspace
- * `root` before they reach `--add-dir`. Each path is resolved through git.ts's realpath-containment
- * `safePath` guard (the same one fileview.ts uses): a path that stays inside `root` is KEPT as its
- * resolved ABSOLUTE path; a `..`-traversal, an absolute path, or a symlink that escapes `root` is
- * DROPPED. `root` MUST come from server state (never the client). Absolute attachment paths are
- * rebased onto `root` (a bare absolute path is treated as host-escape and dropped unless it lives
- * inside the root). Returns the contained absolute dirs, de-duplicated, order-preserved.
- */
-export async function containDirs(root: string, paths: string[]): Promise<string[]> {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const absRoot = path.resolve(root);
-  for (const p of paths ?? []) {
-    if (typeof p !== 'string' || !p) continue;
-    // safePath rejects absolute `rel` outright; for an absolute attachment that genuinely lives
-    // inside the root, re-express it root-relative so a contained absolute path is still accepted.
-    let rel = p;
-    if (path.isAbsolute(p)) {
-      const r = path.relative(absRoot, path.resolve(p));
-      if (r === '' || r.startsWith('..') || path.isAbsolute(r)) continue; // outside root → drop
-      rel = r;
-    }
-    const safe = await safePath(absRoot, rel);
-    if (!safe || seen.has(safe)) continue;
-    seen.add(safe);
-    out.push(safe);
-  }
-  return out;
-}
-
-/** Resolve a session's server-trusted workspace root for containment: the git toplevel of its cwd
- *  when in a repo, else the raw cwd. NEVER derived from client input (mirrors fileview.ts §6.1). */
-async function sessionRoot(cwd: string): Promise<string> {
-  return (await repoRoot(cwd)) ?? cwd;
-}
-
-/** Run one chat turn. Persists the user message, then launches (turn 1) or resumes (turn N) for
- *  Claude, or launches a fresh engine one-shot with a reconstructed prompt for engines.
- *  §6 — files in `attachments` become path-reference tokens in the prompt; dirs become --add-dir. */
-export async function startTurn(sessionId: string, message: string, attachments?: ChatAttachment[]): Promise<ChatTurnResponse> {
-  const session = chatRepo.getSession(sessionId);
-  if (!session) throw Object.assign(new Error('session not found'), { statusCode: 404 });
-  if (typeof message !== 'string' || !message.trim()) throw Object.assign(new Error('message is required'), { statusCode: 400 });
-
-  const turnId = chatRepo.newTurnId();
-  const userMessage = chatRepo.addMessage({ sessionId, role: 'user', kind: 'text', content: message, runId: null, attachments, turnId });
-
-  // §6.2 — files become path-reference tokens in the prompt; dirs become --add-dir for this turn.
-  // Fix 07 (security) — dir attachments are containment-checked against the session's SERVER-TRUSTED
-  // workspace root (git toplevel of session.cwd, else the raw cwd) before they reach --add-dir, so a
-  // crafted /turn body can't grant the agent arbitrary host dirs (`/`, `~/.ssh`, `../escape`). Paths
-  // that escape the root are dropped; only resolved, contained absolute paths survive.
-  const root = await sessionRoot(session.cwd);
-  const files = (attachments ?? []).filter((a) => a.kind === 'file').map((a) => a.path);
-  const addDirs = await containDirs(root, (attachments ?? []).filter((a) => a.kind === 'dir').map((a) => a.path));
-  const refSuffix = files.length ? `\n\nReferenced files:\n${files.map((f) => `- ${f}`).join('\n')}` : '';
-  const prompt = message + refSuffix;
-
-  const baseOpts = {
-    cwd: session.cwd, model: session.model, effort: session.effort, permissionMode: session.permissionMode,
-    allowedTools: session.allowedTools ?? undefined, skills: session.skills ?? undefined,
-    humanGate: true,
-    ...(addDirs.length ? { addDirs } : {}),
-  };
-
-  let run: { id: string };
-  if (session.engine && session.engine !== 'claude') {
-    const history = chatRepo.listMessages(sessionId).slice(0, -1); // exclude the just-added user msg
-    const enginePrompt = buildEnginePrompt(history.map((m) => ({ role: m.role, content: m.content })), prompt);
-    run = await registry.launchEngine({ ...baseOpts, engine: session.engine, prompt: enginePrompt });
-  } else {
-    // §3.3 — claude turns route through the HELD interactive process: ensureLive returns the live
-    // run id (reused across every turn) and the turn is delivered via registry.sendInput. The
-    // folder --add-dir set only takes effect on a fresh launch/resume — a live run can't change it
-    // mid-turn — so live turns deliver `prompt` (message + file path-references) as plain stdin text.
-    const ensured = await chatLive.ensureLive(session); // claude only
-    if (ensured.live && ensured.runId) {
-      registry.sendInput(ensured.runId, prompt); // deliver this turn to the held interactive process
-      chatLive.touch(session.id);                // reset idle-suspend
-      run = { id: ensured.runId };
-    } else if (!session.runId) {
-      run = await registry.launch({ ...baseOpts, prompt }); // budget-exhausted fallback: one-shot
-    } else {
-      run = await registry.resume(session.runId, prompt, undefined, addDirs.length ? addDirs : undefined);
-    }
-  }
-  chatRepo.setSessionRun(sessionId, run.id);
-  // Announce the backing run to any open chat SSE so it subscribes/re-subscribes. The held path
-  // already streams (the SSE attached to the held run on connect), and resume reuses the id the
-  // SSE is on — both are no-ops via the onBackingRunChange `newRunId === currentRunId` guard. The
-  // case this rescues: a budget-exhausted FRESH session whose connect-time ensureLive returned
-  // {live:false,runId:null} (SSE subscribed to nothing) and whose first turn one-shot-launches a
-  // NEW run id — without this the stream never proxies it, the result never arrives, and the
-  // reply (persisted client-side on `result`) is silently lost.
-  chatLive.notifyBackingRun(sessionId, run.id);
-  return { runId: run.id, userMessage };
-}
+/** Run one chat turn (Task 1.3 — server-declared turn boundaries). Delegates to chatTurns; kept as
+ *  a named export so existing callers/tests importing `startTurn` from chat.ts keep working. */
+export const startTurn = (sessionId: string, message: string, attachments?: ChatAttachment[]) =>
+  chatTurns.startTurn(sessionId, message, attachments);
 
 const TERMINAL_RUN = new Set(['completed', 'failed', 'killed']);
 
@@ -274,7 +166,7 @@ export function registerChatRoutes(app: FastifyInstance) {
     try {
       const id = (req.params as any).id;
       const body = (req.body ?? {}) as { message?: string; attachments?: ChatAttachment[] };
-      const res = await startTurn(id, body.message as string, body.attachments);
+      const res = await chatTurns.startTurn(id, body.message as string, body.attachments);
       chatLive.touch(id); // a turn is activity — keep a live session warm
       return res;
     } catch (e: any) {
