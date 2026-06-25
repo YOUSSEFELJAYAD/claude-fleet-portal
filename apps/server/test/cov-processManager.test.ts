@@ -437,15 +437,15 @@ describe('killProcessGroup — identity-guarded group kill (H13)', () => {
     await wait(500);
     expect(pm.looksLikeClaudePid(pid)).toBe(true);
 
+    const killedAt = Date.now();
     pm.killProcessGroup(pid, false); // SIGTERM (trapped → survives) + arm 2.5s SIGKILL escalation
-    // Survival check: a short, well-margined window (≪ 2.5s grace) so a loaded event loop can't
-    // let the escalation fire before we observe the trapped-SIGTERM survival.
-    await wait(250);
-    expect(alive(pid)).toBe(true); // trapped SIGTERM → still alive, well inside the grace window
-
-    // Death check: poll until the .unref()'d 2.5s escalation reaps it — condition-based, not a
-    // fixed wall-clock instant, so CPU starvation only delays (never flips) the result.
-    expect(await waitUntil(() => !alive(pid), 15000)).toBe(true); // SIGKILL escalation (101-106) reaped it
+    // No fixed-instant `alive` assertion — that races the escalation timer under load. Instead poll
+    // until the process is reaped, then assert the death took LONGER than the 2.5s grace: that proves
+    // it was the SIGKILL escalation (101-106), not the trapped soft SIGTERM (which would reap it
+    // ~immediately). A timer fires at-or-after its delay, never early, so under CPU load this latency
+    // only GROWS — the check can be delayed but never flipped.
+    expect(await waitUntil(() => !alive(pid), 20000)).toBe(true); // escalation eventually reaped it
+    expect(Date.now() - killedAt).toBeGreaterThan(2000); // died via the 2.5s escalation, not SIGTERM
   }, 45000);
 });
 
