@@ -1,3 +1,8 @@
+/**
+ * Chat concurrency UX (spec §3.2/§12) — Task 2.1 update.
+ * The new useChatStream only handles turn-scoped frames; state transitions come
+ * from session_state frames. `hello` and `live` are gone.
+ */
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useChatStream } from '../lib/live';
@@ -9,10 +14,9 @@ describe('chat concurrency UX (spec §3.2/§12)', () => {
     const { result } = renderHook(() => useChatStream('sess-new'));
     const es = FakeEventSource.last();
     act(() => es.emitOpen());
-    // CHAT_LIVE_MAX is full → the server hands back idle (resumable), NOT an error frame
-    act(() => es.emit({ kind: 'hello', state: 'idle', live: false, runId: null, subagents: [] }));
+    // CHAT_LIVE_MAX is full → the server sends session_state idle (resumable), NOT an error
+    act(() => es.emit({ kind: 'session_state', state: 'idle' }));
     expect(result.current.state).toBe('idle');
-    expect(result.current.live).toBe(false);
     expect(result.current.error).toBeNull();
     // the badge the page renders for this state is the subtle "RESUMABLE" pill
     expect(chatStateMeta(result.current.state!).label).toBe('RESUMABLE');
@@ -22,13 +26,11 @@ describe('chat concurrency UX (spec §3.2/§12)', () => {
     const { result } = renderHook(() => useChatStream('sess-live'));
     const es = FakeEventSource.last();
     act(() => es.emitOpen());
-    act(() => es.emit({ kind: 'hello', state: 'live', live: true, runId: 'run-a', subagents: [] }));
+    act(() => es.emit({ kind: 'session_state', state: 'live' }));
     expect(result.current.state).toBe('live');
-    expect(result.current.live).toBe(true);
     // idle-suspend eviction reclaims the chat slot → server pushes a session_state envelope
-    act(() => es.emit({ kind: 'session_state', state: 'idle', live: false }));
+    act(() => es.emit({ kind: 'session_state', state: 'idle' }));
     expect(result.current.state).toBe('idle');
-    expect(result.current.live).toBe(false);
     expect(result.current.error).toBeNull();
   });
 
@@ -36,10 +38,10 @@ describe('chat concurrency UX (spec §3.2/§12)', () => {
     const { result } = renderHook(() => useChatStream('sess-kr'));
     const es = FakeEventSource.last();
     act(() => es.emitOpen());
-    act(() => es.emit({ kind: 'hello', state: 'live', live: true, runId: 'run-a', subagents: [] }));
-    act(() => es.emit({ kind: 'session_state', state: 'killed', live: false }));
+    act(() => es.emit({ kind: 'session_state', state: 'live' }));
+    act(() => es.emit({ kind: 'session_state', state: 'killed' }));
     expect(result.current.state).toBe('killed');
-    act(() => es.emit({ kind: 'session_state', state: 'live', live: true }));
+    act(() => es.emit({ kind: 'session_state', state: 'live' }));
     expect(result.current.state).toBe('live');
     expect(es.closed).toBe(false); // one durable subscription across the whole flow
   });

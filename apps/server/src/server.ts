@@ -31,9 +31,9 @@ import { registerReleaseRoutes } from './release.js';
 import { registerBenchmarkRoutes } from './benchmarks.js'; // F4+F5 — benchmark mode + best-of-N
 import { registerAddonRoutes, resetAddonRuntimeForDataWipe } from './addons.js'; // §22 — add-on marketplace (compression/headroom)
 import { registerResearchRoutes } from './research.js'; // §28 — web research (SearXNG)
-import { registerChatRoutes, registerChatStreamRoute } from './chat.js'; // §30 — chat dashboard
+import { registerChatRoutes, registerChatStreamRoute, chatRepo } from './chat.js'; // §30 — chat dashboard
 import { chatLive } from './chatLive.js'; // §4 — held-process manager (subscribe onRunTerminal at boot)
-import { listCommands } from './commands.js';
+import { listCommands, resolveCommandArgs } from './commands.js';
 import { registerPackRoutes } from './packs.js'; // §23 — tool/skill packs (launch presets)
 import { registerSettingsRoutes } from './settings.js'; // §31 — environment & settings panel
 import { registerPortabilityRoutes } from './portability.js'; // F10 — config as code (export/import)
@@ -241,6 +241,19 @@ export function buildServer() {
   registerChatStreamRoute(app, sse); // §4 — chat-scoped SSE (proxies the backing run)
   chatLive.init(); // §4 — subscribe onRunTerminal: evict a held process when its run dies on its own
   app.get('/api/commands', async () => listCommands());
+  /** GET /api/commands/:name/args?sessionId=&argIndex= → live arg values for the slash-command palette.
+   *  Trust model mirrors GET /api/files/find: cwd is resolved from sessionId server-side. */
+  app.get('/api/commands/:name/args', async (req, reply) => {
+    const name = (req.params as any).name as string;
+    const q = (req.query as any) ?? {};
+    const sessionId = typeof q.sessionId === 'string' ? q.sessionId : '';
+    const argIndex = Math.max(0, Math.floor(Number(q.argIndex) || 0));
+    if (!sessionId) { reply.code(400); return { error: 'sessionId is required' }; }
+    const session = chatRepo.getSession(sessionId);
+    if (!session) { reply.code(400); return { error: 'unknown session' }; }
+    const values = await resolveCommandArgs(name, argIndex);
+    return { values };
+  });
   registerResearchRoutes(app); // §28 — web research (SearXNG)
   registerPackRoutes(app); // §23 — tool/skill packs (launch presets)
   registerPortabilityRoutes(app); // F10 — config as code (export/import)

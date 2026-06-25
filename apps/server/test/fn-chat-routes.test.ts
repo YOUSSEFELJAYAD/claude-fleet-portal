@@ -34,7 +34,7 @@ describe('registerChatRoutes — session CRUD', () => {
     expect((await post('/api/chat/sessions', {})).statusCode).toBe(400);
   });
 
-  it('creates → lists → gets → renames → adds a message → deletes a session', async () => {
+  it('creates → lists → gets → renames → deletes a session', async () => {
     const created = await post('/api/chat/sessions', { cwd: '/tmp', title: 'first' });
     expect(created.statusCode).toBe(200);
     const id = created.json().id;
@@ -43,24 +43,44 @@ describe('registerChatRoutes — session CRUD', () => {
     // list contains it
     expect((await get('/api/chat/sessions')).json().some((s: any) => s.id === id)).toBe(true);
 
-    // get returns session + empty message list
+    // get returns session + empty turns list (Task 1.4: messages field replaced by turns)
     const got = await get('/api/chat/sessions/' + id);
     expect(got.statusCode).toBe(200);
     expect(got.json().session.id).toBe(id);
-    expect(got.json().messages).toEqual([]);
+    expect(got.json().turns).toEqual([]);
 
     // rename (valid + invalid)
     expect((await patch('/api/chat/sessions/' + id, { title: '  renamed  ' })).json().title).toBe('renamed');
     expect((await patch('/api/chat/sessions/' + id, { title: '' })).statusCode).toBe(400);
 
-    // add a message, then it shows up
-    const msg = await post('/api/chat/sessions/' + id + '/messages', { role: 'user', kind: 'text', content: 'hello' });
-    expect(msg.statusCode).toBe(200);
-    expect((await get('/api/chat/sessions/' + id)).json().messages.map((m: any) => m.content)).toContain('hello');
-
     // delete → subsequent get 404s
     expect((await del('/api/chat/sessions/' + id)).json()).toEqual({ ok: true });
     expect((await get('/api/chat/sessions/' + id)).statusCode).toBe(404);
+  });
+
+  it('C1 cross-seam: GET /api/chat/sessions/:id returns turns oldest-first', async () => {
+    const id = (await post('/api/chat/sessions', { cwd: '/tmp', title: 'order-check' })).json().id;
+    const { chatRepo } = await import('../src/chatRepo.js');
+    const db = (await import('../src/db.js')).default;
+    const { randomUUID } = await import('node:crypto');
+    const base = Date.now();
+    const t1 = chatRepo.newTurnId();
+    const t2 = chatRepo.newTurnId();
+    const t3 = chatRepo.newTurnId();
+    const ins = db.prepare(`INSERT INTO chat_messages (id,session_id,role,kind,content,run_id,turn_id,created_at)
+      VALUES (@id,@session_id,@role,@kind,@content,@run_id,@turn_id,@created_at)`);
+    ins.run({ id: randomUUID(), session_id: id, role: 'user', kind: 'text', content: 'first',  run_id: null, turn_id: t1, created_at: base });
+    ins.run({ id: randomUUID(), session_id: id, role: 'user', kind: 'text', content: 'second', run_id: null, turn_id: t2, created_at: base + 10 });
+    ins.run({ id: randomUUID(), session_id: id, role: 'user', kind: 'text', content: 'third',  run_id: null, turn_id: t3, created_at: base + 20 });
+
+    const { turns } = (await get('/api/chat/sessions/' + id)).json();
+    expect(turns.length).toBe(3);
+    // oldest-first: t1, t2, t3
+    expect(turns[0].id).toBe(t1);
+    expect(turns[1].id).toBe(t2);
+    expect(turns[2].id).toBe(t3);
+    expect(turns[0].createdAt).toBeLessThan(turns[1].createdAt);
+    expect(turns[1].createdAt).toBeLessThan(turns[2].createdAt);
   });
 
   it('404s get/patch on an unknown session id', async () => {

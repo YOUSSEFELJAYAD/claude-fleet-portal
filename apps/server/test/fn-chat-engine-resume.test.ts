@@ -26,7 +26,7 @@ describe('engine chat resume degradation', () => {
 
   it('re-launches via launchEngine every turn and never calls registry.resume() for an engine session', async () => {
     const { registry } = await import('../src/registry.js');
-    const { chatRepo, startTurn } = await import('../src/chat.js');
+    const { chatRepo, startTurn, chatTurns } = await import('../src/chat.js');
     const s = chatRepo.createSession({ cwd: '/tmp/eng', engine: 'codex', model: 'gpt-5-codex' });
 
     // Turn 1
@@ -34,6 +34,9 @@ describe('engine chat resume degradation', () => {
     expect(t1.runId).toBe('run-engine');
     expect((registry.launchEngine as any)).toHaveBeenCalledTimes(1);
     expect((registry.resume as any)).not.toHaveBeenCalled();
+
+    // The mock never drives settlement; simulate it so the guard allows turn 2.
+    chatTurns._resetForTest();
 
     // Turn 2 — even though a runId is now stored, it must NOT resume; it re-launches.
     const t2 = await startTurn(s.id, 'second engine turn');

@@ -34,22 +34,24 @@ export function MentionMenu({
   const [results, setResults] = useState<FileFindResult[]>([]);
   const [active, setActive] = useState(0);
 
-  // debounce the search on (query, sessionId); a trailing timer coalesces rapid keystrokes
+  // debounce the search on (query, sessionId); a trailing timer coalesces rapid keystrokes.
+  // An AbortController cancels any in-flight request when the query changes; the alive flag
+  // guards the state update in case the mock/transport doesn't honor the abort signal.
   useEffect(() => {
     let alive = true;
+    const ctrl = new AbortController();
     const t = setTimeout(async () => {
       try {
-        const rows = await api.findFiles(sessionId, query, LIMIT);
-        if (alive) {
-          setResults(rows);
-          setActive(0);
-        }
-      } catch {
-        if (alive) setResults([]);
+        const rows = await api.findFiles(sessionId, query, LIMIT, ctrl.signal);
+        if (alive) { setResults(rows); setActive(0); }
+      } catch (err: unknown) {
+        // ponytail: skip clearing on abort — the next query's results are already arriving
+        if (alive && (err as { name?: string }).name !== 'AbortError') setResults([]);
       }
     }, DEBOUNCE_MS);
     return () => {
       alive = false;
+      ctrl.abort();
       clearTimeout(t);
     };
   }, [query, sessionId]);
@@ -115,6 +117,7 @@ export function MentionMenu({
       onClose={onClose}
       emptyText="no files"
       footer="↑↓ navigate · ↵ attach · esc dismiss"
+      className="rounded-xl border-white/[0.08]"
     />
   );
 }

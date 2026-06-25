@@ -10,6 +10,7 @@
 import type { FastifyInstance } from 'fastify';
 import type Database from 'better-sqlite3';
 import type { NormalizedEvent } from '@fleet/shared';
+import { createFts, sanitizeFtsQuery, ftsSnippet } from './fts.js';
 
 // ── FTS availability flag ─────────────────────────────────────────────────────
 export let searchAvailable = false;
@@ -33,17 +34,14 @@ let _count: Stmt | null = null;
 export function initSearch(db: InstanceType<typeof Database>): void {
   _db = db;
   try {
-    db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS events_fts
-      USING fts5(run_id UNINDEXED, seq UNINDEXED, node_id UNINDEXED, text);
-    `);
+    createFts(db, 'events_fts', ['run_id UNINDEXED', 'seq UNINDEXED', 'node_id UNINDEXED', 'text']);
     // Prepare all statements now (will throw if FTS5 really isn't present).
     _insert = db.prepare(
       `INSERT INTO events_fts (run_id, seq, node_id, text) VALUES (?, ?, ?, ?)`,
     );
     _search = db.prepare(`
       SELECT run_id, seq, node_id,
-             snippet(events_fts, 3, '<b>', '</b>', '…', 12) AS snippet
+             ${ftsSnippet('events_fts', 3)} AS snippet
       FROM events_fts
       WHERE events_fts MATCH ?
       ORDER BY rank
@@ -114,15 +112,6 @@ export function indexEvents(events: NormalizedEvent[]): void {
   }
 }
 
-/**
- * Sanitize user query into a safe FTS5 MATCH expression.
- * Strips double-quotes and wraps in double quotes so operators like AND/OR
- * in user input don't cause FTS5 syntax errors.
- */
-function sanitizeQuery(q: string): string {
-  // Remove all existing double-quotes, then phrase-quote the whole thing.
-  return `"${q.replace(/"/g, '')}"`;
-}
 
 export interface SearchHit {
   runId: string;
@@ -202,7 +191,7 @@ function search(db: InstanceType<typeof Database>, q: string, limit: number): Se
     return { available: false, hits: [] };
   }
   try {
-    const safeQ = sanitizeQuery(q);
+    const safeQ = sanitizeFtsQuery(q);
     const rows = _search.all(safeQ, limit) as Array<{
       run_id: string;
       seq: number;

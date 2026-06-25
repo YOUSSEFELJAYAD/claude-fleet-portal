@@ -1,244 +1,30 @@
 /**
  * Chat Dashboard (§30) — multi-session agent control-plane.
  * A chat session maps to one run id, advanced resume-per-turn (DC §D-029). This module owns
- * session/message persistence, turn orchestration, and the HTTP routes.
+ * turn orchestration and the HTTP routes; pure persistence lives in chatRepo.ts (Task 1.2).
  */
-import { randomUUID } from 'node:crypto';
-import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import db from './db.js';
+import { chatRepo, searchChat } from './chatRepo.js';
 import { registry } from './registry.js';
 import { dispatchCommand } from './commands.js';
 import { chatLive } from './chatLive.js';
-import { safePath, repoRoot } from './git.js';
+import { chatTurns, buildEnginePrompt, containDirs } from './chatTurn.js';
 import type {
-  ChatSession, ChatMessage, ChatRole, ChatMessageKind,
-  CreateChatSessionRequest, RunEngine, EffortLevel, PermissionMode,
-  ChatTurnResponse, AddChatMessageRequest, ChatAttachment, ChatSessionState,
+  ChatSession, ChatAttachment, ChatSessionState,
+  CreateChatSessionRequest,
 } from '@fleet/shared';
 
 export default db;
+export { chatRepo };
+// Turn orchestration + attachment helpers moved to chatTurn.ts (Task 1.3); re-exported for the
+// existing callers/tests that still import them from chat.ts.
+export { chatTurns, buildEnginePrompt, containDirs } from './chatTurn.js';
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS chat_sessions (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  engine TEXT NOT NULL DEFAULT 'claude',
-  model TEXT NOT NULL,
-  effort TEXT NOT NULL,
-  permission_mode TEXT NOT NULL,
-  cwd TEXT NOT NULL,
-  allowed_tools TEXT,
-  skills TEXT,
-  run_id TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS chat_messages (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  role TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  content TEXT NOT NULL,
-  run_id TEXT,
-  created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, created_at);
-`);
-
-// §6 — additive migration: nullable attachments (JSON array of ChatAttachment).
-// Guarded by table_info so it is idempotent (safe on existing DBs + repeated test runs);
-// old rows keep attachments = NULL.
-{
-  const hasAttachments = (db.prepare("PRAGMA table_info('chat_messages')").all() as any[])
-    .some((c) => c.name === 'attachments');
-  if (!hasAttachments) db.exec('ALTER TABLE chat_messages ADD COLUMN attachments TEXT');
-}
-
-const insSession = db.prepare(`INSERT INTO chat_sessions
-  (id,title,engine,model,effort,permission_mode,cwd,allowed_tools,skills,run_id,created_at,updated_at)
-  VALUES (@id,@title,@engine,@model,@effort,@permission_mode,@cwd,@allowed_tools,@skills,@run_id,@created_at,@updated_at)`);
-const getSessionStmt = db.prepare('SELECT * FROM chat_sessions WHERE id = ?');
-const listSessionsStmt = db.prepare('SELECT * FROM chat_sessions ORDER BY updated_at DESC');
-const renameStmt = db.prepare('UPDATE chat_sessions SET title = ?, updated_at = ? WHERE id = ?');
-const setRunStmt = db.prepare('UPDATE chat_sessions SET run_id = ?, updated_at = ? WHERE id = ?');
-const delSessionStmt = db.prepare('DELETE FROM chat_sessions WHERE id = ?');
-const delMessagesStmt = db.prepare('DELETE FROM chat_messages WHERE session_id = ?');
-const insMessage = db.prepare(`INSERT INTO chat_messages
-  (id,session_id,role,kind,content,run_id,attachments,created_at)
-  VALUES (@id,@session_id,@role,@kind,@content,@run_id,@attachments,@created_at)`);
-const listMessagesStmt = db.prepare('SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC');
-
-function rowToSession(r: any): ChatSession {
-  return {
-    id: r.id, title: r.title, engine: r.engine as RunEngine, model: r.model,
-    effort: r.effort as EffortLevel, permissionMode: r.permission_mode as PermissionMode, cwd: r.cwd,
-    allowedTools: r.allowed_tools ? JSON.parse(r.allowed_tools) : null,
-    skills: r.skills ? JSON.parse(r.skills) : null,
-    runId: r.run_id ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
-  };
-}
-function rowToMessage(r: any): ChatMessage {
-  const msg: ChatMessage = {
-    id: r.id, sessionId: r.session_id, role: r.role as ChatRole, kind: r.kind as ChatMessageKind,
-    content: r.content, runId: r.run_id ?? null, createdAt: r.created_at,
-  };
-  if (r.attachments) {
-    try { msg.attachments = JSON.parse(r.attachments) as ChatAttachment[]; } catch { /* leave undefined on garbage */ }
-  }
-  return msg;
-}
-
-export const chatRepo = {
-  createSession(req: CreateChatSessionRequest): ChatSession {
-    const now = Date.now();
-    const row = {
-      id: randomUUID(),
-      title: req.title?.trim() || 'New chat',
-      engine: req.engine ?? 'claude',
-      model: req.model ?? 'claude-opus-4-8',
-      effort: req.effort ?? 'high',
-      permission_mode: req.permissionMode ?? 'default',
-      cwd: req.cwd,
-      allowed_tools: req.allowedTools ? JSON.stringify(req.allowedTools) : null,
-      skills: req.skills ? JSON.stringify(req.skills) : null,
-      run_id: null as string | null,
-      created_at: now, updated_at: now,
-    };
-    insSession.run(row);
-    return rowToSession({ ...row });
-  },
-  listSessions(): ChatSession[] { return (listSessionsStmt.all() as any[]).map(rowToSession); },
-  getSession(id: string): ChatSession | null { const r = getSessionStmt.get(id); return r ? rowToSession(r) : null; },
-  renameSession(id: string, title: string) { renameStmt.run(title, Date.now(), id); },
-  setSessionRun(id: string, runId: string | null) { setRunStmt.run(runId, Date.now(), id); },
-  deleteSession(id: string) { delMessagesStmt.run(id); delSessionStmt.run(id); },
-  addMessage(m: { sessionId: string; role: ChatRole; kind: ChatMessageKind; content: string; runId: string | null; attachments?: ChatAttachment[] }): ChatMessage {
-    const row = {
-      id: randomUUID(), session_id: m.sessionId, role: m.role, kind: m.kind, content: m.content,
-      run_id: m.runId,
-      attachments: m.attachments && m.attachments.length ? JSON.stringify(m.attachments) : null,
-      created_at: Date.now(),
-    };
-    insMessage.run(row);
-    return rowToMessage(row);
-  },
-  listMessages(sessionId: string): ChatMessage[] { return (listMessagesStmt.all(sessionId) as any[]).map(rowToMessage); },
-};
-
-const ENGINE_PROMPT_CAP = 6_000;
-
-/** Engines (codex/opencode) cannot resume, so reconstruct a capped transcript prefix into each
- *  turn's prompt (DC §D-030). Keeps the most recent turns when over the cap. */
-export function buildEnginePrompt(history: Array<{ role: string; content: string }>, message: string): string {
-  const tail = `\nUser: ${message}\nAssistant:`;
-  const turns = history.map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`);
-  let body = '';
-  for (let i = turns.length - 1; i >= 0; i--) {
-    const next = turns[i] + '\n' + body;
-    if (next.length + tail.length > ENGINE_PROMPT_CAP) break;
-    body = next;
-  }
-  return (body + tail).trimStart();
-}
-
-/**
- * Fix 07 (security) — containment-check @-attachment paths against a SERVER-TRUSTED workspace
- * `root` before they reach `--add-dir`. Each path is resolved through git.ts's realpath-containment
- * `safePath` guard (the same one fileview.ts uses): a path that stays inside `root` is KEPT as its
- * resolved ABSOLUTE path; a `..`-traversal, an absolute path, or a symlink that escapes `root` is
- * DROPPED. `root` MUST come from server state (never the client). Absolute attachment paths are
- * rebased onto `root` (a bare absolute path is treated as host-escape and dropped unless it lives
- * inside the root). Returns the contained absolute dirs, de-duplicated, order-preserved.
- */
-export async function containDirs(root: string, paths: string[]): Promise<string[]> {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const absRoot = path.resolve(root);
-  for (const p of paths ?? []) {
-    if (typeof p !== 'string' || !p) continue;
-    // safePath rejects absolute `rel` outright; for an absolute attachment that genuinely lives
-    // inside the root, re-express it root-relative so a contained absolute path is still accepted.
-    let rel = p;
-    if (path.isAbsolute(p)) {
-      const r = path.relative(absRoot, path.resolve(p));
-      if (r === '' || r.startsWith('..') || path.isAbsolute(r)) continue; // outside root → drop
-      rel = r;
-    }
-    const safe = await safePath(absRoot, rel);
-    if (!safe || seen.has(safe)) continue;
-    seen.add(safe);
-    out.push(safe);
-  }
-  return out;
-}
-
-/** Resolve a session's server-trusted workspace root for containment: the git toplevel of its cwd
- *  when in a repo, else the raw cwd. NEVER derived from client input (mirrors fileview.ts §6.1). */
-async function sessionRoot(cwd: string): Promise<string> {
-  return (await repoRoot(cwd)) ?? cwd;
-}
-
-/** Run one chat turn. Persists the user message, then launches (turn 1) or resumes (turn N) for
- *  Claude, or launches a fresh engine one-shot with a reconstructed prompt for engines.
- *  §6 — files in `attachments` become path-reference tokens in the prompt; dirs become --add-dir. */
-export async function startTurn(sessionId: string, message: string, attachments?: ChatAttachment[]): Promise<ChatTurnResponse> {
-  const session = chatRepo.getSession(sessionId);
-  if (!session) throw Object.assign(new Error('session not found'), { statusCode: 404 });
-  if (typeof message !== 'string' || !message.trim()) throw Object.assign(new Error('message is required'), { statusCode: 400 });
-
-  const userMessage = chatRepo.addMessage({ sessionId, role: 'user', kind: 'text', content: message, runId: null, attachments });
-
-  // §6.2 — files become path-reference tokens in the prompt; dirs become --add-dir for this turn.
-  // Fix 07 (security) — dir attachments are containment-checked against the session's SERVER-TRUSTED
-  // workspace root (git toplevel of session.cwd, else the raw cwd) before they reach --add-dir, so a
-  // crafted /turn body can't grant the agent arbitrary host dirs (`/`, `~/.ssh`, `../escape`). Paths
-  // that escape the root are dropped; only resolved, contained absolute paths survive.
-  const root = await sessionRoot(session.cwd);
-  const files = (attachments ?? []).filter((a) => a.kind === 'file').map((a) => a.path);
-  const addDirs = await containDirs(root, (attachments ?? []).filter((a) => a.kind === 'dir').map((a) => a.path));
-  const refSuffix = files.length ? `\n\nReferenced files:\n${files.map((f) => `- ${f}`).join('\n')}` : '';
-  const prompt = message + refSuffix;
-
-  const baseOpts = {
-    cwd: session.cwd, model: session.model, effort: session.effort, permissionMode: session.permissionMode,
-    allowedTools: session.allowedTools ?? undefined, skills: session.skills ?? undefined,
-    humanGate: true,
-    ...(addDirs.length ? { addDirs } : {}),
-  };
-
-  let run: { id: string };
-  if (session.engine && session.engine !== 'claude') {
-    const history = chatRepo.listMessages(sessionId).slice(0, -1); // exclude the just-added user msg
-    const enginePrompt = buildEnginePrompt(history.map((m) => ({ role: m.role, content: m.content })), prompt);
-    run = await registry.launchEngine({ ...baseOpts, engine: session.engine, prompt: enginePrompt });
-  } else {
-    // §3.3 — claude turns route through the HELD interactive process: ensureLive returns the live
-    // run id (reused across every turn) and the turn is delivered via registry.sendInput. The
-    // folder --add-dir set only takes effect on a fresh launch/resume — a live run can't change it
-    // mid-turn — so live turns deliver `prompt` (message + file path-references) as plain stdin text.
-    const ensured = await chatLive.ensureLive(session); // claude only
-    if (ensured.live && ensured.runId) {
-      registry.sendInput(ensured.runId, prompt); // deliver this turn to the held interactive process
-      chatLive.touch(session.id);                // reset idle-suspend
-      run = { id: ensured.runId };
-    } else if (!session.runId) {
-      run = await registry.launch({ ...baseOpts, prompt }); // budget-exhausted fallback: one-shot
-    } else {
-      run = await registry.resume(session.runId, prompt, undefined, addDirs.length ? addDirs : undefined);
-    }
-  }
-  chatRepo.setSessionRun(sessionId, run.id);
-  // Announce the backing run to any open chat SSE so it subscribes/re-subscribes. The held path
-  // already streams (the SSE attached to the held run on connect), and resume reuses the id the
-  // SSE is on — both are no-ops via the onBackingRunChange `newRunId === currentRunId` guard. The
-  // case this rescues: a budget-exhausted FRESH session whose connect-time ensureLive returned
-  // {live:false,runId:null} (SSE subscribed to nothing) and whose first turn one-shot-launches a
-  // NEW run id — without this the stream never proxies it, the result never arrives, and the
-  // reply (persisted client-side on `result`) is silently lost.
-  chatLive.notifyBackingRun(sessionId, run.id);
-  return { runId: run.id, userMessage };
-}
+/** Run one chat turn (Task 1.3 — server-declared turn boundaries). Delegates to chatTurns; kept as
+ *  a named export so existing callers/tests importing `startTurn` from chat.ts keep working. */
+export const startTurn = (sessionId: string, message: string, attachments?: ChatAttachment[]) =>
+  chatTurns.startTurn(sessionId, message, attachments);
 
 const TERMINAL_RUN = new Set(['completed', 'failed', 'killed']);
 
@@ -261,91 +47,21 @@ export function engineSafeState(engine: string, derived: { state?: ChatSessionSt
   return { state, live: false };
 }
 
-/** The chat-control envelope the chat-scoped SSE emits alongside run events (§4). Owned here; the
- *  ChatSessionState literal is from @fleet/shared. */
-export interface SessionStateEnvelope { kind: 'session_state'; state: ChatSessionState; live: boolean; runId?: string | null; }
-
-/**
- * §4 — chat-scoped SSE. Subscribes to the SESSION (not a run id): proxies whichever run currently
- * backs it, so a kill→resume (run id changes underneath) and a page reload both re-attach cleanly.
- * `mkSse` is server.ts's connection-capped SSE factory (passed in to keep the hijack plumbing there).
- */
-/** Chat-stream frame transform: strip the historical `events` from a run's `hello` snapshot
- *  (the transcript lives in persisted chat_messages; replaying it would duplicate the thread
- *  and render it out of order on reload). All other frames pass through unchanged. */
-export function stripHelloEvents(m: unknown): unknown {
-  if (m && typeof m === 'object' && (m as any).kind === 'hello') {
-    return { ...(m as any), events: [] };
-  }
-  return m;
-}
-
-export function registerChatStreamRoute(
-  app: FastifyInstance,
-  mkSse: (reply: any, req: any) => { send: (obj: unknown) => void; stop: () => void } | null,
-) {
-  app.get('/api/chat/sessions/:id/stream', async (req, reply) => {
-    const id = (req.params as any).id;
-    const session = chatRepo.getSession(id);
-    if (!session) { reply.code(404).send({ error: 'not found' }); return; }
-
-    // Fix 04 — for a CLAUDE session, ensure a held interactive process exists on connect (focus)
-    // BEFORE opening the SSE. This guarantees a backing run to subscribe to even for a brand-new
-    // session (no runId yet), so the FIRST turn streams immediately (sendInput hits the held proc)
-    // instead of only showing up after a reload. Engine sessions stay one-shot (never go live).
-    let ensured: { live: boolean; runId: string | null } | null = null;
-    if (session.engine === 'claude') {
-      try { ensured = await chatLive.ensureLive(session); } catch { ensured = null; }
-    }
-
-    const s = mkSse(reply, req);
-    if (!s) return; // 503 already sent (connection cap)
-    const { send, stop } = s;
-
-    // initial chat-control frame — carry the REAL liveness + backing run id so the client's
-    // agents panel resolves the in-flight run (idle/resumable sessions report their backing run too).
-    const st = engineSafeState(session.engine, deriveSessionState(session));
-    send({
-      kind: 'session_state',
-      state: st.state ?? 'idle',
-      live: ensured?.live ?? st.live ?? false,
-      runId: ensured?.runId ?? session.runId ?? null,
-    } satisfies SessionStateEnvelope);
-
-    // proxy the current backing run, if any (re-resolve per connect so reload re-attaches).
-    // The run's hello snapshot carries its FULL event log = the whole transcript (the run is
-    // reused across turns via --resume) — already persisted as chat_messages. stripHelloEvents
-    // drops that history so the live turn never duplicates the transcript / reorders on reload.
-    let currentRunId = ensured?.runId ?? chatLive.liveRunId(id) ?? session.runId ?? null;
-    let unsub: (() => void) | null = null;
-    if (currentRunId) unsub = registry.subscribeRun(currentRunId, (m) => send(stripHelloEvents(m)));
-
-    // Fix 11 — the backing run id can CHANGE mid-connection: after idle-suspend eviction or an
-    // explicit kill/interrupt, the next turn's ensureLive mints a FRESH held run id. The original
-    // subscription points at the dead run, so the new run's frames would never reach this client
-    // (the thread hangs on "⟳ thinking…"). Listen for that change for THIS session, re-subscribe to
-    // the new run, and announce it via a session_state frame so the client (fix 04) adopts the id.
-    const unsubChange = chatLive.onBackingRunChange((sessionId, newRunId) => {
-      if (sessionId !== id || newRunId === currentRunId) return;
-      unsub?.();
-      currentRunId = newRunId;
-      unsub = registry.subscribeRun(newRunId, (m) => send(stripHelloEvents(m)));
-      send({ kind: 'session_state', state: 'live', live: true, runId: newRunId } satisfies SessionStateEnvelope);
-    });
-
-    // The held process was dropped (idle-evict / kill / run terminal) → the session is no longer
-    // live; tell the open client so the LIVE badge clears to resumable (it self-heals to live on
-    // the next turn's backing-run-change). The backing run id is unchanged here (just suspended).
-    const unsubEvict = chatLive.onSessionEvicted((sessionId) => {
-      if (sessionId !== id) return;
-      send({ kind: 'session_state', state: 'idle', live: false, runId: currentRunId } satisfies SessionStateEnvelope);
-    });
-
-    reply.raw.on('close', () => { unsub?.(); unsubChange(); unsubEvict(); stop(); });
-  });
-}
+// Task 1.4 — re-export the new turn-scoped stream route from chatStream.ts.
+// server.ts imports registerChatStreamRoute from chat.ts; the name is kept stable.
+export { registerChatStreamRoute } from './chatStream.js';
 
 export function registerChatRoutes(app: FastifyInstance) {
+  app.get('/api/chat/search', async (req) => {
+    const q = req.query as any;
+    const query = String(q?.q ?? '').trim();
+    if (!query) return { hits: [] };
+    const sessionId = q?.sessionId ? String(q.sessionId) : undefined;
+    const rawLimit = parseInt(String(q?.limit ?? '30'), 10);
+    const limit = Math.min(isNaN(rawLimit) || rawLimit < 1 ? 30 : rawLimit, 100);
+    return { hits: searchChat(query, sessionId, limit) };
+  });
+
   app.get('/api/chat/sessions', async () => chatRepo.listSessions());
 
   app.post('/api/chat/sessions', async (req, reply) => {
@@ -359,7 +75,19 @@ export function registerChatRoutes(app: FastifyInstance) {
     const session = chatRepo.getSession(id);
     if (!session) return reply.code(404).send({ error: 'not found' });
     const safe = engineSafeState(session.engine, deriveSessionState(session));
-    return { session: { ...session, ...safe }, messages: chatRepo.listMessages(id) };
+    // Task 1.4 — return { session, turns } (latest page); Phase 2 client consumes turns not messages.
+    return { session: { ...session, ...safe }, turns: chatRepo.listTurns(id, { limit: 50 }) };
+  });
+
+  // Task 1.4 — cursor-paginated turn history. `before` is a createdAt timestamp (exclusive upper
+  // bound); `limit` caps the page size (default 50). Newest turns first.
+  app.get('/api/chat/sessions/:id/turns', async (req, reply) => {
+    const id = (req.params as any).id;
+    if (!chatRepo.getSession(id)) return reply.code(404).send({ error: 'not found' });
+    const q = req.query as any;
+    const before = q?.before !== undefined ? Number(q.before) : undefined;
+    const limit = q?.limit !== undefined ? Math.min(Number(q.limit) || 50, 200) : 50;
+    return chatRepo.listTurns(id, { before: Number.isFinite(before) ? before : undefined, limit });
   });
 
   app.patch('/api/chat/sessions/:id', async (req, reply) => {
@@ -380,21 +108,11 @@ export function registerChatRoutes(app: FastifyInstance) {
     try {
       const id = (req.params as any).id;
       const body = (req.body ?? {}) as { message?: string; attachments?: ChatAttachment[] };
-      const res = await startTurn(id, body.message as string, body.attachments);
-      chatLive.touch(id); // a turn is activity — keep a live session warm
-      return res;
+      const res = await chatTurns.startTurn(id, body.message as string, body.attachments);
+      return res; // ponytail: touch already happens inside startTurn (live branch)
     } catch (e: any) {
       return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'turn failed' });
     }
-  });
-
-  // Generic add-message — the client persists the assistant reply on stream-terminal (plan note 1).
-  app.post('/api/chat/sessions/:id/messages', async (req, reply) => {
-    const id = (req.params as any).id;
-    if (!chatRepo.getSession(id)) return reply.code(404).send({ error: 'not found' });
-    const b = (req.body ?? {}) as AddChatMessageRequest;
-    if (typeof b.content !== 'string') return reply.code(400).send({ error: 'content is required' });
-    return chatRepo.addMessage({ sessionId: id, role: b.role, kind: b.kind, content: b.content, runId: b.runId ?? null });
   });
 
   app.post('/api/chat/sessions/:id/command', async (req, reply) => {
@@ -403,9 +121,10 @@ export function registerChatRoutes(app: FastifyInstance) {
     if (!session) return reply.code(404).send({ error: 'not found' });
     const line = (req.body as any)?.line;
     if (typeof line !== 'string' || !line.trim()) return reply.code(400).send({ error: 'line is required' });
-    chatRepo.addMessage({ sessionId: id, role: 'user', kind: 'command', content: line, runId: null });
+    const cmdTurnId = chatRepo.newTurnId();
+    chatRepo.addMessage({ sessionId: id, role: 'user', kind: 'command', content: line, runId: null, turnId: cmdTurnId });
     const result = await dispatchCommand(line, session.cwd);
-    chatRepo.addMessage({ sessionId: id, role: 'system', kind: result.ok ? 'command-result' : 'error', content: result.text ?? JSON.stringify(result), runId: result.runId ?? null });
+    chatRepo.addMessage({ sessionId: id, role: 'system', kind: result.ok ? 'command-result' : 'error', content: result.text ?? JSON.stringify(result), runId: result.runId ?? null, turnId: cmdTurnId });
     return result;
   });
 

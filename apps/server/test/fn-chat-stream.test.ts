@@ -112,10 +112,12 @@ describe('GET /api/chat/sessions/:id/stream', () => {
     const { statusCode, headers, chunk } = await sseFirstChunk(`/api/chat/sessions/${id}/stream`);
     expect(statusCode).toBe(200);
     expect(headers['content-type']).toContain('text/event-stream');
+    // Task 1.4: first frame is session_state with NO runId or live fields (new turn-scoped protocol).
     expect(chunk).toContain('session_state');
-    // fix 04 — a fresh CLAUDE session now ensures a held interactive process on connect, so its
-    // initial state is 'live' (not 'idle'); engine sessions, which never go live, stay idle.
-    expect(chunk).toContain('"state":"live"');
+    const frame = JSON.parse(chunk.split('\n').find((l: string) => l.startsWith('data: '))!.slice(6));
+    expect(frame.kind).toBe('session_state');
+    expect('runId' in frame).toBe(false);
+    expect('live' in frame).toBe(false);
   });
 
   it('an ENGINE session stays idle on connect (never holds a live process)', async () => {
@@ -127,32 +129,33 @@ describe('GET /api/chat/sessions/:id/stream', () => {
     expect(chunk).toContain('"state":"idle"');
   });
 
-  it('the initial session_state frame carries a runId field (real liveness/run id, not just state)', async () => {
+  it('the initial session_state frame has NO runId field (Task 1.4 turn-scoped protocol)', async () => {
     const created = await app.inject({ method: 'POST', url: '/api/chat/sessions', headers: HOST(), payload: { cwd: '/tmp' } });
     const id = created.json().id;
 
     const { frames } = await sseCollect(`/api/chat/sessions/${id}/stream`, 500);
     const ss = frames.find((f) => f.kind === 'session_state');
     expect(ss).toBeTruthy();
-    // fix 04: ensureLive runs on connect, so a fresh claude session reports a held run id here.
-    expect('runId' in ss).toBe(true);
-    expect(ss.runId).toBeTruthy();
+    // Task 1.4: session_state carries ONLY state — no runId, no live (ChatStreamFrame contract).
+    expect('runId' in ss).toBe(false);
+    expect('live' in ss).toBe(false);
   });
 
-  it('the FIRST turn streams: POSTing /turn on a fresh session emits run/event frames on the live stream', async () => {
+  it('a turn emits turn:start / turn:event / turn:settled frames (Task 1.4 turn-scoped protocol)', async () => {
     const created = await app.inject({ method: 'POST', url: '/api/chat/sessions', headers: HOST(), payload: { cwd: '/tmp' } });
     const id = created.json().id;
 
-    // Connect FIRST (fix 04: this ensures a live process so the first turn streams immediately),
-    // then fire the turn while the stream is open and collect what the server pushes.
-    const collected = sseCollect(`/api/chat/sessions/${id}/stream`, 1200);
-    await new Promise((r) => setTimeout(r, 100)); // let the stream attach to the ensured run
+    // Connect first, then fire the turn while the stream is open.
+    const collected = sseCollect(`/api/chat/sessions/${id}/stream`, 2000);
+    await new Promise((r) => setTimeout(r, 100));
     const turn = await app.inject({ method: 'POST', url: `/api/chat/sessions/${id}/turn`, headers: HOST(), payload: { message: 'hello' } });
     expect(turn.statusCode).toBe(200);
 
     const { frames } = await collected;
-    // at least one real run/event frame for the in-flight turn (NOT only the session_state envelope)
-    const runOrEvent = frames.filter((f) => f.kind === 'run' || f.kind === 'event');
-    expect(runOrEvent.length).toBeGreaterThan(0);
+    // Task 1.4: turn-scoped frames replace the old run-proxy frames
+    const turnFrames = frames.filter((f) => ['turn:start', 'turn:event', 'turn:settled', 'turn:failed'].includes(f.kind));
+    expect(turnFrames.length).toBeGreaterThan(0);
+    // no old-protocol run-proxy frames
+    expect(frames.filter((f) => f.kind === 'run' || f.kind === 'hello').length).toBe(0);
   });
 });

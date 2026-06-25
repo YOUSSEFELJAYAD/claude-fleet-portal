@@ -2,6 +2,82 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { CommandDef, SkillInfo, SubagentInfo } from '@fleet/shared';
 import { FloatingMenu, floatingOptionId, type FloatingItem } from '@/components/ui';
+
+// ─── ArgMenu — second-stage arg-value picker (Task 4.1) ──────────────────────────────────────────
+
+const ARG_LISTBOX_ID = 'chat-arg-menu';
+
+/** §5.3 second-stage: shown after a command is picked when the current arg has completable values.
+ *  Values are pre-resolved by ChatComposer (dynamic → api.commandArgs; enum → catalog).
+ *  Keyboard nav mirrors SlashMenu: ArrowUp/Down move selection, Enter picks, Escape dismisses. */
+export function ArgMenu({
+  values,
+  query,
+  onPick,
+  onClose,
+  onCount,
+  onActiveDescendant,
+}: {
+  values: { value: string; label?: string }[];
+  query: string;
+  onPick: (value: string) => void;
+  onClose: () => void;
+  onCount?: (n: number) => void;
+  onActiveDescendant?: (info: { listboxId: string; activeOptionId: string | null }) => void;
+}) {
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(
+    () => values.filter((v) => !q || v.value.toLowerCase().includes(q) || (v.label ?? '').toLowerCase().includes(q)),
+    [values, q],
+  );
+  const [active, setActive] = useState(0);
+
+  useEffect(() => setActive((a) => (a >= filtered.length ? 0 : a)), [filtered.length]);
+
+  useEffect(() => {
+    onCount?.(filtered.length);
+    return () => onCount?.(0);
+  }, [filtered.length, onCount]);
+
+  useEffect(() => {
+    onActiveDescendant?.({
+      listboxId: ARG_LISTBOX_ID,
+      activeOptionId: filtered[active] ? floatingOptionId(ARG_LISTBOX_ID, active) : null,
+    });
+    return () => onActiveDescendant?.({ listboxId: ARG_LISTBOX_ID, activeOptionId: null });
+  }, [active, filtered, onActiveDescendant]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); setActive((a) => Math.min(a + 1, filtered.length - 1)); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); setActive((a) => Math.max(a - 1, 0)); }
+      else if (e.key === 'Enter') { if (filtered[active]) { e.preventDefault(); e.stopPropagation(); onPick(filtered[active].value); } }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [filtered, active, onPick, onClose]);
+
+  const items: FloatingItem[] = filtered.map((v, i) => ({
+    id: `${ARG_LISTBOX_ID}-v-${i}`,
+    label: v.label ?? v.value,
+    hint: v.label ? v.value : undefined,
+  }));
+
+  return (
+    <FloatingMenu
+      open
+      id={ARG_LISTBOX_ID}
+      items={items}
+      activeIndex={active}
+      onPick={(_, idx) => onPick(filtered[idx].value)}
+      onClose={onClose}
+      emptyText="no suggestions"
+      footer="↑↓ navigate · ↵ select · esc dismiss"
+      className="rounded-xl border-white/[0.08]"
+    />
+  );
+}
 import { api } from '@/lib/api';
 
 /** stable listbox id so the composer's combobox textarea can reference it (aria-controls). */
@@ -156,6 +232,7 @@ export function SlashMenu({
       onClose={onClose}
       emptyText="no commands"
       footer="↑↓ navigate · ↵ select · esc dismiss"
+      className="rounded-xl border-white/[0.08]"
     />
   );
 }

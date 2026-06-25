@@ -1,89 +1,125 @@
+/**
+ * cov-chatthread — Task 2.3 new-API tests.
+ * ChatThread now accepts: sessionId, turns (settled history), activeTurn (live), onRetry.
+ * It renders <Turn> for each history turn then <Turn active={…}> for the live turn.
+ * It exposes a "load older" trigger to paginate history via api.chatTurns.
+ */
 import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import type { ChatTurn, ChatMessage } from '@fleet/shared';
+import type { ChatActiveTurn } from '../lib/live';
 
-import { ChatThread } from '../components/ChatThread';
-import type { ChatMessage, NormalizedEvent, Run } from '@fleet/shared';
-
-// fix 10A — ChatThread no longer subscribes; the page hoists ONE useChatStream and passes
-// run/events/partials/error down as props. These tests drive those props directly.
-const msg = (over: Partial<ChatMessage>): ChatMessage => ({
-  id: 'm' + Math.random(), sessionId: 's1', role: 'assistant', kind: 'text',
-  content: '', runId: null, createdAt: 0, ...over,
+vi.mock('@/lib/api', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...real,
+    api: {
+      ...real.api,
+      chatTurns: vi.fn(async () => []),
+      chatInterrupt: vi.fn(async () => {}),
+    },
+  };
 });
 
-const noop = () => {};
-function thread(over: {
-  messages?: ChatMessage[];
-  run?: Run | null;
-  events?: NormalizedEvent[];
-  partials?: Record<string, string>;
-  error?: string | null;
-}) {
-  return (
-    <ChatThread
-      sessionId="s1"
-      messages={over.messages ?? []}
-      run={over.run ?? null}
-      events={over.events ?? []}
-      partials={over.partials ?? {}}
-      error={over.error ?? null}
-      onTurnComplete={noop}
-      onTurnError={noop}
-    />
-  );
+// Import AFTER mock registration so the component picks up the mock.
+const { ChatThread } = await import('../components/ChatThread');
+const { api } = await import('@/lib/api');
+
+function mkMsg(over: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    id: `m${Math.random().toString(36).slice(2)}`,
+    sessionId: 's1', role: 'user', kind: 'text', content: '',
+    runId: null, turnId: 't0', createdAt: 0, ...over,
+  };
 }
 
-describe('ChatThread', () => {
-  it('renders assistant text as markdown (a code fence becomes a code block, not raw)', () => {
-    render(thread({ messages: [msg({ role: 'assistant', content: '# Hello\n\nworld' })] }));
-    expect(screen.getByText('Hello')).toBeTruthy();
-    expect(screen.getByText('world')).toBeTruthy();
+function mkTurn(over: Partial<ChatTurn> & { msgs?: Partial<ChatMessage>[] } = {}): ChatTurn {
+  const { msgs = [], ...rest } = over;
+  return {
+    id: `turn-${Math.random().toString(36).slice(2)}`,
+    sessionId: 's1', status: 'settled',
+    messages: msgs.map((m) => mkMsg(m)),
+    createdAt: Date.now(), settledAt: Date.now(), ...rest,
+  };
+}
+
+function mkActive(turn: ChatTurn, status: ChatActiveTurn['status'] = 'streaming'): ChatActiveTurn {
+  return { turnId: turn.id, status, turn, events: [], partials: {} };
+}
+
+const noop = () => {};
+
+afterEach(() => vi.clearAllMocks());
+
+describe('ChatThread (new prop API)', () => {
+  it('renders history turns in document order, active turn last', () => {
+    const t1 = mkTurn({ id: 'A', msgs: [{ content: 'first', role: 'user' }] });
+    const t2 = mkTurn({ id: 'B', msgs: [{ content: 'second', role: 'user' }] });
+    const live = mkTurn({ id: 'C', msgs: [{ content: 'live question', role: 'user' }] });
+    render(
+      <ChatThread sessionId="s1" turns={[t1, t2]} activeTurn={mkActive(live)} onRetry={noop} />,
+    );
+    const body = document.body.textContent ?? '';
+    const i1 = body.indexOf('first');
+    const i2 = body.indexOf('second');
+    const iL = body.indexOf('live question');
+    expect(i1).toBeGreaterThan(-1);
+    expect(i2).toBeGreaterThan(i1);
+    expect(iL).toBeGreaterThan(i2);
   });
 
-  it('renders a command-result error message via ErrorBanner', () => {
-    render(thread({ messages: [msg({ role: 'system', kind: 'error', content: 'boom failed' })] }));
-    expect(screen.getByText(/boom failed/)).toBeTruthy();
+  it('does NOT duplicate a settled turn when a different activeTurn is live', () => {
+    const hist = mkTurn({ id: 'hist-1', msgs: [{ content: 'settled reply', role: 'assistant' }] });
+    const live = mkTurn({ id: 'live-1', msgs: [{ content: 'new question', role: 'user' }] });
+    render(
+      <ChatThread sessionId="s1" turns={[hist]} activeTurn={mkActive(live)} onRetry={noop} />,
+    );
+    expect(screen.getAllByText('settled reply')).toHaveLength(1);
+    expect(screen.getAllByText('new question')).toHaveLength(1);
   });
 
-  it('renders a serialized table command-result as a real table', () => {
-    const payload = JSON.stringify({ ok: true, kind: 'table', columns: ['id'], rows: [['x1']] });
-    render(thread({ messages: [msg({ role: 'system', kind: 'command-result', content: payload })] }));
-    expect(document.querySelector('table')).toBeTruthy();
-    expect(screen.getByText('x1')).toBeTruthy();
+  it('renders only history when activeTurn is null', () => {
+    const t = mkTurn({ id: 't1', msgs: [{ content: 'history only', role: 'user' }] });
+    render(<ChatThread sessionId="s1" turns={[t]} activeTurn={null} onRetry={noop} />);
+    expect(screen.getByText('history only')).toBeTruthy();
   });
 
-  it('renders live tool_use as a ToolCallCard from the stream', () => {
-    render(thread({
-      run: { id: 'run1', status: 'running' } as Run,
-      events: [
-        { type: 'tool_use', nodeId: 'n1', seq: 1, ts: 0, runId: 'run1', payload: { id: 't1', name: 'Read', input: { file_path: '/a' } } } as unknown as NormalizedEvent,
-      ],
-    }));
-    expect(screen.getByText('Read')).toBeTruthy();
+  it('calls api.chatTurns with the oldest turn createdAt as cursor when "load older" is clicked', async () => {
+    const old = mkTurn({ id: 'old', createdAt: 1000 });
+    const newer = mkTurn({ id: 'new', createdAt: 2000 });
+    render(
+      <ChatThread sessionId="s1" turns={[old, newer]} activeTurn={null} onRetry={noop} />,
+    );
+    fireEvent.click(screen.getByTestId('load-older'));
+    await waitFor(() => expect(api.chatTurns).toHaveBeenCalledWith('s1', 1000));
   });
 
-  it('streams partial assistant tokens into the live bubble', () => {
-    render(thread({
-      run: { id: 'run1', status: 'running' } as Run,
-      partials: { n1: 'partial answer' },
-    }));
-    expect(screen.getByText(/partial answer/)).toBeTruthy();
+  it('prepends older turns above existing history after "load older"', async () => {
+    const older = mkTurn({ id: 'even-older', createdAt: 500, msgs: [{ content: 'ancient msg', role: 'user' }] });
+    vi.mocked(api.chatTurns).mockResolvedValueOnce([older]);
+    const current = mkTurn({ id: 'curr', createdAt: 1000, msgs: [{ content: 'current msg', role: 'user' }] });
+    render(<ChatThread sessionId="s1" turns={[current]} activeTurn={null} onRetry={noop} />);
+    fireEvent.click(screen.getByTestId('load-older'));
+    await waitFor(() => screen.getByText('ancient msg'));
+    const body = document.body.textContent ?? '';
+    expect(body.indexOf('ancient msg')).toBeLessThan(body.indexOf('current msg'));
   });
 
-  it('shows a Stop button while the backing run is non-terminal', () => {
-    render(thread({ run: { id: 'run1', status: 'running' } as Run }));
+  it('calls onRetry with the failed turn when the retry button is clicked', () => {
+    const onRetry = vi.fn();
+    const failed = mkTurn({
+      id: 'fail-1', status: 'failed',
+      msgs: [{ content: 'user question', role: 'user' }],
+    });
+    render(<ChatThread sessionId="s1" turns={[failed]} activeTurn={null} onRetry={onRetry} />);
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    expect(onRetry).toHaveBeenCalledWith(failed);
+  });
+
+  it('shows a stop button while the active turn is in flight', () => {
+    const live = mkTurn({ id: 'live', msgs: [{ content: 'q', role: 'user' }] });
+    render(<ChatThread sessionId="s1" turns={[]} activeTurn={mkActive(live, 'streaming')} onRetry={noop} />);
     expect(screen.getByRole('button', { name: /stop/i })).toBeTruthy();
-  });
-
-  it('renders a permission_request as an inline PermissionCard', () => {
-    render(thread({
-      run: { id: 'run1', status: 'running' } as Run,
-      events: [
-        { type: 'permission_request', nodeId: 'n1', seq: 1, ts: 0, runId: 'run1', payload: { requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } } } as unknown as NormalizedEvent,
-      ],
-    }));
-    expect(screen.getByText(/permission request/i)).toBeTruthy();
-    expect(screen.getByRole('button', { name: /allow/i })).toBeTruthy();
   });
 });

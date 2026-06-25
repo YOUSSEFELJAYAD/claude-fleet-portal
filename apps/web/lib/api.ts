@@ -35,13 +35,14 @@ import type {
   SettingValue,
   ChatSession,
   ChatMessage,
+  ChatTurn,
   CreateChatSessionRequest,
   ChatTurnResponse,
-  AddChatMessageRequest,
   ChatCommandResult,
   CommandDef,
   FileFindResult,
   ChatAttachment,
+  ChatSearchHit,
 } from '@fleet/shared';
 // F10 — config-as-code export/import types (defined locally to avoid cross-package imports)
 export interface ExportedSetup {
@@ -452,7 +453,12 @@ export const api = {
     j<SettingValue>(`/api/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
   // ── §30 chat dashboard ──
   chatSessions: () => j<ChatSession[]>('/api/chat/sessions'),
-  chatSession: (id: string) => j<{ session: ChatSession; messages: ChatMessage[] }>(`/api/chat/sessions/${id}`),
+  /** GET /api/chat/sessions/:id — returns the latest page of turns, oldest-first. */
+  chatSession: (id: string) => j<{ session: ChatSession; turns: ChatTurn[] }>(`/api/chat/sessions/${id}`),
+  /** GET /api/chat/sessions/:id/turns — cursor-paginated older turns, oldest-first.
+   *  `before` is the createdAt timestamp of the oldest turn currently loaded. */
+  chatTurns: (sessionId: string, before?: number, limit?: number) =>
+    j<ChatTurn[]>(`/api/chat/sessions/${sessionId}/turns${qs({ before: before != null ? String(before) : undefined, limit: limit != null ? String(limit) : undefined })}`),
   createChatSession: (body: CreateChatSessionRequest) => j<ChatSession>('/api/chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
   renameChatSession: (id: string, title: string) => j<ChatSession>(`/api/chat/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteChatSession: (id: string) => j(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
@@ -477,7 +483,11 @@ export const api = {
   /** §3 — stop the current turn, keep the process live if possible. */
   chatInterrupt: (id: string) =>
     j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST' }),
-  addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
+  /** §3 — explicit kill: stops the live process and marks the session killed/resumable.
+   *  POSTs to /interrupt so the session row and message history are preserved (not deleted).
+   *  Use deleteChatSession to hard-delete a session and all its messages. */
+  chatKill: (id: string) =>
+    j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
   chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
   /** §3.1 — explicitly kills a live/running session by stopping its backing run. The server
    *  route is /interrupt (there is NO /kill route); the session row + transcript are preserved
@@ -488,8 +498,19 @@ export const api = {
   // ── chat-surface upgrade (§5/§6) ──
   /** §5.3 — `/` palette catalog (server strips CommandDef.run before serializing). */
   listCommands: () => j<CommandDef[]>('/api/commands'),
+  /** Task 4.1 — live arg values for one arg of a slash command (dynamic sources only).
+   *  sessionId is resolved server-side to cwd (trust model mirrors findFiles). */
+  commandArgs: (name: string, sessionId: string, argIndex: number) =>
+    j<{ values: { value: string; label?: string }[] }>(
+      `/api/commands/${encodeURIComponent(name)}/args${qs({ sessionId, argIndex: String(argIndex) })}`,
+    ).then((r) => r.values),
   /** §6.1 — `@` fuzzy file/folder search. The workspace root is resolved SERVER-SIDE from the
-   *  session's trusted cwd (fix 10B); the client passes only the sessionId, never a raw cwd. */
-  findFiles: (sessionId: string, q: string, limit?: number) =>
-    j<FileFindResult[]>('/api/files/find' + qs({ sessionId, q, limit: limit != null ? String(limit) : undefined })),
+   *  session's trusted cwd (fix 10B); the client passes only the sessionId, never a raw cwd.
+   *  An optional AbortSignal lets the caller cancel an in-flight request when the query changes. */
+  findFiles: (sessionId: string, q: string, limit?: number, signal?: AbortSignal) =>
+    j<FileFindResult[]>('/api/files/find' + qs({ sessionId, q, limit: limit != null ? String(limit) : undefined }), { signal }),
+  /** Task 3.3 — full-text search over chat messages (cross-session or scoped to one session). */
+  searchChat: (q: string, sessionId?: string, limit?: number) =>
+    j<{ hits: ChatSearchHit[] }>('/api/chat/search' + qs({ q, sessionId, limit: limit != null ? String(limit) : undefined }))
+      .then((r) => r.hits),
 };

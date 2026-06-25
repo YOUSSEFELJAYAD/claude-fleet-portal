@@ -1,23 +1,37 @@
 'use client';
-import React, { useRef, useState, useLayoutEffect } from 'react';
-import { Btn, Textarea } from '@/components/ui';
-import type { ChatAttachment, RunEngine } from '@fleet/shared';
-import { SlashMenu } from '@/components/SlashMenu';
+import React, { useRef, useState, useLayoutEffect, useEffect } from 'react';
+// ponytail: Btn/Textarea not used — composer renders raw elements for full style control
+
+import type { ChatAttachment, CommandDef, RunEngine } from '@fleet/shared';
+import { SlashMenu, ArgMenu } from '@/components/SlashMenu';
 import { MentionMenu } from '@/components/MentionMenu';
+import { api } from '@/lib/api';
 
 /** What the caret is currently "inside": a `/` command token at input start, or an
  *  `@` mention token. `start` is the index of the trigger char; `query` is the text
  *  between the trigger and the caret. Returns null when no menu should be open. */
 export type TriggerMatch =
   | { kind: 'slash'; query: string; start: number }
+  /** Task 4.1 — second-stage: caret is inside an arg token of a fully-typed command. */
+  | { kind: 'slash-arg'; commandName: string; argIndex: number; query: string; start: number }
   | { kind: 'mention'; query: string; start: number };
 
 export function detectTrigger(text: string, caret: number): TriggerMatch | null {
   const upto = text.slice(0, caret);
-  // slash: only at the very start of the input, no whitespace after the verb yet
   if (upto.startsWith('/')) {
-    const seg = upto.slice(1);
-    if (!/\s/.test(seg)) return { kind: 'slash', query: seg, start: 0 };
+    const afterSlash = upto.slice(1);
+    const spaceIdx = afterSlash.indexOf(' ');
+    if (spaceIdx < 0) {
+      // Still typing the command name (no space yet)
+      return { kind: 'slash', query: afterSlash, start: 0 };
+    }
+    // Caret is inside an argument of an already-typed command
+    const commandName = afterSlash.slice(0, spaceIdx);
+    const afterName = afterSlash.slice(spaceIdx + 1);
+    const argParts = afterName.split(' ');
+    const argIndex = argParts.length - 1;
+    const query = argParts[argIndex];
+    return { kind: 'slash-arg', commandName, argIndex, query, start: upto.length - query.length };
   }
   // mention: the `@` must START the token immediately left of the caret. Find the
   // last whitespace before the caret; the token after it must begin with `@`.
@@ -73,6 +87,10 @@ export function ChatComposer({
   // textarea (role=combobox) can point aria-controls / aria-activedescendant at the live listbox.
   const [aria, setAria] = useState<{ listboxId: string; activeOptionId: string | null }>({ listboxId: '', activeOptionId: null });
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  // Task 4.1 — commands catalog (fetched once; used for arg-completion type lookup)
+  const [cmds, setCmds] = useState<CommandDef[]>([]);
+  // Task 4.1 — resolved arg values for the current slash-arg trigger (null = n/a; [] = no values)
+  const [argValues, setArgValues] = useState<{ value: string; label?: string }[] | null>(null);
 
   // auto-grow: reset to single-row height then grow to scrollHeight (capped)
   useLayoutEffect(() => {
@@ -85,6 +103,38 @@ export function ChatComposer({
   const trigger = dismissed ? null : detectTrigger(text, caret);
   // a menu "owns" Enter only when it is open AND has a row to pick (else Enter submits).
   const menuOpen = trigger !== null && menuCount > 0;
+
+  // ponytail: load commands catalog lazily on first slash trigger, not on every composer mount.
+  // cmdsLoadedRef prevents re-fetching when the user closes and reopens the slash menu.
+  const cmdsLoadedRef = useRef(false);
+  const slashActive = trigger?.kind === 'slash' || trigger?.kind === 'slash-arg';
+  useEffect(() => {
+    if (!slashActive || cmdsLoadedRef.current) return;
+    cmdsLoadedRef.current = true;
+    api.listCommands().then(setCmds).catch(() => {});
+  }, [slashActive]);
+
+  // Task 4.1 — resolve arg values when the slash-arg trigger changes.
+  // Static enum args resolve client-side; dynamic (source) args call api.commandArgs once per (command, argIndex).
+  const slashArg = trigger?.kind === 'slash-arg' ? trigger : null;
+  useEffect(() => {
+    if (!slashArg) { setArgValues(null); return; }
+    const { commandName, argIndex } = slashArg;
+    const cmd = cmds.find((c) => c.name === commandName);
+    const arg = cmd?.args[argIndex];
+    if (!arg) { setArgValues([]); return; }
+    if (arg.type === 'enum' && arg.enum) { setArgValues(arg.enum.map((v) => ({ value: v }))); return; }
+    if (arg.source && sessionId) {
+      let alive = true;
+      api.commandArgs(commandName, sessionId, argIndex)
+        .then((vals) => { if (alive) setArgValues(vals); })
+        .catch(() => { if (alive) setArgValues([]); });
+      return () => { alive = false; };
+    }
+    setArgValues([]);
+  // ponytail: cmds in deps is the stable state ref (only updates on setCmds)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slashArg?.commandName, slashArg?.argIndex, cmds, sessionId]);
 
   function reset() {
     setText('');
@@ -133,20 +183,20 @@ export function ChatComposer({
   }
 
   return (
-    <div className="border-t hairline p-3">
-      {/* attachment chips row (§6.2) */}
+    <div className="bg-[#16181d] border border-white/[0.08] rounded-2xl p-3">
+      {/* attachment chips row (§6.2) — restyled as blue rounded pills */}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2">
           {attachments.map((a) => (
             <span
               key={a.path}
               data-chip
-              className="inline-flex items-center gap-1 font-mono text-[11px] px-1.5 py-0.5 border text-amber border-amber/45 bg-amber/8"
+              className="inline-flex items-center gap-1 font-sans text-[11px] px-2 py-0.5 rounded-full bg-[#4f7fff]/15 text-[#4f7fff] border border-[#4f7fff]/25"
             >
               {a.kind === 'dir' ? '▣' : '▦'} {a.path}
               <button
                 type="button"
-                className="text-faint hover:text-ink leading-none"
+                className="text-[#4f7fff]/50 hover:text-[#4f7fff] leading-none ml-0.5 transition-colors"
                 onClick={() => setAttachments((prev) => prev.filter((p) => p.path !== a.path))}
                 title={`remove ${a.path}`}
               >
@@ -157,13 +207,25 @@ export function ChatComposer({
         </div>
       )}
 
-      <div className="relative flex gap-2 items-end">
-        {/* `/` palette */}
+      {/* textarea + floating menus (menus are absolute bottom-full within this relative wrapper) */}
+      <div className="relative">
+        {/* `/` palette — first stage: pick a command */}
         {trigger?.kind === 'slash' && (
           <SlashMenu
             query={trigger.query}
             cwd={cwd}
             onPick={(name: string) => pickCommand(name)}
+            onClose={() => setDismissed(true)}
+            onCount={setMenuCount}
+            onActiveDescendant={setAria}
+          />
+        )}
+        {/* Task 4.1 — second stage: pick an arg value after the command name is chosen */}
+        {trigger?.kind === 'slash-arg' && argValues !== null && argValues.length > 0 && (
+          <ArgMenu
+            values={argValues}
+            query={trigger.query}
+            onPick={(value) => replaceToken(trigger.start, value + ' ')}
             onClose={() => setDismissed(true)}
             onCount={setMenuCount}
             onActiveDescendant={setAria}
@@ -181,7 +243,9 @@ export function ChatComposer({
           />
         )}
 
-        <Textarea
+        {/* ponytail: raw textarea instead of <Textarea> to escape the mono/amber base styles
+            from ui.tsx — all handlers, aria attrs, and ref are identical. */}
+        <textarea
           ref={taRef}
           rows={1}
           value={text}
@@ -211,25 +275,51 @@ export function ChatComposer({
               submit();
             }
           }}
-          className="flex-1 resize-none overflow-auto"
+          className="w-full bg-transparent resize-none overflow-auto outline-none text-[#e9e7df] font-sans text-sm placeholder:text-[#5b626d] leading-relaxed disabled:opacity-50"
           style={{ maxHeight: 200 }}
         />
+      </div>
+
+      {/* bottom tool row: attach · engine hint · send/stop */}
+      <div className="flex items-center justify-between mt-2">
+        <div className="flex items-center gap-1.5">
+          {/* ponytail: '+' is a visual placeholder; file-pick wiring lives outside this file */}
+          <button
+            type="button"
+            title="Attach file"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-[#9aa1ab] hover:text-[#e9e7df] hover:bg-white/5 transition-colors text-lg leading-none select-none"
+          >
+            +
+          </button>
+          <span className="font-sans text-[11px] text-[#5b626d] select-none">{engine}</span>
+        </div>
 
         {/* Stop maps to .../interrupt — only meaningful for a live, running Claude turn (spec §7, §12 D8). */}
         {running && engine === 'claude' ? (
           <span data-stop>
-            <Btn variant="danger" onClick={onStop} title="Stop generating">■ Stop</Btn>
+            <button
+              type="button"
+              onClick={onStop}
+              title="Stop generating"
+              className="px-3 py-1 rounded-lg font-sans text-xs bg-red-500/15 text-red-400 border border-red-500/25 hover:bg-red-500/25 transition-colors"
+            >
+              ■ Stop
+            </button>
           </span>
         ) : (
           <span data-send>
-            <Btn
-              variant="solid"
+            <button
+              type="button"
               onClick={submit}
               disabled={disabled || !text.trim()}
               title="Send"
+              className="w-8 h-8 rounded-full flex items-center justify-center bg-[#4f7fff] hover:bg-[#4f7fff]/90 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              ▶
-            </Btn>
+              {/* paper-plane send icon */}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              </svg>
+            </button>
           </span>
         )}
       </div>

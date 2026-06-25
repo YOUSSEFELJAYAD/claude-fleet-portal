@@ -1092,6 +1092,7 @@ export interface ChatMessage {
   kind: ChatMessageKind;
   content: string;
   runId: string | null;       // links an assistant turn to the run that produced it
+  turnId: string;             // turn grouping (Task 1.2); pre-backfill DB rows default to '' in rowToMessage, backfilled rows carry a real UUID
   /** §6 — `@`-mention attachments carried by this message (additive; old rows null). */
   attachments?: ChatAttachment[];
   createdAt: number;
@@ -1109,13 +1110,6 @@ export interface CreateChatSessionRequest {
 }
 
 export interface ChatTurnResponse { runId: string; userMessage: ChatMessage }
-
-export interface AddChatMessageRequest {
-  role: ChatRole;
-  kind: ChatMessageKind;
-  content: string;
-  runId?: string | null;
-}
 
 export interface ChatCommandResult {
   ok: boolean;
@@ -1165,6 +1159,34 @@ export interface CommandDef {
  *  backing run status. live = a held interactive process; running = a turn is
  *  streaming; idle = resumable (no held process); killed = explicitly stopped. */
 export type ChatSessionState = 'live' | 'running' | 'idle' | 'killed';
+
+export type ChatTurnStatus = 'pending' | 'streaming' | 'settled' | 'failed' | 'interrupted';
+
+/** A turn as the client consumes it. History turns carry persisted `messages`;
+ *  the single ACTIVE turn streams live via SSE and persists on settle. */
+export interface ChatTurn {
+  id: string;            // turnId
+  sessionId: string;
+  status: ChatTurnStatus;
+  messages: ChatMessage[]; // user + assistant/command-result/error rows for this turn
+  createdAt: number;
+  settledAt: number | null;
+  error?: string;          // error text on failed turns (client-side for synthetic failed turns)
+}
+
+/** Turn-scoped SSE frames for the chat stream (GET /api/chat/sessions/:id/stream). */
+export type ChatStreamFrame =
+  | { kind: 'session_state'; state: ChatSessionState }            // live | running | idle | killed; NO runId
+  | { kind: 'turn:start'; turn: ChatTurn }
+  | { kind: 'turn:event'; turnId: string; event: NormalizedEvent }
+  | { kind: 'turn:settled'; turnId: string; assistantMessageId: string }
+  | { kind: 'turn:failed'; turnId: string; error: string }
+  | { kind: 'error'; error: string };
+
+export interface ChatSearchHit {
+  sessionId: string; sessionTitle: string; turnId: string;
+  messageId: string; role: ChatMessage['role']; snippet: string; createdAt: number;
+}
 
 /** A `@`-mention attachment on a turn. file = path-reference the agent reads at
  *  runtime; dir = added to that turn's `--add-dir` set. */

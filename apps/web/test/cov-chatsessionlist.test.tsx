@@ -27,6 +27,7 @@ describe('ChatSessionList', () => {
 
   it('shows the last-message preview and a relative timestamp', () => {
     renderList([sess({ state: 'idle', updatedAt: Date.now() - 60_000 })]);
+    fireEvent.click(screen.getByRole('button'));
     expect(screen.getByText('last assistant line')).toBeTruthy();
     expect(screen.getByText(/ago|now/)).toBeTruthy();
   });
@@ -34,6 +35,7 @@ describe('ChatSessionList', () => {
   it('a live session shows a Kill control; an idle session shows Resume', () => {
     const onKill = vi.fn();
     const { rerender } = renderList([sess({ id: 'a', state: 'live', live: true })], { onKill });
+    fireEvent.click(screen.getByRole('button'));
     fireEvent.click(screen.getByText(/kill/i));
     expect(onKill).toHaveBeenCalledWith('a');
 
@@ -50,6 +52,7 @@ describe('ChatSessionList', () => {
   it('inline rename: editing the active row and pressing Enter calls onRename(id, title) — no window.prompt', () => {
     const onRename = vi.fn();
     renderList([sess({ id: 'a', state: 'idle' })], { onRename });
+    fireEvent.click(screen.getByRole('button'));
     fireEvent.click(screen.getByText(/rename/i));
     const input = screen.getByDisplayValue('Alpha') as HTMLInputElement;
     fireEvent.change(input, { target: { value: 'Renamed' } });
@@ -59,7 +62,10 @@ describe('ChatSessionList', () => {
 
   it('renders a status dot region for a killed session', () => {
     renderList([sess({ id: 'a', state: 'killed' })]);
+    fireEvent.click(screen.getByRole('button'));
     // killed rows expose a Resume affordance (kill is not delete)
-    expect(within(screen.getByText('Alpha').closest('div')!.parentElement!).queryByText(/resume/i)).toBeTruthy();
+    // ponytail: use getByRole('option') — getByText('Alpha') is ambiguous after the popover opens
+    // because the trigger button also renders an Alpha span; the option div is the session row
+    expect(within(screen.getByRole('option')).queryByText(/resume/i)).toBeTruthy();
   });
 });

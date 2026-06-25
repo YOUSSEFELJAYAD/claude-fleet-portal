@@ -71,6 +71,7 @@ beforeEach(() => { sendInput.mockClear(); ensureLive.mockReset(); notifyBackingR
 describe('startTurn — always-live wiring (fix 03)', () => {
   it('reuses the held run across two turns and delivers each via registry.sendInput', async () => {
     const { registry } = await import('../src/registry.js');
+    const { chatTurns } = await import('../src/chat.js');
     ensureLive.mockResolvedValue({ live: true, runId: 'live-run-1' });
 
     const id = (await post('/api/chat/sessions', { cwd: '/tmp' })).json().id;
@@ -78,6 +79,9 @@ describe('startTurn — always-live wiring (fix 03)', () => {
     const t1 = await post(`/api/chat/sessions/${id}/turn`, { message: 'first' });
     expect(t1.statusCode).toBe(200);
     expect(t1.json().runId).toBe('live-run-1');
+
+    // The mock never drives settlement; simulate it so the guard allows turn 2.
+    chatTurns._resetForTest();
 
     const t2 = await post(`/api/chat/sessions/${id}/turn`, { message: 'second' });
     expect(t2.statusCode).toBe(200);
@@ -112,11 +116,15 @@ describe('startTurn — always-live wiring (fix 03)', () => {
 
   it('budget-exhausted on a session with a backing run falls back to resume', async () => {
     const { registry } = await import('../src/registry.js');
+    const { chatTurns } = await import('../src/chat.js');
     (registry.resume as any).mockClear();
     // turn 1: live, establishes a backing run id on the session
     ensureLive.mockResolvedValueOnce({ live: true, runId: 'live-run-2' });
     const id = (await post('/api/chat/sessions', { cwd: '/tmp' })).json().id;
     await post(`/api/chat/sessions/${id}/turn`, { message: 'first' });
+
+    // The mock never drives settlement; simulate it so the guard allows turn 2.
+    chatTurns._resetForTest();
 
     // turn 2: budget exhausted, but a runId is now stored → resume, no error
     ensureLive.mockResolvedValueOnce({ live: false, runId: null });
