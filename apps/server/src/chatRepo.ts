@@ -69,6 +69,8 @@ const insMessage = db.prepare(`INSERT INTO chat_messages
   (id,session_id,role,kind,content,run_id,turn_id,attachments,created_at)
   VALUES (@id,@session_id,@role,@kind,@content,@run_id,@turn_id,@attachments,@created_at)`);
 const listMessagesStmt = db.prepare('SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC');
+const lastTurnIdStmt = db.prepare('SELECT turn_id FROM chat_messages WHERE session_id = ? AND turn_id IS NOT NULL ORDER BY created_at DESC LIMIT 1');
+const getTurnStmt = db.prepare('SELECT * FROM chat_messages WHERE session_id = ? AND turn_id = ? ORDER BY created_at ASC');
 
 // ── Row mappers ───────────────────────────────────────────────────────────────
 
@@ -151,6 +153,12 @@ export const chatRepo = {
     return (listMessagesStmt.all(sessionId) as any[]).map(rowToMessage);
   },
 
+  /** The turn_id of the session's most recent message, or null if none. */
+  lastTurnId(sessionId: string): string | null {
+    const r = lastTurnIdStmt.get(sessionId) as { turn_id: string } | undefined;
+    return r?.turn_id ?? null;
+  },
+
   /** Groups a session's messages into ChatTurn[], newest turn first, messages ASC within.
    *  `before` is a createdAt cursor (exclusive upper bound on turn.createdAt). */
   listTurns(sessionId: string, opts?: { before?: number; limit?: number }): ChatTurn[] {
@@ -173,8 +181,8 @@ export const chatRepo = {
 
     let groups = Array.from(turnMap.entries()).map(([id, { msgs, createdAt }]) => ({ id, msgs, createdAt }));
 
-    // Newest-first sort
-    groups.sort((a, b) => b.createdAt - a.createdAt);
+    // Newest-first sort; secondary sort by turn id keeps same-ms turns deterministic
+    groups.sort((a, b) => (b.createdAt - a.createdAt) || (b.id < a.id ? -1 : b.id > a.id ? 1 : 0));
 
     // Cursor filter: only turns older than `before`
     if (before !== undefined) {
@@ -195,8 +203,7 @@ export const chatRepo = {
   },
 
   getTurn(sessionId: string, turnId: string): ChatTurn | null {
-    const rows = (db.prepare('SELECT * FROM chat_messages WHERE session_id = ? AND turn_id = ? ORDER BY created_at ASC')
-      .all(sessionId, turnId) as any[]).map(rowToMessage);
+    const rows = (getTurnStmt.all(sessionId, turnId) as any[]).map(rowToMessage);
     if (!rows.length) return null;
     return {
       id: turnId,

@@ -16,8 +16,7 @@ let backfillChatTurns: typeof import('../src/chatRepo.js').backfillChatTurns;
 let db: typeof import('../src/db.js').default;
 
 beforeAll(async () => {
-  ({ chatRepo } = await import('../src/chatRepo.js'));
-  ({ backfillChatTurns } = await import('../src/chatRepo.js'));
+  ({ chatRepo, backfillChatTurns } = await import('../src/chatRepo.js'));
   ({ default: db } = await import('../src/db.js'));
 });
 
@@ -124,5 +123,66 @@ describe('chatRepo.listTurns pagination', () => {
     const filtered = chatRepo.listTurns(sid, { before: newerCreatedAt });
     expect(filtered.length).toBe(1);
     expect(filtered[0].id).toBe(t1);
+  });
+});
+
+// Fix 1 — assistant reply reuses the session's current turn when no turnId is provided
+describe('chatRepo.lastTurnId', () => {
+  it('returns the most recent turn_id; assistant with no explicit turnId reuses it', () => {
+    const session = chatRepo.createSession({ cwd: '/tmp/lastturn-test' });
+    const sid = session.id;
+    const tid = chatRepo.newTurnId();
+
+    // fresh session → null
+    expect(chatRepo.lastTurnId(sid)).toBeNull();
+
+    chatRepo.addMessage({ sessionId: sid, role: 'user', kind: 'text', content: 'hi', runId: null, turnId: tid });
+    expect(chatRepo.lastTurnId(sid)).toBe(tid);
+
+    // Simulate the /messages route: assistant reply with no explicit turnId
+    const replyTurnId = chatRepo.lastTurnId(sid) ?? chatRepo.newTurnId();
+    chatRepo.addMessage({ sessionId: sid, role: 'assistant', kind: 'text', content: 'hello', runId: 'r1', turnId: replyTurnId });
+
+    // both messages land in ONE turn
+    const turns = chatRepo.listTurns(sid);
+    expect(turns.length).toBe(1);
+    expect(turns[0].id).toBe(tid);
+    expect(turns[0].messages).toHaveLength(2);
+  });
+});
+
+// Fix 2 — same-ms turns sort deterministically; before-cursor doesn't drop/duplicate
+describe('chatRepo.listTurns stable sort', () => {
+  it('ordering is deterministic when two turns share the same createdAt', () => {
+    const session = chatRepo.createSession({ cwd: '/tmp/stable-sort-test' });
+    const sid = session.id;
+    const t1 = chatRepo.newTurnId();
+    const t2 = chatRepo.newTurnId();
+    const t3 = chatRepo.newTurnId();
+    const sameTs = Date.now();
+
+    const ins = db.prepare(`INSERT INTO chat_messages (id,session_id,role,kind,content,run_id,turn_id,created_at)
+      VALUES (@id,@session_id,@role,@kind,@content,@run_id,@turn_id,@created_at)`);
+    // t1 and t2 share the SAME timestamp; t3 is one ms newer
+    ins.run({ id: randomUUID(), session_id: sid, role: 'user', kind: 'text', content: 'm1', run_id: null, turn_id: t1, created_at: sameTs });
+    ins.run({ id: randomUUID(), session_id: sid, role: 'user', kind: 'text', content: 'm2', run_id: null, turn_id: t2, created_at: sameTs });
+    ins.run({ id: randomUUID(), session_id: sid, role: 'user', kind: 'text', content: 'm3', run_id: null, turn_id: t3, created_at: sameTs + 1 });
+
+    const order1 = chatRepo.listTurns(sid).map(t => t.id);
+    const order2 = chatRepo.listTurns(sid).map(t => t.id);
+    // deterministic: same order on every call
+    expect(order1).toEqual(order2);
+    // t3 is newest → always first
+    expect(order1[0]).toBe(t3);
+
+    // before = sameTs+1 → both t1 and t2 qualify, neither is dropped or duplicated
+    const page = chatRepo.listTurns(sid, { before: sameTs + 1 });
+    expect(page.length).toBe(2);
+    const pageIds = new Set(page.map(t => t.id));
+    expect(pageIds.has(t1)).toBe(true);
+    expect(pageIds.has(t2)).toBe(true);
+    // page order is also stable
+    const page2 = chatRepo.listTurns(sid, { before: sameTs + 1 });
+    expect(page.map(t => t.id)).toEqual(page2.map(t => t.id));
   });
 });

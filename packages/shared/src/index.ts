@@ -1105,7 +1105,7 @@ export interface ChatMessage {
   kind: ChatMessageKind;
   content: string;
   runId: string | null;       // links an assistant turn to the run that produced it
-  turnId: string;             // turn grouping (Task 1.2); legacy rows get '' after backfill
+  turnId: string;             // turn grouping (Task 1.2); pre-backfill DB rows default to '' in rowToMessage, backfilled rows carry a real UUID
   /** §6 — `@`-mention attachments carried by this message (additive; old rows null). */
   attachments?: ChatAttachment[];
   createdAt: number;
@@ -1134,6 +1134,8 @@ export interface AddChatMessageRequest {
   kind: ChatMessageKind;
   content: string;
   runId?: string | null;
+  /** Optional: when set, the server uses this turn id; when absent, reuses the session's current turn. */
+  turnId?: string;
 }
 
 export interface ChatCommandResult {

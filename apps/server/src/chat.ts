@@ -288,7 +288,9 @@ export function registerChatRoutes(app: FastifyInstance) {
     if (!chatRepo.getSession(id)) return reply.code(404).send({ error: 'not found' });
     const b = (req.body ?? {}) as AddChatMessageRequest;
     if (typeof b.content !== 'string') return reply.code(400).send({ error: 'content is required' });
-    return chatRepo.addMessage({ sessionId: id, role: b.role, kind: b.kind, content: b.content, runId: b.runId ?? null, turnId: chatRepo.newTurnId() });
+    // ponytail: reuse the session's current turn so an assistant reply groups with its user message
+    const turnId = b.turnId ?? chatRepo.lastTurnId(id) ?? chatRepo.newTurnId();
+    return chatRepo.addMessage({ sessionId: id, role: b.role, kind: b.kind, content: b.content, runId: b.runId ?? null, turnId });
   });
 
   app.post('/api/chat/sessions/:id/command', async (req, reply) => {
