@@ -1105,6 +1105,7 @@ export interface ChatMessage {
   kind: ChatMessageKind;
   content: string;
   runId: string | null;       // links an assistant turn to the run that produced it
+  turnId: string;             // turn grouping (Task 1.2); legacy rows get '' after backfill
   /** §6 — `@`-mention attachments carried by this message (additive; old rows null). */
   attachments?: ChatAttachment[];
   createdAt: number;

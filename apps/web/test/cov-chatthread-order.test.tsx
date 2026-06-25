@@ -17,7 +17,7 @@ import { FakeEventSource } from './setup';
 import type { ChatMessage, NormalizedEvent, Run, ChatSession, AddChatMessageRequest } from '@fleet/shared';
 
 function msg(p: Partial<ChatMessage>): ChatMessage {
-  return { id: Math.random().toString(36).slice(2), sessionId: 's', role: 'assistant', kind: 'text', content: '', runId: null, createdAt: 0, ...p };
+  return { id: Math.random().toString(36).slice(2), sessionId: 's', role: 'assistant', kind: 'text', content: '', runId: null, turnId: '', createdAt: 0, ...p };
 }
 const ev = (p: Partial<NormalizedEvent> & { type: string }): NormalizedEvent =>
   ({ runId: 's', nodeId: 's', seq: 1, ts: 0, payload: {}, ...p } as unknown as NormalizedEvent);

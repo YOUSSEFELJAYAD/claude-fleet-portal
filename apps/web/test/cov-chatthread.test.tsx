@@ -9,7 +9,7 @@ import type { ChatMessage, NormalizedEvent, Run } from '@fleet/shared';
 // run/events/partials/error down as props. These tests drive those props directly.
 const msg = (over: Partial<ChatMessage>): ChatMessage => ({
   id: 'm' + Math.random(), sessionId: 's1', role: 'assistant', kind: 'text',
-  content: '', runId: null, createdAt: 0, ...over,
+  content: '', runId: null, turnId: '', createdAt: 0, ...over,
 });
 
 const noop = () => {};
