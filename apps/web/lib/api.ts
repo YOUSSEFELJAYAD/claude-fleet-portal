@@ -38,7 +38,6 @@ import type {
   ChatTurn,
   CreateChatSessionRequest,
   ChatTurnResponse,
-  AddChatMessageRequest,
   ChatCommandResult,
   CommandDef,
   FileFindResult,
@@ -488,7 +487,6 @@ export const api = {
    *  Use deleteChatSession to hard-delete a session and all its messages. */
   chatKill: (id: string) =>
     j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
-  addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
   /** §3.1 — explicitly kills a live/running session by stopping its backing run. The server
    *  route is /interrupt (there is NO /kill route); the session row + transcript are preserved

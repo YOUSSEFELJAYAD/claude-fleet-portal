@@ -23,9 +23,10 @@ export function ChatThread({
   // ponytail: prepended holds older pages loaded on demand; page owns the initial page.
   const [prepended, setPrepended] = useState<ChatTurn[]>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
   // Reset when session changes so old session's pagination doesn't bleed.
-  useEffect(() => { setPrepended([]); }, [sessionId]);
+  useEffect(() => { setPrepended([]); setHasMore(true); }, [sessionId]);
 
   // Auto-scroll to bottom when the list grows (within 120px of bottom → keep pinned).
   useEffect(() => {
@@ -50,6 +51,8 @@ export function ChatThread({
       if (older.length > 0) {
         const knownIds = new Set(allTurns.map((t) => t.id));
         setPrepended((prev) => [...older.filter((t) => !knownIds.has(t.id)), ...prev]);
+      } else {
+        setHasMore(false);
       }
     } finally {
       setLoadingOlder(false);
@@ -61,9 +64,13 @@ export function ChatThread({
   const dedupPrepended = prepended.filter((t) => !existingIds.has(t.id));
   const allTurns = [...dedupPrepended, ...turns];
 
+  // C1/CV1: suppress the active card once its turnId has landed in settled history.
+  const historyIds = existingIds;
+  const showActive = activeTurn != null && !historyIds.has(activeTurn.turnId);
+
   return (
     <div className="flex-1 overflow-auto p-4">
-      {allTurns.length > 0 && (
+      {allTurns.length > 0 && hasMore && (
         <div className="flex justify-center mb-2">
           <button
             type="button"
@@ -79,10 +86,10 @@ export function ChatThread({
       {allTurns.map((turn) => (
         <Turn key={turn.id} turn={turn} onRetry={() => onRetry(turn)} />
       ))}
-      {activeTurn && (
+      {showActive && (
         <Turn active={activeTurn} onRetry={() => onRetry(activeTurn.turn)} />
       )}
-      {activeTurn && activeTurn.status !== 'failed' && (
+      {showActive && activeTurn.status !== 'failed' && activeTurn.status !== 'settled' && (
         <div className="sticky bottom-0 flex justify-center py-2">
           <Btn
             variant="danger"

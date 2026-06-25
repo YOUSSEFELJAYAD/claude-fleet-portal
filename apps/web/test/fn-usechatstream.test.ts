@@ -90,13 +90,16 @@ describe('useChatStream (turn-scoped SSE)', () => {
     expect(result.current.activeTurn!.events.map((e: any) => e.type)).toEqual(['assistant_text']);
   });
 
-  it('turn:settled clears activeTurn (turn is now in persisted history)', () => {
+  it('turn:settled transitions activeTurn to status=settled (keeps it for gapless rendering)', () => {
     const { result } = renderHook(() => useChatStream('sess-1'));
     const es = FakeEventSource.last();
     act(() => es.emit({ kind: 'turn:start', turn: makeTurn('t1') }));
     act(() => es.emit({ kind: 'turn:event', turnId: 't1', event: ev('tool_use', 'n1') }));
     act(() => es.emit({ kind: 'turn:settled', turnId: 't1', assistantMessageId: 'msg-a' }));
-    expect(result.current.activeTurn).toBeNull();
+    // C1: activeTurn is NOT cleared — it stays with status='settled' so ChatThread can dedup
+    expect(result.current.activeTurn).not.toBeNull();
+    expect(result.current.activeTurn!.status).toBe('settled');
+    expect(result.current.activeTurn!.events.length).toBe(1); // events preserved for gap display
   });
 
   it('turn:failed sets status=failed and retains events for retry UI', () => {
@@ -143,13 +146,13 @@ describe('useChatStream (turn-scoped SSE)', () => {
     expect('run' in result.current).toBe(false);
   });
 
-  it('second turn:start after settled sets fresh activeTurn', () => {
+  it('second turn:start after settled sets fresh activeTurn (acc reset by turn:start)', () => {
     const { result } = renderHook(() => useChatStream('sess-1'));
     const es = FakeEventSource.last();
     act(() => es.emit({ kind: 'turn:start', turn: makeTurn('t1') }));
     act(() => es.emit({ kind: 'turn:event', turnId: 't1', event: ev('assistant_partial', 'n1', { text: 'hi' }) }));
     act(() => es.emit({ kind: 'turn:settled', turnId: 't1', assistantMessageId: 'msg-a' }));
-    expect(result.current.activeTurn).toBeNull();
+    expect(result.current.activeTurn!.status).toBe('settled'); // stays with status=settled
 
     act(() => es.emit({ kind: 'turn:start', turn: makeTurn('t2') }));
     expect(result.current.activeTurn!.turnId).toBe('t2');

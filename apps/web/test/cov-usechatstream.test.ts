@@ -47,7 +47,8 @@ describe('useChatStream (coverage)', () => {
     expect(result.current.activeTurn!.events.map((e: any) => e.type)).toEqual(['tool_use']);
 
     act(() => es.emit({ kind: 'turn:settled', turnId: 't1', assistantMessageId: 'msg-a' }));
-    expect(result.current.activeTurn).toBeNull();
+    // C1: activeTurn transitions to status='settled' (not null) for gapless rendering
+    expect(result.current.activeTurn!.status).toBe('settled');
   });
 
   it('session_state to idle only updates state, does not clear activeTurn', () => {

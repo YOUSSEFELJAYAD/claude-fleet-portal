@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ChatSession, ChatTurn, ChatAttachment } from '@fleet/shared';
 import { api } from '@/lib/api';
 import { useChatStream, usePendingQuestions } from '@/lib/live';
@@ -21,7 +21,7 @@ export default function ChatPage() {
   const [err, setErr] = useState<string | null>(null);
 
   // §3 — chat-scoped SSE: ONE subscription per session, derived values flow down as props.
-  const { state: liveState, activeTurn, error: streamError } = useChatStream(activeId);
+  const { state: liveState, activeTurn, error: streamError, clearError: clearStreamError } = useChatStream(activeId);
   // ponytail: run/live/liveStreamRunId/subagents stubbed — RunningAgentsPanel still wired
   const live = false;
   const liveStreamRunId: string | null = null;
@@ -29,9 +29,12 @@ export default function ChatPage() {
   const { questions: pendingQuestions, refresh: refreshQuestions } = usePendingQuestions(activeId);
   const chatState = liveState;
 
-  // Sidebar previews: last settled turn's first message per session.
+  // Sidebar previews: last settled turn's last message (assistant reply) per session.
   const previews = sessions.reduce<Record<string, string>>((acc, s) => {
-    if (s.id === activeId) acc[s.id] = turns[turns.length - 1]?.messages[0]?.content?.slice(0, 60) ?? '';
+    if (s.id === activeId) {
+      const last = turns[turns.length - 1];
+      acc[s.id] = last?.messages[last.messages.length - 1]?.content?.slice(0, 60) ?? '';
+    }
     return acc;
   }, {});
 
@@ -45,13 +48,10 @@ export default function ChatPage() {
 
   useEffect(() => { refreshSessions(); }, [refreshSessions]);
 
-  // When activeTurn transitions from non-null to null, the server has just committed the
-  // turn. Refetch the latest page of turns and merge in any newly settled turn.
-  const prevActiveTurnRef = useRef<ChatActiveTurn | null>(null);
+  // C1: on turn:settled, trigger history refetch but KEEP activeTurn rendered until the refetch
+  // lands — ChatThread deduplicates by turnId. No gap where the turn is in neither slot.
   useEffect(() => {
-    const prev = prevActiveTurnRef.current;
-    prevActiveTurnRef.current = activeTurn;
-    if (prev !== null && activeTurn === null && activeId) {
+    if (activeTurn?.status === 'settled' && activeId) {
       api.chatTurns(activeId).then((fresh) => {
         setTurns((existing) => {
           const knownIds = new Set(existing.map((t) => t.id));
@@ -60,7 +60,22 @@ export default function ChatPage() {
         });
       }).catch(() => {});
     }
-  }, [activeTurn, activeId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTurn?.status, activeTurn?.turnId, activeId]);
+
+  // CV1: on turn:failed, build a synthetic ChatTurn and move it into history so it persists
+  // across new turns. ChatThread dedup suppresses the active card once the id is in history.
+  useEffect(() => {
+    if (activeTurn?.status === 'failed' && activeId) {
+      const { turnId, turn } = activeTurn;
+      const failedTurn: ChatTurn = {
+        id: turnId, sessionId: activeId, status: 'failed',
+        messages: turn.messages, createdAt: turn.createdAt, settledAt: null,
+      };
+      setTurns((existing) => existing.some((t) => t.id === turnId) ? existing : [...existing, failedTurn]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTurn?.status, activeTurn?.turnId, activeId]);
 
   async function newSession() {
     setErr(null);
@@ -103,6 +118,7 @@ export default function ChatPage() {
   }
 
   function handleRetry(turn: ChatTurn) {
+    if (activeTurn) return; // I3: guard — a turn is already in flight
     const userMsg = turn.messages.find((m) => m.role === 'user');
     if (userMsg && activeId) void sendTurn(userMsg.content);
   }
@@ -144,7 +160,7 @@ export default function ChatPage() {
               </div>
               {(err || streamError) && (
                 <div className="px-4 pt-3">
-                  <ErrorBanner onRetry={() => setErr(null)}>{err ?? streamError}</ErrorBanner>
+                  <ErrorBanner onRetry={err ? () => setErr(null) : clearStreamError}>{err ?? streamError}</ErrorBanner>
                 </div>
               )}
               <ChatThread

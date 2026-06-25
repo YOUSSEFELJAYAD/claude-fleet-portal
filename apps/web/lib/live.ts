@@ -297,6 +297,7 @@ export function useChatStream(sessionId: string | null): {
   state: ChatSessionState;
   activeTurn: ChatActiveTurn | null;
   error: string | null;
+  clearError: () => void;
 } {
   const acc = useEventAccumulator();
   const [state, setState] = useState<ChatSessionState>('idle');
@@ -305,6 +306,8 @@ export function useChatStream(sessionId: string | null): {
   const [error, setError] = useState<string | null>(null);
   // ref so the onmessage closure can guard turn:event without stale state
   const activeTurnIdRef = useRef<string | null>(null);
+
+  const clearError = useCallback(() => setError(null), []);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -331,9 +334,11 @@ export function useChatStream(sessionId: string | null): {
       } else if (m.kind === 'turn:event') {
         if (activeTurnIdRef.current === m.turnId) acc.push(m.event as NormalizedEvent);
       } else if (m.kind === 'turn:settled') {
+        // C1: keep activeTurnMeta visible during the network-refetch gap; ChatThread deduplicates
+        // once the settled turn lands in history. The acc is NOT reset here — events stay visible
+        // during the gap; turn:start for the next turn resets it.
         activeTurnIdRef.current = null;
-        setActiveTurnMeta(null);
-        acc.reset();
+        setActiveTurnMeta((prev) => prev ? { ...prev, status: 'settled' } : null);
       } else if (m.kind === 'turn:failed') {
         setActiveTurnMeta((prev) => prev ? { ...prev, status: 'failed' } : null);
       } else if (m.kind === 'error') {
@@ -352,6 +357,7 @@ export function useChatStream(sessionId: string | null): {
       ? { ...activeTurnMeta, events: acc.events, partials: acc.partials }
       : null,
     error,
+    clearError,
   };
 }
 
