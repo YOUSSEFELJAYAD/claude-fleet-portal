@@ -191,7 +191,6 @@ const VALID_CHANNEL_EVENTS = [
   'run-killed',
   'awaiting-permission',
   'awaiting-question',
-  'awaiting-input',
   'spend-threshold',
 ] as const;
 type ChannelEvent = (typeof VALID_CHANNEL_EVENTS)[number];
@@ -333,16 +332,16 @@ function buildChannelMessage(run: Run): string {
   return `[fleet] ${icon} ${task} · ${cost} · ${run.model}  ${portal}`;
 }
 
+/** Slack/Discord share one text-only shape; generic channels get a structured body from the caller. */
+function wrap(kind: ChannelKind, text: string): { text: string } | { content: string } | null {
+  if (kind === 'slack') return { text };
+  if (kind === 'discord') return { content: text };
+  return null;
+}
+
 /** Build the payload for a given channel kind. */
 function buildChannelPayload(kind: ChannelKind, text: string, eventKind: string, run: Run): unknown {
-  if (kind === 'slack') {
-    return { text };
-  }
-  if (kind === 'discord') {
-    return { content: text };
-  }
-  // generic
-  return {
+  return wrap(kind, text) ?? {
     event: eventKind,
     run: {
       id: run.id,
@@ -362,16 +361,14 @@ function buildSpendThresholdMessage(pct: number, spent: number, cap: number): st
 
 /** Build spend-threshold channel payload. */
 function buildSpendThresholdPayload(kind: ChannelKind, text: string, spent: number, cap: number): unknown {
-  if (kind === 'slack') return { text };
-  if (kind === 'discord') return { content: text };
-  return { event: 'spend-threshold', spent, cap, ts: Date.now() };
+  return wrap(kind, text) ?? { event: 'spend-threshold', spent, cap, ts: Date.now() };
 }
 
 /**
  * Best-effort POST to a channel URL — fire-and-forget, records last_error/last_ok_at.
- * Never throws into the caller.
+ * Never throws into the caller; returns the error string on failure, null on success.
  */
-async function postChannel(ch: Channel, payload: unknown): Promise<void> {
+async function postChannel(ch: Channel, payload: unknown): Promise<string | null> {
   try {
     const res = await fetch(ch.url, {
       method: 'POST',
@@ -382,11 +379,14 @@ async function postChannel(ch: Channel, payload: unknown): Promise<void> {
     if (!res.ok) {
       const errText = `HTTP ${res.status} ${res.statusText}`;
       setChannelError(ch.id, errText);
-    } else {
-      setChannelError(ch.id, null);
+      return errText;
     }
+    setChannelError(ch.id, null);
+    return null;
   } catch (e: any) {
-    setChannelError(ch.id, e?.message ?? 'network error');
+    const errText = e?.message ?? 'network error';
+    setChannelError(ch.id, errText);
+    return errText;
   }
 }
 
@@ -397,9 +397,7 @@ async function postChannel(ch: Channel, payload: unknown): Promise<void> {
 function dispatchToChannels(eventKind: ChannelEvent, run: Run): void {
   const channels = listChannels().filter((ch) => ch.enabled && ch.events.includes(eventKind));
   if (channels.length === 0) return;
-  const text = run
-    ? buildChannelMessage(run)
-    : `[fleet] ${eventKind}`;
+  const text = buildChannelMessage(run);
   for (const ch of channels) {
     const payload = buildChannelPayload(ch.kind, text, eventKind, run);
     void postChannel(ch, payload);
@@ -525,9 +523,7 @@ const awaitingPermissionFired = new Set<string>();
 function buildAwaitingPermissionPayload(kind: ChannelKind, runId: string, task: string): unknown {
   const portal = `http://127.0.0.1:4318/runs/${runId}`;
   const text = `[fleet] ⏳ awaiting permission: ${task.length > 80 ? task.slice(0, 79) + '…' : task}  ${portal}`;
-  if (kind === 'slack') return { text };
-  if (kind === 'discord') return { content: text };
-  return { event: 'awaiting-permission', run: { id: runId, task }, ts: Date.now(), portal };
+  return wrap(kind, text) ?? { event: 'awaiting-permission', run: { id: runId, task }, ts: Date.now(), portal };
 }
 
 /** Subscribe to terminal runs. Call once from the main loop. */
@@ -720,69 +716,10 @@ export function registerNotifierRoutes(app: FastifyInstance): void {
       return { error: 'channel not found' };
     }
     const text = '[fleet] test message — channel is wired up correctly';
-    const fakeRun: Run = {
-      id: 'test',
-      sessionId: 'test',
-      task: 'test',
-      cwd: '/tmp',
-      model: 'claude-opus-4-8',
-      fastMode: false,
-      effort: 'high',
-      workflowsEnabled: true,
-      ultracode: false,
-      teamId: null,
-      campaignId: null,
-      projectId: null,
-      pid: null,
-      status: 'completed',
-      startedAt: Date.now(),
-      endedAt: Date.now(),
-      tokensIn: 0,
-      tokensOut: 0,
-      costUsd: 0,
-      exitCode: 0,
-      killReason: null,
-      error: null,
-      budgetUsd: null,
-      permissionMode: 'default',
-      allowedTools: null,
-      skills: [],
-      subagentProfile: null,
-      resultText: null,
-      structuredOutput: null,
-      subagentCount: 0,
-      liveSubagents: 0,
-      maxDepth: 0,
-      lastActivity: Date.now(),
-      engine: undefined,
-    };
-    const payload = buildChannelPayload(ch.kind, text, 'test', fakeRun);
-    let ok = true;
-    let errorMsg: string | null = null;
-    try {
-      const res = await fetch(ch.url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!res.ok) {
-        ok = false;
-        errorMsg = `HTTP ${res.status} ${res.statusText}`;
-        setChannelError(id, errorMsg);
-      } else {
-        setChannelError(id, null);
-      }
-    } catch (e: any) {
-      ok = false;
-      errorMsg = (e?.message as string) ?? 'network error';
-      setChannelError(id, errorMsg);
-    }
-    if (!ok) {
-      // Return 200 with ok:false so api.ts's j() helper (which throws on non-2xx) can
-      // return the typed { ok: false, error } shape to callers rather than an exception.
-      return { ok: false, error: errorMsg };
-    }
-    return { ok: true };
+    const payload = wrap(ch.kind, text) ?? { event: 'test', ts: Date.now() };
+    const error = await postChannel(ch, payload);
+    // Return 200 with ok:false on failure so api.ts's j() helper (which throws on non-2xx)
+    // can return the typed { ok: false, error } shape to callers rather than an exception.
+    return error ? { ok: false, error } : { ok: true };
   });
 }

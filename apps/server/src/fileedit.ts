@@ -43,7 +43,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { projectsRepo } from './projects.js';
-import { gitExec, safePath, scrubCredentials } from './git.js';
+import { gitExec, safePath, scrubCredentials, gitErrText } from './git.js';
 import { pm } from './pm.js';
 
 // ── caps (parity with fileview.ts / git.ts read side) ─────────────────────────
@@ -67,13 +67,6 @@ function withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T>
   const p = pm as any;
   const lock = p.withProjectLock ?? p.withMergeLock;
   return lock.call(pm, projectId, fn) as Promise<T>;
-}
-
-/** Stable error string from a failed gitExec result (stderr-first, credential-scrubbed). */
-function gitErrText(r: { code: number; stderr: string; stdout: string }): string {
-  if (r.code === 127) return 'git binary not found';
-  if (r.code === 124) return 'git command timed out';
-  return scrubCredentials(r.stderr.trim() || r.stdout.trim() || `git failed (exit ${r.code})`);
 }
 
 /**
@@ -304,7 +297,7 @@ export function registerFileeditRoutes(app: FastifyInstance) {
         // … and a tracked file is removed with -f: plain `git rm` refuses any file whose
         // working tree differs from the index (exactly the files agents/humans just edited).
         const rm = await gitExec(root, ['-C', root, 'rm', '-f', '--', relpath]);
-        if (!rm.ok) return { ok: false, error: gitErrText(rm) };
+        if (!rm.ok) return { ok: false, error: gitErrText(rm, { scrub: true }) };
       } else {
         try {
           await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -313,7 +306,7 @@ export function registerFileeditRoutes(app: FastifyInstance) {
           return { ok: false, error: `failed to write file: ${scrubCredentials(String(e?.message ?? e))}` };
         }
         const add = await gitExec(root, ['-C', root, 'add', '--', relpath]);
-        if (!add.ok) return { ok: false, error: gitErrText(add) };
+        if (!add.ok) return { ok: false, error: gitErrText(add, { scrub: true }) };
       }
 
       // ── commit (pathspec-scoped, ambient OR configured author) ───────────────────
@@ -342,7 +335,7 @@ export function registerFileeditRoutes(app: FastifyInstance) {
             /* already gone */
           }
         }
-        return { ok: false, error: gitErrText(commit) };
+        return { ok: false, error: gitErrText(commit, { scrub: true }) };
       }
 
       const head = await gitExec(root, ['-C', root, 'rev-parse', 'HEAD']);

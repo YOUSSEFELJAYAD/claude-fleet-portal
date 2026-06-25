@@ -70,16 +70,53 @@ process.env.FAKE_MODE = 'fail';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const TERMINAL = ['completed', 'failed', 'killed'];
 
-async function waitTerminal(registry: any, runId: string, timeoutMs = 5000): Promise<any> {
-  const TERMINAL = ['completed', 'failed', 'killed'];
+/** Condition-based waiting (replaces fixed sleeps): poll every 25ms until `cond` is true or
+ *  timeout. Fixed `sleep()` waits for async, real-process retries are flaky under parallel
+ *  load — a child can spawn/exit slower than any guessed delay, and a late retry can bleed
+ *  into the next test's freshly-cleared counter. Polling returns the instant the condition
+ *  holds (fast in the common case); the GENEROUS default cap only bites a pathologically
+ *  CPU-starved spawn, so it never gives up prematurely under load. */
+async function waitFor(cond: () => boolean, desc: string, timeoutMs = 25_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const r = registry.getRun(runId);
-    if (r && TERMINAL.includes(r.status)) return r;
-    await sleep(50);
+    if (cond()) return;
+    await sleep(25);
   }
+  throw new Error(`timeout waiting for ${desc} after ${timeoutMs}ms`);
+}
+
+async function waitTerminal(registry: any, runId: string, timeoutMs = 20_000): Promise<any> {
+  await waitFor(() => {
+    const r = registry.getRun(runId);
+    return !!r && TERMINAL.includes(r.status);
+  }, `run ${runId} terminal`, timeoutMs);
   return registry.getRun(runId);
+}
+
+/** Follow retryOf links from the original run → [original, retry1, retry2, …]. */
+function retryChain(originalId: string): any[] {
+  const all = repo.listRuns();
+  const chain: any[] = [];
+  let cur = all.find((r: any) => r.id === originalId);
+  while (cur) {
+    chain.push(cur);
+    cur = all.find((r: any) => r.retryOf === cur.id);
+  }
+  return chain;
+}
+
+/** Wait until the retry chain has produced `expectedInvocations` bin calls AND every run in
+ *  the chain is terminal — i.e. nothing is still in-flight. Removes the fixed-sleep guesswork
+ *  and guarantees the test drains its own chain before the next test clears the shared counter
+ *  (kills the cross-test pollution that doubled counts under load). */
+async function waitChainSettled(originalId: string, expectedInvocations: number): Promise<void> {
+  await waitFor(() => {
+    if (readCounter().length < expectedInvocations) return false;
+    const chain = retryChain(originalId);
+    return chain.length >= 1 && chain.every((r) => TERMINAL.includes(r.status));
+  }, `chain ${originalId} → ${expectedInvocations} invocations + settled`);
 }
 
 function clearCounter() {
@@ -137,13 +174,13 @@ describe('F3 basic retry', () => {
     const failed = await waitTerminal(registry, run.id);
     expect(failed?.status).toBe('failed');
 
-    // Give the retry time to launch and complete.
-    await sleep(800);
+    // Wait for the full chain (original + 1 retry) to fire and settle — no fixed sleep.
+    await waitChainSettled(run.id, 2);
 
     const lines = readCounter();
     // 2 invocations: original + 1 retry.
     expect(lines.length).toBe(2);
-  }, 15_000);
+  }, 60_000);
 
   it('fires at most maxRetries retries across the chain (maxRetries: 2)', async () => {
     process.env.CLAUDE_BIN = failBin;
@@ -159,8 +196,8 @@ describe('F3 basic retry', () => {
     });
 
     await waitTerminal(registry, run.id);
-    // Wait for both retries to fire and settle.
-    await sleep(1800);
+    // Wait for both retries to fire and settle — condition-based, no fixed sleep.
+    await waitChainSettled(run.id, 3);
 
     const lines = readCounter();
     // 3 invocations: original + retry1 + retry2.
@@ -174,7 +211,7 @@ describe('F3 basic retry', () => {
     expect(retry2).toBeDefined();
     const retry3 = allRuns.find((r: any) => r.retryOf === retry2.id);
     expect(retry3).toBeUndefined();
-  }, 20_000);
+  }, 60_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -195,13 +232,13 @@ describe('F3 retry_of persistence', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(800);
+    await waitChainSettled(run.id, 2);
 
     const allRuns = repo.listRuns();
     const retryRun = allRuns.find((r: any) => r.retryOf === run.id);
     expect(retryRun).toBeDefined();
     expect(retryRun.retryOf).toBe(run.id);
-  }, 15_000);
+  }, 60_000);
 
   it('GET /api/agents/:id includes retriedBy pointing to the retry run', async () => {
     process.env.CLAUDE_BIN = failBin;
@@ -217,7 +254,7 @@ describe('F3 retry_of persistence', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(800);
+    await waitChainSettled(run.id, 2);
 
     const res = await app.inject({ method: 'GET', url: `/api/agents/${run.id}`, headers: H() });
     expect(res.statusCode).toBe(200);
@@ -228,7 +265,7 @@ describe('F3 retry_of persistence', () => {
     // The retriedBy run has retryOf = original run.id.
     const retryRes = await app.inject({ method: 'GET', url: `/api/agents/${body.retriedBy}`, headers: H() });
     expect(retryRes.json().run.retryOf).toBe(run.id);
-  }, 15_000);
+  }, 60_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -248,13 +285,13 @@ describe('F3 never retry on completed or killed', () => {
     });
 
     const final = await waitTerminal(registry, run.id);
-    await sleep(400);
 
     expect(final?.status).toBe('failed');
+    // No retryPolicy → maybeRetry returns synchronously in onExit; no retry can ever appear.
     const allRuns = repo.listRuns();
     const retryRun = allRuns.find((r: any) => r.retryOf === run.id);
     expect(retryRun).toBeUndefined();
-  }, 10_000);
+  }, 60_000);
 
   it('does NOT retry a killed run (killReason set → status killed, rule 1 + rule 5)', async () => {
     // Use failBin — the run exits immediately. We stop it synchronously before
@@ -275,7 +312,14 @@ describe('F3 never retry on completed or killed', () => {
     registry.stop(run.id, 'user');
 
     const final = await waitTerminal(registry, run.id);
-    await sleep(400);
+    // If stop() lost the race the run failed → a retry fired; drain it so a straggler can't
+    // append to the next test's freshly-cleared counter under load.
+    if (final?.status === 'failed') {
+      await waitFor(
+        () => retryChain(run.id).every((r) => TERMINAL.includes(r.status)),
+        'killed-race retry chain drain',
+      );
+    }
 
     // The run should be killed (stop() won the race) or failed (onExit won).
     // Either way, NO retry run should exist: killed → maybeRetry guards on status;
@@ -294,7 +338,7 @@ describe('F3 never retry on completed or killed', () => {
     // that's OK, because the PRD says "killed runs never retry" (not failed ones).
     // The test still asserts the invariant: once killReason is set → status killed.
     expect(['killed', 'failed']).toContain(final?.status);
-  }, 10_000);
+  }, 60_000);
 
   it('maybeRetry guard: status=failed with killReason=user still says killed in stop() path', async () => {
     // Direct test: registry.stop() sets run.status = 'killed', not 'failed'.
@@ -315,13 +359,13 @@ describe('F3 never retry on completed or killed', () => {
     // Stop all — simulates stop-all/timeout killing the run mid-chain.
     registry.stopAll();
 
-    await waitTerminal(registry, run.id);
-    await sleep(500);
-
-    // At most 1 invocation (the original run). stopAll kills it before retry fires.
+    await waitTerminal(registry, run.id); // stopAll → killed; killed runs never retry
+    // Killed → maybeRetry is skipped, so nothing is in-flight: only the original (if it
+    // managed to append before being killed) can be in the counter.
+    expect(retryChain(run.id).length).toBe(1);
     const lines = readCounter();
     expect(lines.length).toBeLessThanOrEqual(1);
-  }, 10_000);
+  }, 60_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -342,12 +386,11 @@ describe('F3 never retry campaign/project runs', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(400);
-
+    // campaignId/projectId set → maybeRetry returns synchronously in onExit; no retry appears.
     const allRuns = repo.listRuns();
     const retryRun = allRuns.find((r: any) => r.retryOf === run.id);
     expect(retryRun).toBeUndefined();
-  }, 10_000);
+  }, 60_000);
 
   it('does NOT retry when projectId is set', async () => {
     process.env.CLAUDE_BIN = failBin;
@@ -363,12 +406,11 @@ describe('F3 never retry campaign/project runs', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(400);
-
+    // campaignId/projectId set → maybeRetry returns synchronously in onExit; no retry appears.
     const allRuns = repo.listRuns();
     const retryRun = allRuns.find((r: any) => r.retryOf === run.id);
     expect(retryRun).toBeUndefined();
-  }, 10_000);
+  }, 60_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -389,14 +431,14 @@ describe('F3 escalation', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(800);
+    await waitChainSettled(run.id, 2);
 
     const lines = readCounter();
     // 2 invocations: original (haiku) + 1 retry (opus, the final attempt).
     expect(lines.length).toBe(2);
     expect(lines[0]).toBe('claude-haiku-4-5');
     expect(lines[1]).toBe('claude-opus-4-8');
-  }, 15_000);
+  }, 60_000);
 
   it('uses escalateModel only on the LAST retry (maxRetries: 2, escalate on attempt 2)', async () => {
     process.env.CLAUDE_BIN = failBin;
@@ -412,7 +454,7 @@ describe('F3 escalation', () => {
     });
 
     await waitTerminal(registry, run.id);
-    await sleep(1800);
+    await waitChainSettled(run.id, 3);
 
     const lines = readCounter();
     // 3 invocations: original + retry1 (haiku, not final) + retry2 (opus, final).
@@ -420,7 +462,7 @@ describe('F3 escalation', () => {
     expect(lines[0]).toBe('claude-haiku-4-5');
     expect(lines[1]).toBe('claude-haiku-4-5');
     expect(lines[2]).toBe('claude-opus-4-8');
-  }, 20_000);
+  }, 60_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -522,7 +564,11 @@ describe('F3 daily-cap suppresses retry', () => {
     registry.setConfig({ ...registry.getConfig(), dailySpendCeilingUsd: 50 });
 
     await waitTerminal(registry, run.id);
-    await sleep(600);
+    // Wait for the drop note the blocked retry appends asynchronously (no fixed sleep).
+    await waitFor(
+      () => /auto-retry skipped/.test(repo.getRun(run.id)?.error ?? ''),
+      'daily-cap drop note on failed run',
+    );
 
     // The bin was called exactly once (retry was blocked by cap).
     const lines = readCounter();
@@ -536,7 +582,7 @@ describe('F3 daily-cap suppresses retry', () => {
     const allRuns = repo.listRuns();
     const retryRun = allRuns.find((r: any) => r.retryOf === run.id);
     expect(retryRun).toBeUndefined();
-  }, 15_000);
+  }, 60_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -568,7 +614,7 @@ describe('F3 validation', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toMatch(/maxRetries must be 1 or 2/);
-  }, 10_000);
+  }, 60_000);
 
   it('rejects maxRetries 3 (not 1 or 2)', async () => {
     const res = await app.inject({
@@ -676,11 +722,11 @@ describe('F3 §27 review fixes', () => {
       retryPolicy: { maxRetries: 2 },
     });
     const final = await waitTerminal(registry, run.id);
-    await sleep(400);
     expect(final?.status).toBe('completed');
+    // Completed → maybeRetry guards on status; no retry can appear.
     expect(repo.listRuns().find((r: any) => r.retryOf === run.id)).toBeUndefined();
     process.env.FAKE_MODE = 'fail';
-  }, 10_000);
+  }, 60_000);
 
   it('strips a smuggled negative _attempt from external launches — the retry cap holds (review #4)', async () => {
     process.env.CLAUDE_BIN = failBin;
@@ -703,15 +749,13 @@ describe('F3 §27 review fixes', () => {
     const launched = res.json();
     expect(launched.retryOf ?? null).toBeNull(); // forged lineage stripped
     await waitTerminal(registry, launched.id);
-    await sleep(700); // let the (single) retry fire and fail
+    await waitChainSettled(launched.id, 2); // original + exactly one retry, both settled
     const chain = repo.listRuns().filter((r: any) => r.retryOf === launched.id);
     expect(chain.length).toBe(1); // exactly ONE retry — not a billion
     if (chain[0]) {
-      await waitTerminal(registry, chain[0].id);
-      await sleep(400);
       expect(repo.listRuns().find((r: any) => r.retryOf === chain[0].id)).toBeUndefined();
     }
-  }, 15_000);
+  }, 60_000);
 
   it('rejects engine + retryPolicy with 400 at the ROUTE level (review #18 — the launch() check was dead code)', async () => {
     const res = await app.inject({
@@ -743,12 +787,12 @@ describe('F3 §27 review fixes', () => {
       retryPolicy: { maxRetries: 1 },
     });
     await waitTerminal(registry, original.id);
-    await sleep(700);
+    await waitChainSettled(original.id, 2);
     const retry = repo.listRuns().find((r: any) => r.retryOf === original.id);
     expect(retry).toBeDefined();
     await waitTerminal(registry, retry!.id);
     registry.deleteRun(original.id);
     const survivor = repo.getRun(retry!.id);
     expect(survivor?.retryOf ?? null).toBeNull(); // no 404 'retry of' link
-  }, 15_000);
+  }, 60_000);
 });

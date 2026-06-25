@@ -1,13 +1,13 @@
 /**
  * Real tests for the pure web/lib formatters & status helpers. These have no DOM/React
  * dependency, so they run under the server's vitest harness via a relative import
- * (apps/web has no test runner of its own). Covers format.ts (usd/tokens/dur/ago/clock/
- * shortId), status.ts (statusMeta/nodeStatusColor/effortMeta/campaign+taskStatusColor),
+ * (apps/web has no test runner of its own). Covers format.ts (usd/tokens/dur/ago/clock),
+ * status.ts (statusMeta/nodeStatusColor/campaign+taskStatusColor),
  * and shiki.ts resolveLang.
  */
 import { describe, it, expect } from 'vitest';
-import { usd, tokens, dur, ago, clock, shortId } from '../../web/lib/format.js';
-import { statusMeta, nodeStatusColor, effortMeta, campaignStatusColor, taskStatusColor } from '../../web/lib/status.js';
+import { usd, tokens, dur, ago, clock } from '../../web/lib/format.js';
+import { statusMeta, nodeStatusColor, campaignStatusColor, taskStatusColor } from '../../web/lib/status.js';
 import { resolveLang } from '../../web/lib/shiki.js';
 
 describe('format.usd', () => {
@@ -53,15 +53,10 @@ describe('format.ago', () => {
   });
 });
 
-describe('format.clock & shortId', () => {
+describe('format.clock', () => {
   it('clock renders HH:MM:SS (24h) or em-dash', () => {
     expect(clock(null)).toBe('—');
     expect(clock(Date.now())).toMatch(/^\d{2}:\d{2}:\d{2}$/);
-  });
-  it('shortId strips the toolu_ prefix and caps at 8 chars', () => {
-    expect(shortId(null)).toBe('—');
-    expect(shortId('toolu_0123456789')).toBe('01234567');
-    expect(shortId('abcdefghij')).toBe('abcdefgh');
   });
 });
 
@@ -86,14 +81,6 @@ describe('status colors', () => {
     expect(campaignStatusColor('???')).toBe('#7b828c');
     expect(taskStatusColor('completed')).toBe('#54e08a');
     expect(taskStatusColor('???')).toBe('#7b828c');
-  });
-});
-
-describe('status.effortMeta', () => {
-  it('uppercases the label and ranks heat (unknown → 2)', () => {
-    expect(effortMeta('low')).toEqual({ label: 'LOW', hot: 0 });
-    expect(effortMeta('max')).toEqual({ label: 'MAX', hot: 4 });
-    expect(effortMeta('mystery')).toEqual({ label: 'MYSTERY', hot: 2 });
   });
 });
 

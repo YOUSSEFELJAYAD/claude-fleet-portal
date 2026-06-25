@@ -203,7 +203,7 @@ export const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 /** Error carrying the HTTP status + server `code` so callers can branch (e.g. 409 stale-oid). */
 export type ApiError = Error & { status?: number; code?: string };
 
-async function j<T>(path: string, init?: RequestInit): Promise<T> {
+export async function j<T>(path: string, init?: RequestInit): Promise<T> {
   // Only claim a JSON body when one is actually sent — Fastify 400s an EMPTY body that
   // carries `content-type: application/json` (FST_ERR_CTP_EMPTY_JSON_BODY), which broke
   // every body-less DELETE (kill run, delete record / template / campaign).

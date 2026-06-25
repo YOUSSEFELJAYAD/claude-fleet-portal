@@ -51,7 +51,7 @@ export function planHasDupIds(tasks: { id: string }[]): boolean {
   return new Set(ids).size !== ids.length;
 }
 
-function tpl(name: string | null | undefined, fallbackRole: string): AgentTemplate {
+export function tpl(name: string | null | undefined, fallbackRole: string): AgentTemplate {
   if (name) {
     const t = repo.getTemplateByName(name);
     if (t) return t;

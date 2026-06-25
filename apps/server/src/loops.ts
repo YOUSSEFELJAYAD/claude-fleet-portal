@@ -235,14 +235,6 @@ export const loopsRepo = {
     });
   },
 
-  bumpGoodRuns(id: string): number {
-    const current = this.get(id);
-    if (!current) return 0;
-    const n = current.consecutiveGoodRuns + 1;
-    setGoodRunsStmt.run({ id, n });
-    return n;
-  },
-
   /**
    * Atomic bump-and-escalate (Fix: the un-transactioned bumpGoodRuns→setMode pair could crash between
    * the two writes, leaving counter==threshold with mode still 'dry-run' → a duplicate escalation on

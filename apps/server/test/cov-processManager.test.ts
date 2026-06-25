@@ -115,6 +115,13 @@ process.env.CLAUDE_BIN = process.execPath; // node binary; argv passed via spawn
 let pm: typeof import('../src/processManager.js');
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Poll `pred` until true or timeout. Condition-based waiting for real-process death so a
+ *  loaded event loop only DELAYS (never flips) the result — vs asserting at a fixed instant. */
+const waitUntil = async (pred: () => boolean, timeoutMs = 15000, interval = 100): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) { if (pred()) return true; await wait(interval); }
+  return pred();
+};
 const spawned: number[] = [];
 
 // spawnClaude spreads the parent's process.env into the child. Under --coverage the parent
@@ -430,12 +437,15 @@ describe('killProcessGroup — identity-guarded group kill (H13)', () => {
     await wait(500);
     expect(pm.looksLikeClaudePid(pid)).toBe(true);
 
+    const killedAt = Date.now();
     pm.killProcessGroup(pid, false); // SIGTERM (trapped → survives) + arm 2.5s SIGKILL escalation
-    await wait(700);
-    expect(alive(pid)).toBe(true); // trapped SIGTERM → still alive inside the grace window
-
-    await wait(2300); // cross the 2.5s threshold so the escalation timer fires
-    expect(alive(pid)).toBe(false); // SIGKILL from the escalation (lines 101-106) reaped it
+    // No fixed-instant `alive` assertion — that races the escalation timer under load. Instead poll
+    // until the process is reaped, then assert the death took LONGER than the 2.5s grace: that proves
+    // it was the SIGKILL escalation (101-106), not the trapped soft SIGTERM (which would reap it
+    // ~immediately). A timer fires at-or-after its delay, never early, so under CPU load this latency
+    // only GROWS — the check can be delayed but never flipped.
+    expect(await waitUntil(() => !alive(pid), 20000)).toBe(true); // escalation eventually reaped it
+    expect(Date.now() - killedAt).toBeGreaterThan(2000); // died via the 2.5s escalation, not SIGTERM
   }, 45000);
 });
 

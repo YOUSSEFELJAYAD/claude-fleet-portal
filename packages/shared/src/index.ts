@@ -243,19 +243,6 @@ export interface LaunchRequest {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Control actions (PRD §7.6)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface InputRequest {
-  text: string;
-}
-
-export interface PermissionDecision {
-  requestId: string;
-  decision: 'approve' | 'deny';
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Agent Teams (PRD §7.4, schema verified DC.md F-3)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1122,11 +1109,6 @@ export interface CreateChatSessionRequest {
   skills?: string[] | null;
 }
 
-export interface ChatTurnRequest {
-  message: string;
-  /** §6 — files = path-reference tokens; dirs = `--add-dir` for this turn. */
-  attachments?: ChatAttachment[];
-}
 export interface ChatTurnResponse { runId: string; userMessage: ChatMessage }
 
 export interface ChatCommandResult {
@@ -1490,7 +1472,6 @@ export const isLive = (s: RunStatus): boolean => LIVE_STATUSES.includes(s);
 
 /** Lifecycle of a plan draft. `planning` → (`ready` | `error`) → `applied`. */
 export type PlanDraftStatus = 'planning' | 'ready' | 'error' | 'applied';
-export const PLAN_DRAFT_STATUSES: PlanDraftStatus[] = ['planning', 'ready', 'error', 'applied'];
 
 /** One node of the proposed plan DAG (the reviewable/editable unit before apply). */
 export interface PlanTask {
@@ -1521,17 +1502,6 @@ export interface PlanDraft {
   updatedAt: number;
 }
 
-export interface CreatePlanRequest {
-  objective: string;
-  targetColumn?: KanbanColumn;
-}
-
-export interface ApplyPlanRequest {
-  /** Optional edited task list; defaults to the draft's stored plan. */
-  tasks?: PlanTask[];
-  /** Optional column override; defaults to the draft's targetColumn. */
-  targetColumn?: KanbanColumn;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Environment & Settings panel (§31)
@@ -1558,4 +1528,3 @@ export interface SettingValue {
 }
 
 export interface SettingsResponse { settings: SettingValue[] }
-export interface UpdateSettingRequest { value: string | null } // null = clear

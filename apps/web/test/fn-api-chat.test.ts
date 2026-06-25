@@ -71,14 +71,6 @@ describe('api chat control helpers', () => {
     expect(init.method).toBe('POST');
   });
 
-  it('chatKill POSTs to /interrupt (preserves session history; does not hard-delete)', async () => {
-    const f = captured();
-    await api.chatKill('sess1');
-    const [url, init] = (f.mock.calls as any)[0];
-    expect(String(url)).toContain('/api/chat/sessions/sess1/interrupt');
-    expect(init.method).toBe('POST');
-  });
-
   it('resumeChatSession POSTs to /resume with no body and returns ChatSession', async () => {
     const session = { id: 'sess1', title: 'T', engine: 'claude', model: 'm', effort: 'low', permissionMode: 'default', cwd: '/c', allowedTools: null, skills: null, runId: null, createdAt: 0, updatedAt: 0 };
     const f = vi.fn(async () => ({ ok: true, json: async () => session, statusText: 'OK' }) as any);

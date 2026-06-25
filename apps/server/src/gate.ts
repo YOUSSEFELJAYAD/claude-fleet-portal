@@ -43,7 +43,7 @@ export function enqueueGate(input: {
   answer.catch(() => {}); // avoid unhandled-rejection if no one awaits before a reject
   gates.set(g.id, g);
   if (gates.size > MAX_GATES) {
-    const oldest = [...gates.values()].sort((a, b) => a.createdAt - b.createdAt)[0];
+    const oldest = gates.values().next().value; // Map keeps insertion order = createdAt order → first is oldest
     if (oldest) { clearTimeout(oldest.ttlTimer); oldest.reject(new Error('gate evicted (queue full)')); gates.delete(oldest.id); }
   }
   const ttlTimer = setTimeout(() => resolveGate(g.id, { selection: [] }), GATE_TTL_MS);
