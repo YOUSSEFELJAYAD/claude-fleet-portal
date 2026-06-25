@@ -64,7 +64,8 @@ export interface ChatTurn {
   settledAt: number | null;
 }
 
-// add to ChatMessage:  turnId: string;
+// NOTE: `turnId: string` is ADDED to ChatMessage in Task 1.2 (together with the column +
+// addMessage that populates it), so this task stays purely additive and ends green.
 
 export type ChatStreamFrame =
   | { kind: 'session_state'; state: ChatSessionState }            // live | running | idle | killed; NO runId
@@ -80,16 +81,16 @@ export interface ChatSearchHit {
 }
 ```
 
-- [ ] **Step 1:** Add the types above to `index.ts`; add `turnId: string;` to `ChatMessage`.
-- [ ] **Step 2:** `pnpm -r typecheck` — Expected: PASS (both apps consume raw `.ts`; this surfaces every downstream break to fix in later tasks). Some app/server references to `ChatMessage` may now require `turnId` — that's expected; later tasks populate it.
+- [ ] **Step 1:** Add the NEW types above to `index.ts` (additive only — do NOT touch `ChatMessage` yet; `turnId` lands in Task 1.2).
+- [ ] **Step 2:** `pnpm -r typecheck` — Expected: PASS (purely additive types break nothing).
 - [ ] **Step 3:** Commit. `git commit -m "feat(chat): add turn types to the shared contract"`
-
-> Note: adding a required `turnId` to `ChatMessage` may break existing constructions until Task 1.2. If typecheck noise is large, make `turnId` required in the type but ensure Task 1.2 lands in the same PR; do not mark it optional (the invariant is every message has a turn).
 
 ### Task 1.2: `chat_messages.turn_id` column + backfill (chatRepo persistence)
 
 **Files:**
 - Create: `apps/server/src/chatRepo.ts` (move persistence out of `chat.ts`)
+- Modify: `packages/shared/src/index.ts` (add `turnId: string` to `ChatMessage`)
+- Modify: every `ChatMessage` constructor that now needs `turnId` (chat.ts/chatRepo, tests/mocks) — typecheck must end PASS
 - Test: `apps/server/test/chatrepo-turns.test.ts`
 
 **Interfaces:**
