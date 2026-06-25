@@ -1184,6 +1184,33 @@ export interface CommandDef {
  *  streaming; idle = resumable (no held process); killed = explicitly stopped. */
 export type ChatSessionState = 'live' | 'running' | 'idle' | 'killed';
 
+export type ChatTurnStatus = 'pending' | 'streaming' | 'settled' | 'failed' | 'interrupted';
+
+/** A turn as the client consumes it. History turns carry persisted `messages`;
+ *  the single ACTIVE turn streams live via SSE and persists on settle. */
+export interface ChatTurn {
+  id: string;            // turnId
+  sessionId: string;
+  status: ChatTurnStatus;
+  messages: ChatMessage[]; // user + assistant/command-result/error rows for this turn
+  createdAt: number;
+  settledAt: number | null;
+}
+
+/** Turn-scoped SSE frames for the chat stream (GET /api/chat/sessions/:id/stream). */
+export type ChatStreamFrame =
+  | { kind: 'session_state'; state: ChatSessionState }            // live | running | idle | killed; NO runId
+  | { kind: 'turn:start'; turn: ChatTurn }
+  | { kind: 'turn:event'; turnId: string; event: NormalizedEvent }
+  | { kind: 'turn:settled'; turnId: string; assistantMessageId: string }
+  | { kind: 'turn:failed'; turnId: string; error: string }
+  | { kind: 'error'; error: string };
+
+export interface ChatSearchHit {
+  sessionId: string; sessionTitle: string; turnId: string;
+  messageId: string; role: ChatMessage['role']; snippet: string; createdAt: number;
+}
+
 /** A `@`-mention attachment on a turn. file = path-reference the agent reads at
  *  runtime; dir = added to that turn's `--add-dir` set. */
 export interface ChatAttachment {
