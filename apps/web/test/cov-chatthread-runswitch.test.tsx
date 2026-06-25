@@ -1,41 +1,58 @@
 /**
- * cov-chatthread-runswitch — regression: the result-seq dedup is PER-RUN. Switching sessions
- * (or an evict→relaunch / kill→resume that mints a new run id) must NOT block the new run's
- * reply from persisting just because its seq is lower than the previous run's last seq.
+ * cov-chatthread-runswitch — Task 2.3 rewrite.
+ * Old tests verified per-run seq dedup in ChatThread's onTurnComplete callback.
+ * That client-side persistence logic is gone: turns are now server-side entities.
+ * ChatThread no longer sees run IDs or fires onTurnComplete.
+ *
+ * These tests now verify that switching sessions (sessionId change) resets
+ * ChatThread's prepended-turn state so old pagination doesn't bleed across sessions.
  */
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render, act } from '@testing-library/react';
-import { ChatThread } from '../components/ChatThread';
-import type { ChatMessage, NormalizedEvent, Run } from '@fleet/shared';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import type { ChatTurn, ChatMessage } from '@fleet/shared';
 
-const msg = (p: Partial<ChatMessage>): ChatMessage =>
-  ({ id: Math.random().toString(36).slice(2), sessionId: 's', role: 'user', kind: 'text', content: '', runId: null, turnId: '', createdAt: 0, ...p });
-const ev = (p: Partial<NormalizedEvent> & { type: string }): NormalizedEvent =>
-  ({ runId: 's', nodeId: 's', seq: 1, ts: 0, payload: {}, ...p } as unknown as NormalizedEvent);
+vi.mock('@/lib/api', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...real,
+    api: { ...real.api, chatTurns: vi.fn(async () => []), chatInterrupt: vi.fn(async () => {}) },
+  };
+});
+
+const { ChatThread } = await import('../components/ChatThread');
+const { api } = await import('@/lib/api');
+
+const m = (over: Partial<ChatMessage> = {}): ChatMessage => ({
+  id: Math.random().toString(36).slice(2), sessionId: 's', role: 'user', kind: 'text',
+  content: '', runId: null, turnId: 't0', createdAt: 0, ...over,
+});
+const t = (id: string, content: string, createdAt = 1000): ChatTurn => ({
+  id, sessionId: 's1', status: 'settled',
+  messages: [m({ content, role: 'user' })],
+  createdAt, settledAt: null,
+});
 const noop = () => {};
 
-describe('ChatThread per-run seq dedup', () => {
-  it('persists the new run\'s reply after switching to a lower-seq run', () => {
-    const onTurnComplete = vi.fn();
-    const base = { sessionId: 's', messages: [msg({ content: 'q' })] as ChatMessage[], partials: {}, error: null, onTurnComplete, onTurnError: noop };
+afterEach(() => vi.clearAllMocks());
 
-    // Run A reaches a high seq result → fires once.
+describe('ChatThread session-switch isolation', () => {
+  it('prepended turns from session A do not appear after switching to session B', async () => {
+    const olderA = t('older-a', 'session A older', 500);
+    const currentA = t('curr-a', 'session A current', 1000);
+    vi.mocked(api.chatTurns).mockResolvedValueOnce([olderA]);
+
     const { rerender } = render(
-      <ChatThread {...base} run={{ id: 'runA', status: 'running' } as Run}
-        events={[ev({ type: 'result', runId: 'runA', seq: 40, payload: { result: 'A reply' } })]} />,
+      <ChatThread sessionId="sessionA" turns={[currentA]} activeTurn={null} onRetry={noop} />,
     );
-    expect(onTurnComplete).toHaveBeenCalledTimes(1);
-    expect(onTurnComplete).toHaveBeenLastCalledWith('runA', 'A reply');
+    fireEvent.click(screen.getByTestId('load-older'));
+    await waitFor(() => screen.getByText('session A older'));
 
-    // Switch to run B (new id) whose seq space restarts low — must STILL fire (not blocked by seq<=40).
-    act(() => {
-      rerender(
-        <ChatThread {...base} run={{ id: 'runB', status: 'running' } as Run}
-          events={[ev({ type: 'result', runId: 'runB', seq: 6, payload: { result: 'B reply' } })]} />,
-      );
-    });
-    expect(onTurnComplete).toHaveBeenCalledTimes(2);
-    expect(onTurnComplete).toHaveBeenLastCalledWith('runB', 'B reply');
+    // Switch to session B — the prepended state should reset
+    const currentB = t('curr-b', 'session B only', 2000);
+    rerender(<ChatThread sessionId="sessionB" turns={[currentB]} activeTurn={null} onRetry={noop} />);
+
+    expect(screen.queryByText('session A older')).toBeNull();
+    expect(screen.getByText('session B only')).toBeTruthy();
   });
 });

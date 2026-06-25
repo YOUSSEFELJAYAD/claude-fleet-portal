@@ -1,8 +1,9 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ChatSession, ChatMessage } from '@fleet/shared';
+import type { ChatSession, ChatTurn, ChatAttachment } from '@fleet/shared';
 import { api } from '@/lib/api';
 import { useChatStream, usePendingQuestions } from '@/lib/live';
+import type { ChatActiveTurn, ChatSubagent } from '@/lib/live';
 import { ChatSessionList } from '@/components/ChatSessionList';
 import { ChatThread } from '@/components/ChatThread';
 import { ChatComposer } from '@/components/ChatComposer';
@@ -15,47 +16,51 @@ export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [session, setSession] = useState<ChatSession | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [liveRunId, setLiveRunId] = useState<string | null>(null);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // True only between a user send and its reply being persisted. A `result` that arrives with no
-  // pending turn is NOT a response to the user (e.g. a held interactive process that emits before
-  // it receives any stdin input) — persisting it would inject a phantom assistant message ahead of
-  // the user's first turn. Guards onTurnComplete so only genuine turn replies are written.
-  const pendingTurnRef = useRef(false);
 
-  // §3 — chat-scoped SSE for session lifecycle state; null when no session is active.
-  // fix 10A — ONE subscription hoisted here (was 3: page + ChatThread + RunningAgentsPanel);
-  // the derived stream values flow down to those children as props (1 EventSource per session).
-  // Task 2.1: new turn-scoped API — activeTurn carries live events/partials for the active turn.
-  // Task 2.2 will wire activeTurn into the <Turn> component; for now forward events/partials from it.
+  // §3 — chat-scoped SSE: ONE subscription per session, derived values flow down as props.
   const { state: liveState, activeTurn, error: streamError } = useChatStream(activeId);
-  const events = activeTurn?.events ?? [];
-  const partials = activeTurn?.partials ?? {};
-  // run, live, liveStreamRunId, subagents no longer come from useChatStream (Task 2.2 wires these)
-  const run = null;
+  // ponytail: run/live/liveStreamRunId/subagents stubbed — RunningAgentsPanel still wired
   const live = false;
   const liveStreamRunId: string | null = null;
-  const subagents: import('@/lib/live').ChatSubagent[] = [];
+  const subagents: ChatSubagent[] = [];
   const { questions: pendingQuestions, refresh: refreshQuestions } = usePendingQuestions(activeId);
-  // derive `chatState` alias for ChatComposer (still expects `chatState === 'running'`)
   const chatState = liveState;
-  // previews for the sidebar: last persisted message per session (cheap client derivation).
+
+  // Sidebar previews: last settled turn's first message per session.
   const previews = sessions.reduce<Record<string, string>>((acc, s) => {
-    if (s.id === activeId) acc[s.id] = messages[messages.length - 1]?.content?.slice(0, 60) ?? '';
+    if (s.id === activeId) acc[s.id] = turns[turns.length - 1]?.messages[0]?.content?.slice(0, 60) ?? '';
     return acc;
   }, {});
-  // Prefer the live-streamed state; fall back to the session read's derived field (spec §3).
+
   const effectiveState = liveState ?? session?.state ?? 'idle';
 
   const refreshSessions = useCallback(async () => { setSessions(await api.chatSessions()); }, []);
   const loadSession = useCallback(async (id: string) => {
-    const { session, messages } = await api.chatSession(id);
-    setActiveId(id); setSession(session); setMessages(messages); setLiveRunId(null);
+    const { session: s, turns: t } = await api.chatSession(id);
+    setActiveId(id); setSession(s); setTurns(t);
   }, []);
 
   useEffect(() => { refreshSessions(); }, [refreshSessions]);
+
+  // When activeTurn transitions from non-null to null, the server has just committed the
+  // turn. Refetch the latest page of turns and merge in any newly settled turn.
+  const prevActiveTurnRef = useRef<ChatActiveTurn | null>(null);
+  useEffect(() => {
+    const prev = prevActiveTurnRef.current;
+    prevActiveTurnRef.current = activeTurn;
+    if (prev !== null && activeTurn === null && activeId) {
+      api.chatTurns(activeId).then((fresh) => {
+        setTurns((existing) => {
+          const knownIds = new Set(existing.map((t) => t.id));
+          const newOnes = fresh.filter((t) => !knownIds.has(t.id));
+          return newOnes.length ? [...existing, ...newOnes] : existing;
+        });
+      }).catch(() => {});
+    }
+  }, [activeTurn, activeId]);
 
   async function newSession() {
     setErr(null);
@@ -66,9 +71,8 @@ export default function ChatPage() {
   }
   async function renameSession(id: string, title: string) {
     setErr(null);
-    try {
-      await api.renameChatSession(id, title); await refreshSessions();
-    } catch (e: any) { setErr(e.message); }
+    try { await api.renameChatSession(id, title); await refreshSessions(); }
+    catch (e: any) { setErr(e.message); }
   }
   async function killSession(id: string) {
     setErr(null);
@@ -84,61 +88,36 @@ export default function ChatPage() {
     setErr(null);
     try {
       await api.deleteChatSession(id); await refreshSessions();
-      if (id === activeId) { setActiveId(null); setSession(null); setMessages([]); }
+      if (id === activeId) { setActiveId(null); setSession(null); setTurns([]); }
     } catch (e: any) { setErr(e.message); }
   }
 
-  async function sendTurn(message: string, attachments: import('@fleet/shared').ChatAttachment[] = []) {
+  async function sendTurn(message: string, attachments: ChatAttachment[] = []) {
     if (!activeId) return;
-    setBusy(true);
-    setErr(null);
+    setBusy(true); setErr(null);
     try {
-      const { runId, userMessage } = await api.chatTurn(activeId, message, attachments);
-      setMessages((m) => [...m, userMessage]); setLiveRunId(runId); pendingTurnRef.current = true;
-    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+      // Server emits turn:start on the SSE → useChatStream sets activeTurn → renders live.
+      await api.chatTurn(activeId, message, attachments);
+    } catch (e: any) { setErr(e.message); }
+    finally { setBusy(false); }
   }
-  function runCommand(line: string) {
-    void command(line);
+
+  function handleRetry(turn: ChatTurn) {
+    const userMsg = turn.messages.find((m) => m.role === 'user');
+    if (userMsg && activeId) void sendTurn(userMsg.content);
   }
+
+  function runCommand(line: string) { void command(line); }
   async function command(line: string) {
     if (!activeId) return;
     setErr(null);
     try {
       await api.chatCommand(activeId, line);
-      await loadSession(activeId); // re-pull persisted command + result messages
+      await loadSession(activeId); // re-pull persisted command + result turns
     } catch (e: any) { setErr(e.message); }
   }
-  // Persist the assistant reply when a turn's `result` event arrives (fix 05 — driven off the
-  // per-turn result, not run-terminal, so it works for live runs that never go terminal between
-  // turns). ChatThread's `lastResultSeq` ref fires onTurnComplete EXACTLY ONCE per distinct result
-  // `seq` (and a reload strips events → no re-fire), which is the sole, correct dedup.
-  // fix 12 — NO (runId, content) guard here: a live-claude session reuses ONE held runId across
-  // every turn, so two turns with IDENTICAL text ('Done.', 'OK', two '(no output)' fallbacks)
-  // collide on (runId, content) and the old guard silently DROPPED the second reply. The seq
-  // guarantee already prevents double-persist; this callback now persists every result it receives.
-  const onTurnComplete = useCallback(async (runId: string, finalText: string) => {
-    // A result with no pending user turn is not a reply to anything (e.g. a held process that
-    // emits before its first stdin turn) — drop it rather than persist a phantom message.
-    if (!pendingTurnRef.current) return;
-    pendingTurnRef.current = false;
-    setLiveRunId(null);
-    if (!activeId) return;
-    const content = finalText.trim() || '(no output)';
-    try {
-      const msg = await api.addChatMessage(activeId, {
-        role: 'assistant', kind: 'text', content, runId,
-      });
-      setMessages((m) => [...m, msg]);
-    } catch (e: any) { setErr(e.message); }
-  }, [activeId]);
-  // A dropped/failed live stream clears the live turn so the thread recovers from "⟳ thinking…".
-  const onTurnError = useCallback((_runId: string) => {
-    setLiveRunId(null);
-    setErr('the live run stream was lost — the reply may not have been saved');
-  }, []);
 
-  // App-shell layout (scrolling thread + pinned composer). Height fits the shared frame
-  // exactly: viewport − 58px sticky header − 48px (main p-6) so it never overflows the body.
+  // App-shell layout: viewport − 58px sticky header − 48px (main p-6).
   return (
     <div className="flex flex-col h-[calc(100vh-106px)] min-h-0">
       <div className="mb-4 flex-none">
@@ -163,14 +142,21 @@ export default function ChatPage() {
                   <Badge label="LIVE" color={chatStateMeta('live').color} live />
                 )}
               </div>
-              {err && (
+              {(err || streamError) && (
                 <div className="px-4 pt-3">
-                  <ErrorBanner onRetry={() => setErr(null)}>{err}</ErrorBanner>
+                  <ErrorBanner onRetry={() => setErr(null)}>{err ?? streamError}</ErrorBanner>
                 </div>
               )}
-              <ChatThread sessionId={activeId} messages={messages} run={run} events={events} partials={partials} error={streamError} onTurnComplete={onTurnComplete} onTurnError={onTurnError} />
+              <ChatThread
+                sessionId={activeId}
+                turns={turns}
+                activeTurn={activeTurn}
+                onRetry={handleRetry}
+              />
               {pendingQuestions.map((q) => (
-                <div key={q.id} className="px-4 pb-3"><QuestionCard item={{ kind: 'question', question: q }} onAction={refreshQuestions} /></div>
+                <div key={q.id} className="px-4 pb-3">
+                  <QuestionCard item={{ kind: 'question', question: q }} onAction={refreshQuestions} />
+                </div>
               ))}
               <ChatComposer
                 disabled={busy}

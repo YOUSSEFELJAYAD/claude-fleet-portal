@@ -35,6 +35,7 @@ import type {
   SettingValue,
   ChatSession,
   ChatMessage,
+  ChatTurn,
   CreateChatSessionRequest,
   ChatTurnResponse,
   AddChatMessageRequest,
@@ -452,7 +453,12 @@ export const api = {
     j<SettingValue>(`/api/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
   // ── §30 chat dashboard ──
   chatSessions: () => j<ChatSession[]>('/api/chat/sessions'),
-  chatSession: (id: string) => j<{ session: ChatSession; messages: ChatMessage[] }>(`/api/chat/sessions/${id}`),
+  /** GET /api/chat/sessions/:id — returns the latest page of turns (newest-first). */
+  chatSession: (id: string) => j<{ session: ChatSession; turns: ChatTurn[] }>(`/api/chat/sessions/${id}`),
+  /** GET /api/chat/sessions/:id/turns — cursor-paginated older turns (newest-first).
+   *  `before` is the createdAt timestamp of the oldest turn currently loaded. */
+  chatTurns: (sessionId: string, before?: number, limit?: number) =>
+    j<ChatTurn[]>(`/api/chat/sessions/${sessionId}/turns${qs({ before: before != null ? String(before) : undefined, limit: limit != null ? String(limit) : undefined })}`),
   createChatSession: (body: CreateChatSessionRequest) => j<ChatSession>('/api/chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
   renameChatSession: (id: string, title: string) => j<ChatSession>(`/api/chat/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteChatSession: (id: string) => j(`/api/chat/sessions/${id}`, { method: 'DELETE' }),

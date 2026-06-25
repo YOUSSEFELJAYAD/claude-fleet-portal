@@ -7,7 +7,7 @@
  * page uses, and asserts a single EventSource is created (ChatThread / RunningAgentsPanel no longer
  * subscribe — they receive the derived stream values as props).
  *
- * Task 2.1: updated to use the new turn-scoped useChatStream API.
+ * Task 2.3: updated ChatThread props to new turn-based API (turns + activeTurn + onRetry).
  */
 import React from 'react';
 import { describe, it, expect } from 'vitest';
@@ -19,21 +19,14 @@ import { FakeEventSource } from './setup';
 
 function ChatSurface({ activeId }: { activeId: string | null }) {
   // ONE hoisted subscription (mirrors apps/web/app/chat/page.tsx)
-  // Task 2.1: new turn-scoped API; events/partials come from activeTurn
-  const { state, activeTurn, error } = useChatStream(activeId);
-  const events = activeTurn?.events ?? [];
-  const partials = activeTurn?.partials ?? {};
+  const { state, activeTurn } = useChatStream(activeId);
   return (
     <div>
       <ChatThread
         sessionId={activeId}
-        messages={[]}
-        run={null}
-        events={events}
-        partials={partials}
-        error={error}
-        onTurnComplete={() => {}}
-        onTurnError={() => {}}
+        turns={[]}
+        activeTurn={activeTurn}
+        onRetry={() => {}}
       />
       <RunningAgentsPanel sessionId={activeId} state={state} />
     </div>
