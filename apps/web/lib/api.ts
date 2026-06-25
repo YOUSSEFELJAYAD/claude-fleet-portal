@@ -498,6 +498,12 @@ export const api = {
   // ── chat-surface upgrade (§5/§6) ──
   /** §5.3 — `/` palette catalog (server strips CommandDef.run before serializing). */
   listCommands: () => j<CommandDef[]>('/api/commands'),
+  /** Task 4.1 — live arg values for one arg of a slash command (dynamic sources only).
+   *  sessionId is resolved server-side to cwd (trust model mirrors findFiles). */
+  commandArgs: (name: string, sessionId: string, argIndex: number) =>
+    j<{ values: { value: string; label?: string }[] }>(
+      `/api/commands/${encodeURIComponent(name)}/args${qs({ sessionId, argIndex: String(argIndex) })}`,
+    ).then((r) => r.values),
   /** §6.1 — `@` fuzzy file/folder search. The workspace root is resolved SERVER-SIDE from the
    *  session's trusted cwd (fix 10B); the client passes only the sessionId, never a raw cwd. */
   findFiles: (sessionId: string, q: string, limit?: number) =>

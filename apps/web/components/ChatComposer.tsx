@@ -1,23 +1,36 @@
 'use client';
-import React, { useRef, useState, useLayoutEffect } from 'react';
+import React, { useRef, useState, useLayoutEffect, useEffect } from 'react';
 import { Btn, Textarea } from '@/components/ui';
-import type { ChatAttachment, RunEngine } from '@fleet/shared';
-import { SlashMenu } from '@/components/SlashMenu';
+import type { ChatAttachment, CommandDef, RunEngine } from '@fleet/shared';
+import { SlashMenu, ArgMenu } from '@/components/SlashMenu';
 import { MentionMenu } from '@/components/MentionMenu';
+import { api } from '@/lib/api';
 
 /** What the caret is currently "inside": a `/` command token at input start, or an
  *  `@` mention token. `start` is the index of the trigger char; `query` is the text
  *  between the trigger and the caret. Returns null when no menu should be open. */
 export type TriggerMatch =
   | { kind: 'slash'; query: string; start: number }
+  /** Task 4.1 — second-stage: caret is inside an arg token of a fully-typed command. */
+  | { kind: 'slash-arg'; commandName: string; argIndex: number; query: string; start: number }
   | { kind: 'mention'; query: string; start: number };
 
 export function detectTrigger(text: string, caret: number): TriggerMatch | null {
   const upto = text.slice(0, caret);
-  // slash: only at the very start of the input, no whitespace after the verb yet
   if (upto.startsWith('/')) {
-    const seg = upto.slice(1);
-    if (!/\s/.test(seg)) return { kind: 'slash', query: seg, start: 0 };
+    const afterSlash = upto.slice(1);
+    const spaceIdx = afterSlash.indexOf(' ');
+    if (spaceIdx < 0) {
+      // Still typing the command name (no space yet)
+      return { kind: 'slash', query: afterSlash, start: 0 };
+    }
+    // Caret is inside an argument of an already-typed command
+    const commandName = afterSlash.slice(0, spaceIdx);
+    const afterName = afterSlash.slice(spaceIdx + 1);
+    const argParts = afterName.split(' ');
+    const argIndex = argParts.length - 1;
+    const query = argParts[argIndex];
+    return { kind: 'slash-arg', commandName, argIndex, query, start: upto.length - query.length };
   }
   // mention: the `@` must START the token immediately left of the caret. Find the
   // last whitespace before the caret; the token after it must begin with `@`.
@@ -73,6 +86,13 @@ export function ChatComposer({
   // textarea (role=combobox) can point aria-controls / aria-activedescendant at the live listbox.
   const [aria, setAria] = useState<{ listboxId: string; activeOptionId: string | null }>({ listboxId: '', activeOptionId: null });
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  // Task 4.1 — commands catalog (fetched once; used for arg-completion type lookup)
+  const [cmds, setCmds] = useState<CommandDef[]>([]);
+  // Task 4.1 — resolved arg values for the current slash-arg trigger (null = n/a; [] = no values)
+  const [argValues, setArgValues] = useState<{ value: string; label?: string }[] | null>(null);
+
+  // Fetch commands catalog once per mount (browser caches the XHR)
+  useEffect(() => { api.listCommands().then(setCmds).catch(() => {}); }, []);
 
   // auto-grow: reset to single-row height then grow to scrollHeight (capped)
   useLayoutEffect(() => {
@@ -85,6 +105,28 @@ export function ChatComposer({
   const trigger = dismissed ? null : detectTrigger(text, caret);
   // a menu "owns" Enter only when it is open AND has a row to pick (else Enter submits).
   const menuOpen = trigger !== null && menuCount > 0;
+
+  // Task 4.1 — resolve arg values when the slash-arg trigger changes.
+  // Static enum args resolve client-side; dynamic (source) args call api.commandArgs once per (command, argIndex).
+  const slashArg = trigger?.kind === 'slash-arg' ? trigger : null;
+  useEffect(() => {
+    if (!slashArg) { setArgValues(null); return; }
+    const { commandName, argIndex } = slashArg;
+    const cmd = cmds.find((c) => c.name === commandName);
+    const arg = cmd?.args[argIndex];
+    if (!arg) { setArgValues([]); return; }
+    if (arg.type === 'enum' && arg.enum) { setArgValues(arg.enum.map((v) => ({ value: v }))); return; }
+    if (arg.source && sessionId) {
+      let alive = true;
+      api.commandArgs(commandName, sessionId, argIndex)
+        .then((vals) => { if (alive) setArgValues(vals); })
+        .catch(() => { if (alive) setArgValues([]); });
+      return () => { alive = false; };
+    }
+    setArgValues([]);
+  // ponytail: cmds in deps is the stable state ref (only updates on setCmds)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slashArg?.commandName, slashArg?.argIndex, cmds, sessionId]);
 
   function reset() {
     setText('');
@@ -158,12 +200,23 @@ export function ChatComposer({
       )}
 
       <div className="relative flex gap-2 items-end">
-        {/* `/` palette */}
+        {/* `/` palette — first stage: pick a command */}
         {trigger?.kind === 'slash' && (
           <SlashMenu
             query={trigger.query}
             cwd={cwd}
             onPick={(name: string) => pickCommand(name)}
+            onClose={() => setDismissed(true)}
+            onCount={setMenuCount}
+            onActiveDescendant={setAria}
+          />
+        )}
+        {/* Task 4.1 — second stage: pick an arg value after the command name is chosen */}
+        {trigger?.kind === 'slash-arg' && argValues !== null && argValues.length > 0 && (
+          <ArgMenu
+            values={argValues}
+            query={trigger.query}
+            onPick={(value) => replaceToken(trigger.start, value + ' ')}
             onClose={() => setDismissed(true)}
             onCount={setMenuCount}
             onActiveDescendant={setAria}

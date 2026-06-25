@@ -46,7 +46,7 @@ vi.mock('../src/campaigns.js', () => ({
   campaigns: { create: vi.fn((req: any) => campaignCreateBehavior.fn(req)) },
 }));
 
-import { dispatchCommand } from '../src/commands.js';
+import { dispatchCommand, resolveCommandArgs } from '../src/commands.js';
 import { registry } from '../src/registry.js';
 import { campaigns } from '../src/campaigns.js';
 import { setAddonEnabledById } from '../src/addons.js';
@@ -264,6 +264,60 @@ describe('dispatchCommand — /addon enable|disable', () => {
     const r = await dispatchCommand('/addon disable nope', '/repo');
     expect(r.ok).toBe(false);
     expect(r.text).toBe('addon toggle failed');
+  });
+});
+
+// ── resolveCommandArgs — Task 4.1 ────────────────────────────────────────────────────────────────
+
+describe('resolveCommandArgs — running-runs (source: running-runs)', () => {
+  it('returns non-terminal run ids with labels for /kill arg 0', async () => {
+    const result = await resolveCommandArgs('kill', 0);
+    const ids = result.map((r) => r.value);
+    expect(ids).toContain('a1');
+    expect(ids).toContain('p2'); // paused is non-terminal
+    expect(ids).toContain('n3');
+    expect(ids).not.toContain('z9'); // completed → excluded
+    const a1 = result.find((r) => r.value === 'a1')!;
+    expect(a1.label).toBe('do x');
+  });
+
+  it('truncates a long task label to 60 chars', async () => {
+    const result = await resolveCommandArgs('kill', 0);
+    const p2 = result.find((r) => r.value === 'p2')!;
+    expect(p2.label!.length).toBe(60); // 80-char task sliced to 60
+  });
+
+  it('falls back to id when task is null', async () => {
+    const result = await resolveCommandArgs('kill', 0);
+    const n3 = result.find((r) => r.value === 'n3')!;
+    expect(n3.label).toBe('n3'); // null task → id as label
+  });
+});
+
+describe('resolveCommandArgs — addons (source: addons)', () => {
+  it('returns addon ids for /addon arg 1', async () => {
+    const result = await resolveCommandArgs('addon', 1);
+    const ids = result.map((r) => r.value);
+    expect(ids).toContain('compression');
+    expect(ids).toContain('searxng');
+  });
+});
+
+describe('resolveCommandArgs — non-dynamic args return []', () => {
+  it('returns [] for an unknown command', async () => {
+    expect(await resolveCommandArgs('nosuchcommand', 0)).toEqual([]);
+  });
+
+  it('returns [] for a prompt-type arg with no source (/launch arg 0)', async () => {
+    expect(await resolveCommandArgs('launch', 0)).toEqual([]);
+  });
+
+  it('returns [] for an out-of-range argIndex', async () => {
+    expect(await resolveCommandArgs('kill', 5)).toEqual([]);
+  });
+
+  it('returns [] for a static enum arg (/git arg 0 — enum resolved client-side)', async () => {
+    expect(await resolveCommandArgs('git', 0)).toEqual([]);
   });
 });
 

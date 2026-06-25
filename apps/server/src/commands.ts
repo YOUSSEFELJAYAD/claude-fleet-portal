@@ -340,6 +340,34 @@ export function listCommands(): CommandDef[] {
   return COMMANDS.map(({ run, ...wire }) => wire);
 }
 
+/** Resolve live completion values for arg N of command `name`.
+ *  Returns [] for unknown commands, out-of-range argIndex, or non-dynamic args
+ *  (the client resolves static `enum` args from the wire catalog — no server round-trip needed). */
+export async function resolveCommandArgs(
+  name: string,
+  argIndex: number,
+): Promise<Array<{ value: string; label?: string }>> {
+  const cmd = COMMANDS.find((c) => c.name === name);
+  if (!cmd) return [];
+  const arg = cmd.args[argIndex];
+  if (!arg?.source) return [];
+  switch (arg.source) {
+    case 'running-runs': {
+      const runs = (registry.listRuns() as any[]).filter((r) => !TERMINAL.has(r.status));
+      return runs.map((r) => ({ value: r.id, label: String(r.task ?? '').slice(0, 60) || r.id }));
+    }
+    case 'addons': {
+      const infos = await listAddonInfos();
+      return infos.map((a) => ({ value: a.id }));
+    }
+    case 'templates': {
+      const tpls = repo.listTemplates() as any[];
+      return tpls.map((t) => ({ value: t.id, label: t.name }));
+    }
+    default: return [];
+  }
+}
+
 /** Parse and run one slash-command line. `cwd` is the chat session's working dir.
  *  `force` bypasses the danger gate and runs the command directly — it is the replay
  *  path used by inbox.resolveApproval() AFTER an operator has approved the parked
