@@ -91,9 +91,6 @@ export function ChatComposer({
   // Task 4.1 — resolved arg values for the current slash-arg trigger (null = n/a; [] = no values)
   const [argValues, setArgValues] = useState<{ value: string; label?: string }[] | null>(null);
 
-  // Fetch commands catalog once per mount (browser caches the XHR)
-  useEffect(() => { api.listCommands().then(setCmds).catch(() => {}); }, []);
-
   // auto-grow: reset to single-row height then grow to scrollHeight (capped)
   useLayoutEffect(() => {
     const ta = taRef.current;
@@ -105,6 +102,16 @@ export function ChatComposer({
   const trigger = dismissed ? null : detectTrigger(text, caret);
   // a menu "owns" Enter only when it is open AND has a row to pick (else Enter submits).
   const menuOpen = trigger !== null && menuCount > 0;
+
+  // ponytail: load commands catalog lazily on first slash trigger, not on every composer mount.
+  // cmdsLoadedRef prevents re-fetching when the user closes and reopens the slash menu.
+  const cmdsLoadedRef = useRef(false);
+  const slashActive = trigger?.kind === 'slash' || trigger?.kind === 'slash-arg';
+  useEffect(() => {
+    if (!slashActive || cmdsLoadedRef.current) return;
+    cmdsLoadedRef.current = true;
+    api.listCommands().then(setCmds).catch(() => {});
+  }, [slashActive]);
 
   // Task 4.1 — resolve arg values when the slash-arg trigger changes.
   // Static enum args resolve client-side; dynamic (source) args call api.commandArgs once per (command, argIndex).

@@ -505,9 +505,10 @@ export const api = {
       `/api/commands/${encodeURIComponent(name)}/args${qs({ sessionId, argIndex: String(argIndex) })}`,
     ).then((r) => r.values),
   /** §6.1 — `@` fuzzy file/folder search. The workspace root is resolved SERVER-SIDE from the
-   *  session's trusted cwd (fix 10B); the client passes only the sessionId, never a raw cwd. */
-  findFiles: (sessionId: string, q: string, limit?: number) =>
-    j<FileFindResult[]>('/api/files/find' + qs({ sessionId, q, limit: limit != null ? String(limit) : undefined })),
+   *  session's trusted cwd (fix 10B); the client passes only the sessionId, never a raw cwd.
+   *  An optional AbortSignal lets the caller cancel an in-flight request when the query changes. */
+  findFiles: (sessionId: string, q: string, limit?: number, signal?: AbortSignal) =>
+    j<FileFindResult[]>('/api/files/find' + qs({ sessionId, q, limit: limit != null ? String(limit) : undefined }), { signal }),
   /** Task 3.3 — full-text search over chat messages (cross-session or scoped to one session). */
   searchChat: (q: string, sessionId?: string, limit?: number) =>
     j<{ hits: ChatSearchHit[] }>('/api/chat/search' + qs({ q, sessionId, limit: limit != null ? String(limit) : undefined }))

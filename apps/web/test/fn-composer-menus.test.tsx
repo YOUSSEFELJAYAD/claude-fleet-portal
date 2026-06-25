@@ -63,6 +63,27 @@ describe('composer ↔ menus', () => {
   });
 });
 
+describe('lazy catalog load (Fix B)', () => {
+  it('does NOT call listCommands on mount', async () => {
+    const { api } = await import('../lib/api');
+    mount();
+    expect(api.listCommands).not.toHaveBeenCalled();
+  });
+
+  it('calls listCommands when the slash menu opens but not again on further keystrokes', async () => {
+    const { api } = await import('../lib/api');
+    const { ta } = mount();
+    expect(api.listCommands).not.toHaveBeenCalled();
+    fireEvent.change(ta, { target: { value: '/' } });
+    await waitFor(() => expect((api.listCommands as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0));
+    const callsAfterOpen = (api.listCommands as ReturnType<typeof vi.fn>).mock.calls.length;
+    // additional keystrokes do NOT trigger more fetches
+    fireEvent.change(ta, { target: { value: '/se' } });
+    fireEvent.change(ta, { target: { value: '/ses' } });
+    expect((api.listCommands as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterOpen);
+  });
+});
+
 describe('composer Enter ↔ open menu (fix 09)', () => {
   it('Enter with the SlashMenu open PICKS the command and does NOT submit', async () => {
     const onSend = vi.fn();
