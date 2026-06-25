@@ -42,6 +42,7 @@ import type {
   CommandDef,
   FileFindResult,
   ChatAttachment,
+  ChatSearchHit,
 } from '@fleet/shared';
 // F10 — config-as-code export/import types (defined locally to avoid cross-package imports)
 export interface ExportedSetup {
@@ -501,4 +502,8 @@ export const api = {
    *  session's trusted cwd (fix 10B); the client passes only the sessionId, never a raw cwd. */
   findFiles: (sessionId: string, q: string, limit?: number) =>
     j<FileFindResult[]>('/api/files/find' + qs({ sessionId, q, limit: limit != null ? String(limit) : undefined })),
+  /** Task 3.3 — full-text search over chat messages (cross-session or scoped to one session). */
+  searchChat: (q: string, sessionId?: string, limit?: number) =>
+    j<{ hits: ChatSearchHit[] }>('/api/chat/search' + qs({ q, sessionId, limit: limit != null ? String(limit) : undefined }))
+      .then((r) => r.hits),
 };

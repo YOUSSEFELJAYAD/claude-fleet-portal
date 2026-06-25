@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useChatStream, usePendingQuestions } from '@/lib/live';
 import type { ChatActiveTurn, ChatSubagent } from '@/lib/live';
 import { ChatSessionList } from '@/components/ChatSessionList';
+import { ChatSearch } from '@/components/ChatSearch';
 import { ChatThread } from '@/components/ChatThread';
 import { ChatComposer } from '@/components/ChatComposer';
 import { RunningAgentsPanel } from '@/components/RunningAgentsPanel';
@@ -133,6 +134,23 @@ export default function ChatPage() {
     } catch (e: any) { setErr(e.message); }
   }
 
+  /**
+   * Jump to a specific turn, loading the session first if it differs from the active one.
+   * ponytail: 100ms delay after loadSession lets React commit the new turns before we
+   * getElementById; if the turn is not in the currently-loaded page (deep history), the
+   * scroll is a no-op — user can click "load older" to page in older turns.
+   */
+  function openSessionAtTurn(sessionId: string, turnId: string) {
+    const jump = () => setTimeout(() => {
+      const el = document.getElementById(`turn-${turnId}`);
+      if (!el) return; // limitation: turn not in loaded history page
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.style.outline = '2px solid #ffb000';
+      setTimeout(() => { el.style.outline = ''; }, 1500);
+    }, 100);
+    if (sessionId !== activeId) { void loadSession(sessionId).then(jump); } else { jump(); }
+  }
+
   // App-shell layout: viewport − 58px sticky header − 48px (main p-6).
   return (
     <div className="flex flex-col h-[calc(100vh-106px)] min-h-0">
@@ -146,6 +164,7 @@ export default function ChatPage() {
           onSelect={loadSession} onNew={newSession} onRename={renameSession}
           onKill={killSession} onResume={resumeSession} onDelete={deleteSession} />
         <div className="flex-1 flex flex-col min-w-0 border-x border-line2">
+          <ChatSearch activeId={activeId} onOpenAtTurn={openSessionAtTurn} />
           {session ? (
             <>
               <div className="px-4 py-2.5 border-b hairline text-[12px] flex items-center gap-2">

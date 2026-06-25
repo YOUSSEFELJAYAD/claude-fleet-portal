@@ -84,10 +84,15 @@ export function ChatThread({
         </div>
       )}
       {allTurns.map((turn) => (
-        <Turn key={turn.id} turn={turn} onRetry={() => onRetry(turn)} />
+        // id anchor lets openSessionAtTurn(sessionId, turnId) scroll to this turn
+        <div key={turn.id} id={`turn-${turn.id}`}>
+          <Turn turn={turn} onRetry={() => onRetry(turn)} />
+        </div>
       ))}
       {showActive && (
-        <Turn active={activeTurn} onRetry={() => onRetry(activeTurn.turn)} />
+        <div id={`turn-${activeTurn.turnId}`}>
+          <Turn active={activeTurn} onRetry={() => onRetry(activeTurn.turn)} />
+        </div>
       )}
       {showActive && activeTurn.status !== 'failed' && activeTurn.status !== 'settled' && (
         <div className="sticky bottom-0 flex justify-center py-2">
