@@ -5,7 +5,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import db from './db.js';
-import { chatRepo } from './chatRepo.js';
+import { chatRepo, searchChat } from './chatRepo.js';
 import { registry } from './registry.js';
 import { dispatchCommand } from './commands.js';
 import { chatLive } from './chatLive.js';
@@ -65,6 +65,16 @@ export function stripHelloEvents(m: unknown): unknown {
 export { registerChatStreamRoute } from './chatStream.js';
 
 export function registerChatRoutes(app: FastifyInstance) {
+  app.get('/api/chat/search', async (req) => {
+    const q = req.query as any;
+    const query = String(q?.q ?? '').trim();
+    if (!query) return { hits: [] };
+    const sessionId = q?.sessionId ? String(q.sessionId) : undefined;
+    const rawLimit = parseInt(String(q?.limit ?? '30'), 10);
+    const limit = Math.min(isNaN(rawLimit) || rawLimit < 1 ? 30 : rawLimit, 100);
+    return { hits: searchChat(query, sessionId, limit) };
+  });
+
   app.get('/api/chat/sessions', async () => chatRepo.listSessions());
 
   app.post('/api/chat/sessions', async (req, reply) => {

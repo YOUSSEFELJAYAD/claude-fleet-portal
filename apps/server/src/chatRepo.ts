@@ -5,10 +5,11 @@
  */
 import { randomUUID } from 'node:crypto';
 import db from './db.js';
+import { createFts, sanitizeFtsQuery, ftsSnippet } from './fts.js';
 import type {
   ChatSession, ChatMessage, ChatRole, ChatMessageKind,
   CreateChatSessionRequest, RunEngine, EffortLevel, PermissionMode,
-  ChatAttachment, ChatTurn,
+  ChatAttachment, ChatTurn, ChatSearchHit,
 } from '@fleet/shared';
 
 // ── DDL ──────────────────────────────────────────────────────────────────────
@@ -41,6 +42,23 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, created_at);
 `);
 
+// ── FTS5 table ────────────────────────────────────────────────────────────────
+// ponytail: best-effort; if FTS5 is unavailable the rest of chatRepo still works
+
+let _ftsReady = false;
+try {
+  createFts(db, 'chat_messages_fts', [
+    'session_id UNINDEXED',
+    'turn_id UNINDEXED',
+    'message_id UNINDEXED',
+    'role UNINDEXED',
+    'text',
+  ]);
+  _ftsReady = true;
+} catch (e: any) {
+  console.warn('[chatRepo] FTS5 unavailable — chat search disabled:', e?.message);
+}
+
 // ── Additive migrations (idempotent) ─────────────────────────────────────────
 
 for (const ddl of [
@@ -71,6 +89,38 @@ const insMessage = db.prepare(`INSERT INTO chat_messages
 const listMessagesStmt = db.prepare('SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC');
 const lastTurnIdStmt = db.prepare('SELECT turn_id FROM chat_messages WHERE session_id = ? AND turn_id IS NOT NULL ORDER BY created_at DESC LIMIT 1');
 const getTurnStmt = db.prepare('SELECT * FROM chat_messages WHERE session_id = ? AND turn_id = ? ORDER BY created_at ASC');
+
+// FTS prepared statements (only used when _ftsReady)
+const insFts = _ftsReady
+  ? db.prepare('INSERT INTO chat_messages_fts (session_id, turn_id, message_id, role, text) VALUES (?, ?, ?, ?, ?)')
+  : null;
+const searchFtsAll = _ftsReady
+  ? db.prepare(`
+      SELECT f.session_id, f.turn_id, f.message_id, f.role,
+             ${ftsSnippet('chat_messages_fts', 4)} AS snippet,
+             cs.title AS session_title,
+             cm.created_at
+      FROM chat_messages_fts f
+      JOIN chat_sessions cs ON cs.id = f.session_id
+      JOIN chat_messages cm ON cm.id = f.message_id
+      WHERE chat_messages_fts MATCH ?
+      ORDER BY rank
+      LIMIT ?`)
+  : null;
+const searchFtsSession = _ftsReady
+  ? db.prepare(`
+      SELECT f.session_id, f.turn_id, f.message_id, f.role,
+             ${ftsSnippet('chat_messages_fts', 4)} AS snippet,
+             cs.title AS session_title,
+             cm.created_at
+      FROM chat_messages_fts f
+      JOIN chat_sessions cs ON cs.id = f.session_id
+      JOIN chat_messages cm ON cm.id = f.message_id
+      WHERE chat_messages_fts MATCH ?
+        AND f.session_id = ?
+      ORDER BY rank
+      LIMIT ?`)
+  : null;
 
 // ── Row mappers ───────────────────────────────────────────────────────────────
 
@@ -146,6 +196,9 @@ export const chatRepo = {
       created_at: Date.now(),
     };
     insMessage.run(row);
+    if (insFts && m.content.trim()) {
+      try { insFts.run(m.sessionId, m.turnId, row.id, m.role, m.content); } catch { /* best-effort */ }
+    }
     return rowToMessage(row);
   },
 
@@ -252,3 +305,58 @@ export function backfillChatTurns(): void {
 
 // Boot: run backfill (idempotent — only touches NULL turn_id rows)
 backfillChatTurns();
+
+// ── FTS backfill ──────────────────────────────────────────────────────────────
+
+/** Index any chat_messages rows not yet in the FTS table (idempotent — second call is a no-op). */
+export function backfillChatFts(): void {
+  if (!_ftsReady || !insFts) return;
+  try {
+    // ponytail: scan all unindexed messages via NOT IN; FTS5 supports plain SELECT
+    const rows = db.prepare(`
+      SELECT id, session_id, turn_id, role, content
+      FROM chat_messages
+      WHERE content != ''
+        AND id NOT IN (SELECT message_id FROM chat_messages_fts)
+    `).all() as Array<{ id: string; session_id: string; turn_id: string | null; role: string; content: string }>;
+
+    if (!rows.length) return;
+    const tx = db.transaction(() => {
+      for (const r of rows) {
+        try { insFts!.run(r.session_id, r.turn_id ?? '', r.id, r.role, r.content); } catch { /* skip */ }
+      }
+    });
+    tx();
+    console.log(`[chatRepo] FTS backfill — indexed ${rows.length} messages`);
+  } catch (e: any) {
+    console.warn('[chatRepo] FTS backfill failed:', e?.message);
+  }
+}
+
+// Run FTS backfill on boot (idempotent — messages already in FTS are skipped)
+backfillChatFts();
+
+// ── searchChat ────────────────────────────────────────────────────────────────
+
+export function searchChat(q: string, sessionId?: string, limit = 30): ChatSearchHit[] {
+  if (!_ftsReady || (!searchFtsAll && !searchFtsSession)) return [];
+  try {
+    const safeQ = sanitizeFtsQuery(q);
+    const cap = Math.min(limit, 100);
+    const rows = sessionId
+      ? searchFtsSession!.all(safeQ, sessionId, cap)
+      : searchFtsAll!.all(safeQ, cap);
+    return (rows as any[]).map(r => ({
+      sessionId: r.session_id as string,
+      sessionTitle: r.session_title as string,
+      turnId: r.turn_id as string,
+      messageId: r.message_id as string,
+      role: r.role as ChatRole,
+      snippet: r.snippet as string,
+      createdAt: r.created_at as number,
+    }));
+  } catch (e: any) {
+    console.warn('[chatRepo] searchChat error:', e?.message);
+    return [];
+  }
+}
