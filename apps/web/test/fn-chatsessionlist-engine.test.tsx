@@ -24,6 +24,7 @@ const baseProps = {
 describe('ChatSessionList — engine degradation', () => {
   it('a live claude session shows Kill but NOT Resume', () => {
     render(<ChatSessionList {...(baseProps as any)} sessions={[session({ engine: 'claude', state: 'live', live: true })] as any} />);
+    fireEvent.click(screen.getByRole('button'));
     expect(screen.queryByText(/^kill$/i)).not.toBeNull();
     expect(screen.queryByText(/^resume$/i)).toBeNull();
     expect(screen.queryByText(/one-shot/i)).toBeNull();
@@ -31,24 +32,28 @@ describe('ChatSessionList — engine degradation', () => {
 
   it('a running claude session shows Kill but NOT Resume', () => {
     render(<ChatSessionList {...(baseProps as any)} sessions={[session({ engine: 'claude', state: 'running', live: true })] as any} />);
+    fireEvent.click(screen.getByRole('button'));
     expect(screen.queryByText(/^kill$/i)).not.toBeNull();
     expect(screen.queryByText(/^resume$/i)).toBeNull();
   });
 
   it('an idle claude session shows Resume but NOT Kill', () => {
     render(<ChatSessionList {...(baseProps as any)} sessions={[session({ engine: 'claude', state: 'idle', live: false })] as any} />);
+    fireEvent.click(screen.getByRole('button'));
     expect(screen.queryByText(/^kill$/i)).toBeNull();
     expect(screen.queryByText(/^resume$/i)).not.toBeNull();
   });
 
   it('a killed claude session shows Resume but NOT Kill', () => {
     render(<ChatSessionList {...(baseProps as any)} sessions={[session({ engine: 'claude', state: 'killed', live: false })] as any} />);
+    fireEvent.click(screen.getByRole('button'));
     expect(screen.queryByText(/^kill$/i)).toBeNull();
     expect(screen.queryByText(/^resume$/i)).not.toBeNull();
   });
 
   it('an engine session hides Kill/Resume and shows the one-shot · limited memory badge', () => {
     render(<ChatSessionList {...(baseProps as any)} sessions={[session({ id: 's1', engine: 'codex', state: 'live', live: true })] as any} />);
+    fireEvent.click(screen.getByRole('button'));
     expect(screen.queryByText(/^kill$/i)).toBeNull();
     expect(screen.queryByText(/^resume$/i)).toBeNull();
     expect(screen.queryByText(/one-shot · limited memory/i)).not.toBeNull();
@@ -58,6 +63,7 @@ describe('ChatSessionList — engine degradation', () => {
     const onKill = vi.fn();
     render(<ChatSessionList {...(baseProps as any)} onKill={onKill}
       sessions={[session({ engine: 'claude', state: 'live', live: true })] as any} />);
+    fireEvent.click(screen.getByRole('button'));
     fireEvent.click(screen.getByText(/^kill$/i));
     expect(onKill).toHaveBeenCalledWith('s1');
   });
@@ -66,6 +72,7 @@ describe('ChatSessionList — engine degradation', () => {
     const onResume = vi.fn();
     render(<ChatSessionList {...(baseProps as any)} onResume={onResume}
       sessions={[session({ engine: 'claude', state: 'idle', live: false })] as any} />);
+    fireEvent.click(screen.getByRole('button'));
     fireEvent.click(screen.getByText(/^resume$/i));
     expect(onResume).toHaveBeenCalledWith('s1');
   });

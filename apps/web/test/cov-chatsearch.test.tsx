@@ -46,6 +46,7 @@ describe('ChatSearch', () => {
     vi.mocked(api.searchChat).mockResolvedValue([hit]);
 
     render(<ChatSearch onOpenAtTurn={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'search chats' }));
     const input = screen.getByRole('searchbox');
     fireEvent.change(input, { target: { value: 'answer' } });
     await vi.advanceTimersByTimeAsync(300); // past the 200ms debounce
@@ -60,6 +61,7 @@ describe('ChatSearch', () => {
     const onOpenAtTurn = vi.fn();
 
     render(<ChatSearch onOpenAtTurn={onOpenAtTurn} />);
+    fireEvent.click(screen.getByRole('button', { name: 'search chats' }));
     const input = screen.getByRole('searchbox');
     fireEvent.change(input, { target: { value: 'click' } });
     await vi.advanceTimersByTimeAsync(300);
@@ -74,6 +76,7 @@ describe('ChatSearch', () => {
     vi.mocked(api.searchChat).mockResolvedValue([hit]);
 
     render(<ChatSearch onOpenAtTurn={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'search chats' }));
     const input = screen.getByRole('searchbox');
     fireEvent.change(input, { target: { value: 'answer' } });
     await vi.advanceTimersByTimeAsync(300);
@@ -95,6 +98,7 @@ describe('ChatSearch', () => {
       .mockResolvedValueOnce([mkHit({ snippet: 'fresh result' })]); // second call: immediate
 
     render(<ChatSearch onOpenAtTurn={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'search chats' }));
     const input = screen.getByRole('searchbox');
 
     // First query: debounce fires, stale request goes in-flight
