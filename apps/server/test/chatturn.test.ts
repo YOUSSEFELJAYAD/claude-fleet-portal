@@ -119,7 +119,6 @@ function collect(sessionId: string) {
   const unsub = chatTurns.subscribe(sessionId, (f: any) => frames.push(f));
   return { frames, unsub };
 }
-const kinds = (frames: any[]) => frames.map((f) => f.kind);
 const assistantTexts = (frames: any[]) =>
   frames.filter((f) => f.kind === 'turn:event' && f.event?.type === 'assistant_text').map((f) => String(f.event.payload?.text ?? ''));
 
@@ -227,6 +226,32 @@ describe('chatTurns — server-declared turn boundaries', () => {
     expect(fail.turnId).toBe(turnId);
     expect(chatTurns.activeTurn(s.id)).toBeNull();
   }, 20_000);
+
+  it('(f) concurrent turn guard: rejects 409 while first is active; succeeds after settle', async () => {
+    const s = chatRepo.createSession({ cwd: dataDir });
+    const { frames } = collect(s.id);
+
+    const { turnId, runId } = await chatTurns.startTurn(s.id, '__HOLD__');
+    await waitFor(() => assistantTexts(frames).includes('held'));
+
+    // Must reject with 409 while first turn is still streaming.
+    await expect(chatTurns.startTurn(s.id, 'concurrent')).rejects.toMatchObject({ statusCode: 409 });
+
+    // Interrupt the first turn; wait for it to fail.
+    registry.stop(runId);
+    await waitFor(() => frames.some((f: any) => f.kind === 'turn:failed'));
+    expect(chatTurns.activeTurn(s.id)).toBeNull();
+
+    // In production chatLive.init()'s onRunTerminal drops the handle automatically; simulate that.
+    chatLive.evict(s.id);
+
+    // After the first turn settles, a new turn for the same session must succeed.
+    const { frames: frames2 } = collect(s.id);
+    const { turnId: turnId2 } = await chatTurns.startTurn(s.id, 'after-settle');
+    expect(turnId2).toBeTruthy();
+    expect(turnId2).not.toBe(turnId);
+    await waitFor(() => frames2.some((f: any) => f.kind === 'turn:settled'));
+  }, 25_000);
 
   it('(e) no live slot → one-shot fallback, still one turn settled', async () => {
     // Occupy the single chat slot with a throwaway live session.

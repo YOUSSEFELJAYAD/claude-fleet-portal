@@ -167,8 +167,7 @@ export function registerChatRoutes(app: FastifyInstance) {
       const id = (req.params as any).id;
       const body = (req.body ?? {}) as { message?: string; attachments?: ChatAttachment[] };
       const res = await chatTurns.startTurn(id, body.message as string, body.attachments);
-      chatLive.touch(id); // a turn is activity — keep a live session warm
-      return res;
+      return res; // ponytail: touch already happens inside startTurn (live branch)
     } catch (e: any) {
       return reply.code(e?.statusCode ?? 500).send({ error: e?.message ?? 'turn failed' });
     }

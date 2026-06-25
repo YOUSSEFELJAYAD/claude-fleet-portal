@@ -133,6 +133,10 @@ class ChatTurns {
     if (!session) throw Object.assign(new Error('session not found'), { statusCode: 404 });
     if (typeof message !== 'string' || !message.trim()) throw Object.assign(new Error('message is required'), { statusCode: 400 });
 
+    // I-1: one active turn per session; a second call while the first is streaming is a client bug.
+    const existing = this.active.get(sessionId);
+    if (existing && !existing.settled) throw Object.assign(new Error('a turn is already in progress for this session'), { statusCode: 409 });
+
     const turnId = chatRepo.newTurnId();
     const userMessage = chatRepo.addMessage({ sessionId, role: 'user', kind: 'text', content: message, runId: null, attachments, turnId });
 
@@ -149,6 +153,10 @@ class ChatTurns {
     const at: ActiveTurn = { turnId, sessionId, runId: '', turn, unsubRun: null, unsubChange: () => {}, assistant: '', resultText: null, settled: false, frames: [] };
     this.active.set(sessionId, at);
     this.emit(sessionId, { kind: 'turn:start', turn });
+
+    // M-1: register run-change BEFORE the async dispatch so a backing-run change fired DURING
+    // dispatch (e.g. old run killed while ensureLive/launch/resume is awaited) is never missed.
+    at.unsubChange = chatLive.onBackingRunChange?.((sid, newRunId) => this.onRunChange(sid, newRunId)) ?? (() => {});
 
     const baseOpts = {
       cwd: session.cwd, model: session.model, effort: session.effort, permissionMode: session.permissionMode,
@@ -183,10 +191,6 @@ class ChatTurns {
     }
 
     chatRepo.setSessionRun(sessionId, run.id);
-    // Re-subscribe across a backing-run CHANGE (idle-evict/kill → fresh held run, or a resume that
-    // mints a new id) — unsub the old run, subscribe the new one, keep the SAME turnId. Same-id
-    // announcements (this very dispatch) are a no-op via the guard in onRunChange.
-    at.unsubChange = chatLive.onBackingRunChange?.((sid, newRunId) => this.onRunChange(sid, newRunId)) ?? (() => {});
     // Announce the backing run to the still-registered legacy chat SSE (no-op for the held/resume
     // paths it already streams; rescues a budget-exhausted one-shot). Harmless here (same-id guard).
     chatLive.notifyBackingRun?.(sessionId, run.id);
@@ -195,10 +199,14 @@ class ChatTurns {
   }
 
   /** Subscribe the orchestrator to a backing run; tolerates a mocked-out registry (subscribeRun
-   *  absent) or a vanished run (subscribeRun → null). */
+   *  absent) or a vanished run (subscribeRun → null). Idempotent for the same runId: moving
+   *  onBackingRunChange before the dispatch means launchLive's emitRunChange can call us first,
+   *  then the dispatch calls us again with the same id — the second call is a no-op. */
   private subscribeBackingRun(sessionId: string, runId: string): void {
     const at = this.active.get(sessionId);
     if (!at) return;
+    if (at.runId === runId) return; // already subscribed to this run — skip double-subscribe
+    at.unsubRun?.();
     at.runId = runId;
     at.unsubRun = registry.subscribeRun?.(runId, (m: StreamMessage) => this.onRunMessage(sessionId, m)) ?? null;
   }

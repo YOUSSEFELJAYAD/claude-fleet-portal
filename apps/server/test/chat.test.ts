@@ -81,7 +81,7 @@ vi.mock('../src/chatLive.js', () => ({
 describe('startTurn', () => {
   it('turn 1 launches; turn 2 resumes the stored run id', async () => {
     const { registry } = await import('../src/registry.js');
-    const { chatRepo, startTurn } = await import('../src/chat.js');
+    const { chatRepo, chatTurns, startTurn } = await import('../src/chat.js');
     const s = chatRepo.createSession({ cwd: '/tmp/t' });
 
     const t1 = await startTurn(s.id, 'first');
@@ -89,6 +89,9 @@ describe('startTurn', () => {
     expect(t1.runId).toBe('run-launch');
     expect(chatRepo.getSession(s.id)?.runId).toBe('run-launch');
     expect(t1.userMessage.content).toBe('first');
+
+    // The mock never settles turn 1 (no real process); simulate settle so turn 2 is not blocked.
+    chatTurns._resetForTest();
 
     const t2 = await startTurn(s.id, 'second');
     expect((registry.resume as any)).toHaveBeenCalledWith('run-launch', 'second', undefined, undefined);
