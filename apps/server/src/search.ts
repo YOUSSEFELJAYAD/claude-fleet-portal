@@ -159,8 +159,6 @@ function backfill(db: InstanceType<typeof Database>): void {
     console.log(`[search] backfilling FTS index from ${count} events (cap 100k)…`);
     let offset = 0;
     const batchSize = 5000;
-    let totalIndexed = 0;
-    const runCache = new Map<string, { task: string; status: string; started_at: number; model: string }>();
 
     while (true) {
       const rows = db
@@ -186,16 +184,10 @@ function backfill(db: InstanceType<typeof Database>): void {
       }));
 
       indexEvents(evs);
-      totalIndexed += rows.filter((r) => {
-        const e: NormalizedEvent = evs[rows.indexOf(r)];
-        return extractText(e) != null;
-      }).length;
       offset += rows.length;
       if (offset >= 100_000) break;
     }
     console.log(`[search] backfill complete — indexed up to ${offset} events`);
-    void runCache; // just suppress unused warning
-    void totalIndexed;
   } catch (err: any) {
     console.warn('[search] backfill failed:', err?.message);
   }

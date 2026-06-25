@@ -42,6 +42,3 @@ export const clock = (ts: number | null | undefined): string => {
   const d = new Date(ts);
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 };
-
-export const shortId = (id: string | null | undefined): string =>
-  id ? id.replace(/^toolu_/, '').slice(0, 8) : '—';

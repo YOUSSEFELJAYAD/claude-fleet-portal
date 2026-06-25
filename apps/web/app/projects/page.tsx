@@ -3,36 +3,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Project, CreateProjectRequest, MergeMode, GitHealth } from '@fleet/shared';
 import { Panel, Kicker, Field, Input, Select, Toggle, Btn, Empty, Dot, Chip, ErrorBanner } from '@/components/ui';
-
-const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
-
-/** raw fetch helper that surfaces the server's {error} message (mirrors lib/api.ts j<T>). */
-async function j<T>(path: string, init?: RequestInit): Promise<T> {
-  // json content-type only when a body is sent — Fastify 400s an empty JSON-typed body,
-  // which broke the body-less DELETE behind "✕ Delete Project".
-  const r = await fetch(API + path, {
-    ...(init?.body != null ? { headers: { 'content-type': 'application/json' } } : {}),
-    ...init,
-  });
-  if (!r.ok) {
-    let msg = r.statusText;
-    let code: string | undefined;
-    try {
-      const body = await r.json();
-      msg = body.error ?? msg;
-      code = body.code; // e.g. 'not_a_git_repo' so callers can offer git-init (v2 #10)
-    } catch {
-      /* ignore */
-    }
-    const e = new Error(msg) as Error & { code?: string; status?: number };
-    e.code = code;
-    e.status = r.status;
-    throw e;
-  }
-  // DELETE may return empty body
-  if (r.status === 204) return undefined as unknown as T;
-  return r.json() as Promise<T>;
-}
+import { j } from '@/lib/api';
 
 /** the partial-settings PUT shape this page sends (server + lib/api.ts must match). */
 interface UpdateProjectRequest {

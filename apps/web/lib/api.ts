@@ -202,7 +202,7 @@ export const API = process.env.NEXT_PUBLIC_FLEET_API || 'http://127.0.0.1:4319';
 /** Error carrying the HTTP status + server `code` so callers can branch (e.g. 409 stale-oid). */
 export type ApiError = Error & { status?: number; code?: string };
 
-async function j<T>(path: string, init?: RequestInit): Promise<T> {
+export async function j<T>(path: string, init?: RequestInit): Promise<T> {
   // Only claim a JSON body when one is actually sent — Fastify 400s an EMPTY body that
   // carries `content-type: application/json` (FST_ERR_CTP_EMPTY_JSON_BODY), which broke
   // every body-less DELETE (kill run, delete record / template / campaign).
@@ -477,11 +477,6 @@ export const api = {
   /** §3 — stop the current turn, keep the process live if possible. */
   chatInterrupt: (id: string) =>
     j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST' }),
-  /** §3 — explicit kill: stops the live process and marks the session killed/resumable.
-   *  POSTs to /interrupt so the session row and message history are preserved (not deleted).
-   *  Use deleteChatSession to hard-delete a session and all its messages. */
-  chatKill: (id: string) =>
-    j(`/api/chat/sessions/${id}/interrupt`, { method: 'POST', body: JSON.stringify({}) }),
   addChatMessage: (id: string, body: AddChatMessageRequest) => j<ChatMessage>(`/api/chat/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify(body) }),
   chatCommand: (id: string, line: string) => j<ChatCommandResult>(`/api/chat/sessions/${id}/command`, { method: 'POST', body: JSON.stringify({ line }) }),
   /** §3.1 — explicitly kills a live/running session by stopping its backing run. The server

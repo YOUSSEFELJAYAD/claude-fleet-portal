@@ -28,13 +28,11 @@ import type {
   KanbanColumn,
   OrchestratorPlan,
   Run,
-  AgentTemplate,
 } from '@fleet/shared';
 import { PLAN_JSON_SCHEMA, KANBAN_COLUMNS } from '@fleet/shared';
 import db from './db.js';
-import { repo } from './db.js';
 import { registry } from './registry.js';
-import { planHasCycle, planHasDupIds } from './campaigns.js';
+import { planHasCycle, planHasDupIds, tpl } from './campaigns.js';
 import { kanbanRepo } from './kanban.js';
 import { projectsRepo, onProjectDeleted } from './projects.js';
 import { pm } from './pm.js'; // circular but runtime-safe: only referenced inside apply() (mirrors kanban.ts)
@@ -153,30 +151,6 @@ export const planboardRepo = {
     return next;
   },
 };
-
-// ── planner template resolution (mirror campaigns.ts `tpl`) ─────────────────────
-function orchestratorTemplate(): AgentTemplate {
-  const all = repo.listTemplates();
-  return (
-    all.find((t) => t.role === 'orchestrator') ??
-    all[0] ?? {
-      id: 'x',
-      name: 'default',
-      role: 'orchestrator',
-      description: '',
-      systemPrompt: '',
-      model: 'claude-opus-4-8',
-      fastMode: false,
-      effort: 'high',
-      allowedTools: [],
-      skills: [],
-      permissionMode: 'default',
-      budgetUsd: 3,
-      isBuiltin: true,
-      createdAt: 0,
-    }
-  );
-}
 
 /**
  * Parse a planner Run's terminal output into a PlanTask[], exactly like campaigns.ts
@@ -299,7 +273,7 @@ class Planboard {
     };
     planboardRepo.insert(draft);
 
-    const orchT = orchestratorTemplate();
+    const orchT = tpl(undefined, 'orchestrator');
     let run: Run;
     try {
       run = await registry.launch({

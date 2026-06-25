@@ -14,16 +14,12 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Project, CreateProjectRequest, MergeMode, GitHealth } from '@fleet/shared';
 import db from './db.js';
-import { initRepo } from './git.js';
+import { initRepo, gitExec } from './git.js';
 import { resolveRemote, ghAuthStatus } from './gh.js';
-
-const execFileAsync = promisify(execFile);
 
 // ── schema (idempotent) ───────────────────────────────────────────────────────
 // CREATE-body carries every column (so a fresh DB never relies on the ALTER loop), and the
@@ -324,12 +320,8 @@ export function onProjectDeleted(cb: (id: string) => void): void {
  *  Used so a new project's merge target matches the repo's ACTUAL default branch (older
  *  `git init` defaults to master) instead of assuming 'main' — found by the live PM E2E. */
 async function detectDefaultBranch(dir: string): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync('git', ['-C', dir, 'symbolic-ref', '--short', 'HEAD'], { timeout: 10000 });
-    return stdout.trim() || 'main';
-  } catch {
-    return 'main';
-  }
+  const r = await gitExec(dir, ['-C', dir, 'symbolic-ref', '--short', 'HEAD'], { timeout: 10000 });
+  return (r.ok && r.stdout.trim()) || 'main';
 }
 
 /**
@@ -338,20 +330,13 @@ async function detectDefaultBranch(dir: string): Promise<string> {
  * matches the symbolic HEAD name (the branch the first commit will land on).
  */
 async function validateBranchExists(dir: string, branch: string): Promise<string | null> {
-  try {
-    const head = await execFileAsync('git', ['-C', dir, 'rev-parse', '--verify', '-q', 'HEAD'], { timeout: 10000 }).then(
-      () => true,
-      () => false,
-    );
-    if (!head) {
-      const cur = await detectDefaultBranch(dir);
-      return branch === cur ? null : `defaultBranch "${branch}" does not match the repository's unborn branch "${cur}"`;
-    }
-    await execFileAsync('git', ['-C', dir, 'rev-parse', '--verify', '-q', `refs/heads/${branch}`], { timeout: 10000 });
-    return null;
-  } catch {
-    return `defaultBranch "${branch}" does not exist in this repository`;
+  const head = (await gitExec(dir, ['-C', dir, 'rev-parse', '--verify', '-q', 'HEAD'], { timeout: 10000 })).ok;
+  if (!head) {
+    const cur = await detectDefaultBranch(dir);
+    return branch === cur ? null : `defaultBranch "${branch}" does not match the repository's unborn branch "${cur}"`;
   }
+  const r = await gitExec(dir, ['-C', dir, 'rev-parse', '--verify', '-q', `refs/heads/${branch}`], { timeout: 10000 });
+  return r.ok ? null : `defaultBranch "${branch}" does not exist in this repository`;
 }
 
 /** True iff `dir` exists on disk and is a directory (used to separate "missing dir" — a bare 400 —
@@ -368,15 +353,9 @@ async function isDirectory(dir: string): Promise<boolean> {
 /** True iff `dir` is an absolute path that resolves to a git work tree. */
 async function isGitWorkTree(dir: string): Promise<boolean> {
   if (typeof dir !== 'string' || !path.isAbsolute(dir)) return false;
-  try {
-    const { stdout } = await execFileAsync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], {
-      timeout: 10000,
-    });
-    return stdout.trim() === 'true';
-  } catch {
-    // ENOENT (no git / missing dir), nonzero exit (not a repo), or timeout → not valid.
-    return false;
-  }
+  // ENOENT (no git / missing dir), nonzero exit (not a repo), or timeout → not valid (gitExec never throws).
+  const r = await gitExec(dir, ['-C', dir, 'rev-parse', '--is-inside-work-tree'], { timeout: 10000 });
+  return r.ok && r.stdout.trim() === 'true';
 }
 
 export function registerProjectsRoutes(app: FastifyInstance) {

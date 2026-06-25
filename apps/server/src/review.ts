@@ -9,43 +9,12 @@
  * ['Read','Grep','Glob'], permissionMode 'default' — so we resolve it via repo.getTemplateByName and
  * carry its envelope; if it is somehow absent we fall back to the same read-only envelope inline.
  */
-import type { KanbanTask, Project, ReviewVerdict, Run } from '@fleet/shared';
+import type { KanbanTask, Project, ReviewVerdict } from '@fleet/shared';
 import { registry } from './registry.js';
 import { repo } from './db.js';
 
-/** Terminal run states + the await-terminal fallback timeout (mirrors loopEval.ts / manager.ts). */
-const TERMINAL: Run['status'][] = ['completed', 'failed', 'killed'];
+/** Await-terminal fallback timeout (mirrors loopEval.ts / manager.ts). */
 const REVIEW_TIMEOUT_MS = 5 * 60_000;
-
-/**
- * Resolve when the launched run reaches a terminal state. Already-terminal → resolves now.
- * `registry.launch` returns a still-running run with `structuredOutput === null` for the claude
- * path (it is only populated once the engine result lands — registry.ts; it is read later via the
- * onRunTerminal handler, never at launch). So we MUST await terminal before reading structuredOutput.
- * Mirrors loopEval.ts / manager.ts `awaitTerminal` (module-private there, so duplicated).
- */
-function awaitTerminal(runId: string): Promise<Run | null> {
-  return new Promise((resolve) => {
-    const current = registry.getRun(runId);
-    if (current && TERMINAL.includes(current.status)) {
-      resolve(current);
-      return;
-    }
-    let done = false;
-    const finish = (r: Run | null) => {
-      if (done) return;
-      done = true;
-      unsub();
-      clearTimeout(timer);
-      resolve(r);
-    };
-    const unsub = registry.onRunTerminal((run) => {
-      if (run.id === runId) finish(registry.getRun(runId) ?? run);
-    });
-    const timer = setTimeout(() => finish(registry.getRun(runId)), REVIEW_TIMEOUT_MS);
-    timer.unref?.(); // never keep the process alive on the fallback timer
-  });
-}
 
 /** Structured verdict schema → `--json-schema` (parsed off run.structuredOutput). */
 export const REVIEW_JSON_SCHEMA = {
@@ -96,7 +65,7 @@ export async function launchReview(card: KanbanTask, project: Project, diff: str
     // launch returns a STILL-RUNNING run (structuredOutput === null on the claude path); await
     // terminal first, THEN read the verdict off the resolved run. Reading run.structuredOutput here
     // would always be null in production → reviews would fail closed on every card.
-    const terminal = await awaitTerminal(run.id);
+    const terminal = await registry.awaitRunTerminal(run.id, REVIEW_TIMEOUT_MS);
     if (!terminal) {
       return { pass: false, findings: 'review failed: reviewer run never reached terminal' };
     }

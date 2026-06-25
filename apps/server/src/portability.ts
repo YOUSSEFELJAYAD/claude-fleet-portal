@@ -11,7 +11,7 @@ import db, { repo } from './db.js';
 import { registry } from './registry.js';
 import { validateConfig } from './config.js';
 import { validateFleetConfig, fleetRepo, assertCapAboveReserve } from './fleet.js';
-import { validatePack } from './packs.js';
+import { validatePack, rowToPack } from './packs.js';
 import { validateTemplateFields } from './server.js';
 
 /**
@@ -36,26 +36,6 @@ export interface ImportResult {
   guardrails: 'applied' | 'skipped';
   fleet: 'applied' | 'skipped';
   errors: string[];
-}
-
-// Helper to convert pack row from DB to ToolPack (mirrors packs.ts rowToPack).
-function rowToPack(row: any): ToolPack {
-  const arr = (s: string): string[] => {
-    try {
-      const v = JSON.parse(s);
-      return Array.isArray(v) ? v.map(String) : [];
-    } catch {
-      return [];
-    }
-  };
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    tools: arr(row.tools),
-    skills: arr(row.skills),
-    createdAt: row.created_at,
-  };
 }
 
 // Query to list all packs (mirrors packs.ts route).

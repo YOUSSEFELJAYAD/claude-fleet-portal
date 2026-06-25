@@ -4,18 +4,10 @@ import Link from 'next/link';
 import { api } from '@/lib/api';
 import type { AddonInfo, AddonInstallResult, CompressionConfig, CompressionStats } from '@fleet/shared';
 import { Panel, Kicker, Btn, Dot, Stat, Field, Input, Toggle, ErrorBanner } from '@/components/ui';
+import { addonStatusColor } from '@/lib/status';
 
 /** §22 — the Compression add-on's dedicated page (unlocked in the nav when enabled):
  *  Headroom proxy status, live savings, config, install helper, how-it-works. */
-
-const STATUS_COLOR: Record<AddonInfo['status'], string> = {
-  running: '#54e08a',
-  starting: '#ffb000',
-  stopped: '#ffb000',
-  error: '#ff5d5d',
-  disabled: '#5b626d',
-  'not-installed': '#e8704a',
-};
 
 const SAVINGS_ROWS: Array<[string, string]> = [
   ['log output', '80–95%'],
@@ -220,11 +212,11 @@ export default function CompressionPage() {
             label="proxy"
             value={
               <span className="flex items-center gap-2">
-                <Dot color={STATUS_COLOR[a.status]} live={a.status === 'running' || a.status === 'starting'} size={7} />
+                <Dot color={addonStatusColor(a.status)} live={a.status === 'running' || a.status === 'starting'} size={7} />
                 {a.status}
               </span>
             }
-            accent={STATUS_COLOR[a.status]}
+            accent={addonStatusColor(a.status)}
           />
           <Stat label="endpoint" value={live ? `http://127.0.0.1:${applied.port}` : '—'} />
           <Stat label="requests" value={fmt(stats?.totalRequests ?? null)} />

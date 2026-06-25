@@ -86,16 +86,6 @@ export async function ghExec(cwd: string, args: string[]): Promise<GhExecResult>
 
 // ── gh availability + auth ─────────────────────────────────────────────────────
 
-/**
- * Is the `gh` CLI installed / on PATH? `gh --version` exits 0 when present; a missing binary yields
- * code 127 from {@link ghExec}. Used by the git-health route to tell the UI whether PR mode is
- * available at all. Never throws.
- */
-export async function ghInstalled(): Promise<boolean> {
-  const r = await ghExec(process.cwd(), ['--version']);
-  return r.ok && r.code === 0;
-}
-
 export interface GhAuthStatus {
   /** gh is on PATH AND `gh auth status` exited 0 (a usable authenticated context). */
   authenticated: boolean;
@@ -316,25 +306,6 @@ export async function prView(root: string, branch: string): Promise<{ pr: PrView
     ? parsed.labels.map((l: any) => (typeof l?.name === 'string' ? l.name : '')).filter(Boolean)
     : [];
   return { pr: { state, url, labels } };
-}
-
-export interface PrMergeResult {
-  ok: boolean;
-  /** Scrubbed error string on failure. */
-  error?: string;
-}
-
-/**
- * Merge a PR via `gh pr merge <branch> --merge` (default merge-commit strategy).
- *
- * DEFINED + EXPORTED for completeness, but the portal does NOT auto-call this (locked decision
- * §10.1: the portal opens the PR and a HUMAN merges it on GitHub). Provided so an operator tool / a
- * future opt-in can reuse the same scrubbed, never-throw wrapper. Any stderr is scrubbed.
- */
-export async function prMerge(root: string, branch: string): Promise<PrMergeResult> {
-  const r = await ghExec(root, ['pr', 'merge', branch, '--merge']);
-  if (!r.ok) return { ok: false, error: ghErr(r) };
-  return { ok: true };
 }
 
 // ── GitHub issue write-back: labels + comments (control-plane adapter verbs) ──────

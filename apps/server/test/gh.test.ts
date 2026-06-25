@@ -291,11 +291,7 @@ describe('fetchAndSyncDefault', () => {
 });
 
 // ── gh availability + auth (FAKE gh on PATH; deterministic) ────────────────────
-describe('ghInstalled / ghAuthStatus (fake gh on PATH)', () => {
-  it('ghInstalled → true when gh resolves and `--version` exits 0', async () => {
-    expect(await gh.ghInstalled()).toBe(true);
-  });
-
+describe('ghAuthStatus (fake gh on PATH)', () => {
   it('ghAuthStatus → authenticated:true, installed:true, scrubbed detail', async () => {
     const s = await gh.ghAuthStatus();
     expect(s.installed).toBe(true);
@@ -313,8 +309,8 @@ describe('ghInstalled / ghAuthStatus (fake gh on PATH)', () => {
   });
 });
 
-// ── GitHub PR: create / view / merge (FAKE gh — arg construction + output parsing) ─
-describe('prCreate / prView / prMerge (fake gh on PATH)', () => {
+// ── GitHub PR: create / view (FAKE gh — arg construction + output parsing) ─
+describe('prCreate / prView (fake gh on PATH)', () => {
   it('prCreate parses the PR URL from gh stdout AND constructs the correct args', async () => {
     const bare = mkBare();
     const root = mkRootWired(bare);
@@ -361,15 +357,6 @@ describe('prCreate / prView / prMerge (fake gh on PATH)', () => {
     const v = await gh.prView(root, 'auth-fail'); // fake gh: "HTTP 401", exit 1
     expect(v.pr).toBeNull();
     expect(v.error).toBeTruthy();
-  });
-
-  it('prMerge → ok:true (defined+exported, though the portal never auto-calls it)', async () => {
-    const bare = mkBare();
-    const root = mkRootWired(bare);
-    const r = await gh.prMerge(root, 'worktree-task-7');
-    expect(r.ok).toBe(true);
-    const merged = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'merge');
-    expect(merged).toEqual(['pr', 'merge', 'worktree-task-7', '--merge']);
   });
 
   it('prView surfaces parsed label names', async () => {
