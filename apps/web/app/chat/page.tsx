@@ -28,7 +28,16 @@ export default function ChatPage() {
   // §3 — chat-scoped SSE for session lifecycle state; null when no session is active.
   // fix 10A — ONE subscription hoisted here (was 3: page + ChatThread + RunningAgentsPanel);
   // the derived stream values flow down to those children as props (1 EventSource per session).
-  const { state: liveState, live, run, events, partials, error: streamError, runId: liveStreamRunId, subagents } = useChatStream(activeId);
+  // Task 2.1: new turn-scoped API — activeTurn carries live events/partials for the active turn.
+  // Task 2.2 will wire activeTurn into the <Turn> component; for now forward events/partials from it.
+  const { state: liveState, activeTurn, error: streamError } = useChatStream(activeId);
+  const events = activeTurn?.events ?? [];
+  const partials = activeTurn?.partials ?? {};
+  // run, live, liveStreamRunId, subagents no longer come from useChatStream (Task 2.2 wires these)
+  const run = null;
+  const live = false;
+  const liveStreamRunId: string | null = null;
+  const subagents: import('@/lib/live').ChatSubagent[] = [];
   const { questions: pendingQuestions, refresh: refreshQuestions } = usePendingQuestions(activeId);
   // derive `chatState` alias for ChatComposer (still expects `chatState === 'running'`)
   const chatState = liveState;
