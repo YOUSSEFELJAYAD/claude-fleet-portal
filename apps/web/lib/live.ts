@@ -289,6 +289,8 @@ export interface ChatActiveTurn {
   turn: ChatTurn;
   events: NormalizedEvent[];
   partials: Record<string, string>;
+  /** Error text from the turn:failed frame (M2). */
+  error?: string;
 }
 
 /** Chat-scoped SSE (turn-scoped frames): subscribe to the SESSION so the channel
@@ -302,7 +304,7 @@ export function useChatStream(sessionId: string | null): {
   const acc = useEventAccumulator();
   const [state, setState] = useState<ChatSessionState>('idle');
   // ponytail: activeTurnMeta holds only the non-accumulated fields; events/partials come from acc
-  const [activeTurnMeta, setActiveTurnMeta] = useState<{ turnId: string; status: ChatTurnStatus; turn: ChatTurn } | null>(null);
+  const [activeTurnMeta, setActiveTurnMeta] = useState<{ turnId: string; status: ChatTurnStatus; turn: ChatTurn; error?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // ref so the onmessage closure can guard turn:event without stale state
   const activeTurnIdRef = useRef<string | null>(null);
@@ -340,7 +342,7 @@ export function useChatStream(sessionId: string | null): {
         activeTurnIdRef.current = null;
         setActiveTurnMeta((prev) => prev ? { ...prev, status: 'settled' } : null);
       } else if (m.kind === 'turn:failed') {
-        setActiveTurnMeta((prev) => prev ? { ...prev, status: 'failed' } : null);
+        setActiveTurnMeta((prev) => prev ? { ...prev, status: 'failed', error: m.error } : null);
       } else if (m.kind === 'error') {
         setError(String(m.error));
         es.close();

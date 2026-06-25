@@ -127,7 +127,7 @@ export function Turn({ turn, active, onRetry }: TurnProps) {
         {turn.messages.map((m) => <SettledMsg key={m.id} m={m} />)}
         {turn.status === 'failed' && (
           <div className="my-1">
-            <ErrorBanner onRetry={onRetry}>turn failed</ErrorBanner>
+            <ErrorBanner onRetry={onRetry}>{turn.error ?? 'turn failed'}</ErrorBanner>
           </div>
         )}
       </div>
@@ -135,14 +135,14 @@ export function Turn({ turn, active, onRetry }: TurnProps) {
   }
 
   // ── active (in-flight) turn ─────────────────────────────────────────────────
-  const { turn: activeTurn, events, partials, status } = active;
+  const { turn: activeTurn, events, partials, status, error } = active;
   return (
     <div className="space-y-1">
       {activeTurn.messages.map((m) => <SettledMsg key={m.id} m={m} />)}
       <LiveContent sessionId={activeTurn.sessionId} events={events} partials={partials} />
       {status === 'failed' && (
         <div className="my-1">
-          <ErrorBanner onRetry={onRetry}>turn failed</ErrorBanner>
+          <ErrorBanner onRetry={onRetry}>{error ?? 'turn failed'}</ErrorBanner>
         </div>
       )}
     </div>

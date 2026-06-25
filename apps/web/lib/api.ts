@@ -453,9 +453,9 @@ export const api = {
     j<SettingValue>(`/api/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
   // ── §30 chat dashboard ──
   chatSessions: () => j<ChatSession[]>('/api/chat/sessions'),
-  /** GET /api/chat/sessions/:id — returns the latest page of turns (newest-first). */
+  /** GET /api/chat/sessions/:id — returns the latest page of turns, oldest-first. */
   chatSession: (id: string) => j<{ session: ChatSession; turns: ChatTurn[] }>(`/api/chat/sessions/${id}`),
-  /** GET /api/chat/sessions/:id/turns — cursor-paginated older turns (newest-first).
+  /** GET /api/chat/sessions/:id/turns — cursor-paginated older turns, oldest-first.
    *  `before` is the createdAt timestamp of the oldest turn currently loaded. */
   chatTurns: (sessionId: string, before?: number, limit?: number) =>
     j<ChatTurn[]>(`/api/chat/sessions/${sessionId}/turns${qs({ before: before != null ? String(before) : undefined, limit: limit != null ? String(limit) : undefined })}`),

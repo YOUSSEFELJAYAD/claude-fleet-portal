@@ -104,4 +104,12 @@ describe('Turn', () => {
     fireEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(onRetry).toHaveBeenCalledOnce();
   });
+
+  it('(e) failed settled turn renders the real error text instead of the generic fallback', () => {
+    const turn = makeTurn({ status: 'failed', error: 'context limit exceeded' });
+    render(<Turn turn={turn} />);
+    expect(screen.getByText(/context limit exceeded/i)).toBeTruthy();
+    // the generic fallback must NOT appear when a real error is provided
+    expect(screen.queryByText(/^turn failed$/i)).toBeNull();
+  });
 });

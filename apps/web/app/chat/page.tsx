@@ -68,10 +68,11 @@ export default function ChatPage() {
   // across new turns. ChatThread dedup suppresses the active card once the id is in history.
   useEffect(() => {
     if (activeTurn?.status === 'failed' && activeId) {
-      const { turnId, turn } = activeTurn;
+      const { turnId, turn, error } = activeTurn;
       const failedTurn: ChatTurn = {
         id: turnId, sessionId: activeId, status: 'failed',
         messages: turn.messages, createdAt: turn.createdAt, settledAt: null,
+        error,
       };
       setTurns((existing) => existing.some((t) => t.id === turnId) ? existing : [...existing, failedTurn]);
     }

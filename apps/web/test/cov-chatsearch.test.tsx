@@ -69,6 +69,23 @@ describe('ChatSearch', () => {
     expect(onOpenAtTurn).toHaveBeenCalledWith('s1', 't1');
   });
 
+  it('(d) snippet <b> markers render as highlighted text, not literal tags', async () => {
+    const hit = mkHit({ snippet: 'the <b>answer</b> is here' });
+    vi.mocked(api.searchChat).mockResolvedValue([hit]);
+
+    render(<ChatSearch onOpenAtTurn={() => {}} />);
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'answer' } });
+    await vi.advanceTimersByTimeAsync(300);
+
+    // 'answer' is parsed out of the <b> wrapper and renders as its own text node
+    await waitFor(() => screen.getByText('answer'));
+    // The literal string '<b>' must NOT appear in the rendered text content
+    const list = screen.getByRole('list');
+    expect(list.textContent).not.toContain('<b>');
+    expect(screen.getByText('answer')).toBeTruthy();
+  });
+
   it('(c) only the latest query results render when a stale request resolves after a fresh one', async () => {
     let resolveStale!: (hits: ChatSearchHit[]) => void;
     const staleProm = new Promise<ChatSearchHit[]>((res) => { resolveStale = res; });

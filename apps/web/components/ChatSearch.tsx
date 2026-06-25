@@ -14,6 +14,22 @@ import { api } from '@/lib/api';
  * in tests, a generation counter achieves the same "only latest lands" guarantee without
  * requiring the server route to check the signal.
  */
+
+/** Parse FTS5 snippet <b>…</b> markers into highlighted spans (no dangerouslySetInnerHTML). */
+function SnippetHighlight({ text }: { text: string }) {
+  const parts = text.split(/(<b>.*?<\/b>)/);
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.startsWith('<b>') && part.endsWith('</b>') ? (
+          <mark key={i} className="bg-transparent text-amber-300 font-medium not-italic">{part.slice(3, -4)}</mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
 export function ChatSearch({
   activeId,
   onOpenAtTurn,
@@ -97,7 +113,7 @@ export function ChatSearch({
                 <span className="font-mono text-[10px] text-amber-400 truncate">{hit.sessionTitle}</span>
               )}
               <span className="font-mono text-[9px] text-faint uppercase">{hit.role}</span>
-              <span className="text-dim truncate">{hit.snippet}</span>
+              <span className="text-dim truncate"><SnippetHighlight text={hit.snippet} /></span>
             </li>
           ))}
         </ul>
