@@ -4,6 +4,7 @@
  * the turn_id column, grouping/pagination, and the legacy backfill.
  */
 import { randomUUID } from 'node:crypto';
+import { resolve, isAbsolute } from 'node:path';
 import db from './db.js';
 import { createFts, sanitizeFtsQuery, ftsSnippet } from './fts.js';
 import type {
@@ -157,7 +158,11 @@ export const chatRepo = {
       model: req.model ?? 'claude-opus-4-8',
       effort: req.effort ?? 'high',
       permission_mode: req.permissionMode ?? 'default',
-      cwd: req.cwd,
+      // Resolve a relative/empty cwd (e.g. the web's default '.') to an ABSOLUTE path: the
+      // /api/skills + /api/subagents catalog routes (isSafeCwd) reject relative paths, which
+      // otherwise leaves the `/`-command menu empty (verified finding). An absolute cwd is also
+      // what the agent actually needs to run in.
+      cwd: req.cwd && isAbsolute(req.cwd) ? req.cwd : resolve(req.cwd || '.'),
       allowed_tools: req.allowedTools ? JSON.stringify(req.allowedTools) : null,
       skills: req.skills ? JSON.stringify(req.skills) : null,
       run_id: null as string | null,

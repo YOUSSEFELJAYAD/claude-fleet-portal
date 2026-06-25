@@ -21,6 +21,11 @@ beforeAll(async () => {
 });
 
 describe('backfillChatTurns + listTurns', () => {
+  it('resolves a relative session cwd to an absolute path (fixes /api/skills + /api/subagents 400)', () => {
+    expect(chatRepo.createSession({ cwd: '.' }).cwd.startsWith('/')).toBe(true);
+    expect(chatRepo.createSession({ cwd: '/abs/keep' }).cwd).toBe('/abs/keep');
+  });
+
   it('groups legacy NULL-turn_id messages by user-message boundaries', () => {
     const session = chatRepo.createSession({ cwd: '/tmp/backfill-test' });
     const sid = session.id;
