@@ -16,8 +16,8 @@ describe('detectTrigger — slash', () => {
     expect(detectTrigger('see src/a.ts', 12)).toBeNull();
     expect(detectTrigger('hi /kill', 8)).toBeNull(); // slash not at position 0
   });
-  it('closes slash once a space is typed after the verb', () => {
-    expect(detectTrigger('/kill ', 6)).toBeNull();
+  it('switches from slash to slash-arg once a space is typed after the verb (Task 4.1 arg completion)', () => {
+    expect(detectTrigger('/kill ', 6)).toEqual({ kind: 'slash-arg', commandName: 'kill', argIndex: 0, query: '', start: 6 });
   });
 });
 
