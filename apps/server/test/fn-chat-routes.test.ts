@@ -43,20 +43,21 @@ describe('registerChatRoutes — session CRUD', () => {
     // list contains it
     expect((await get('/api/chat/sessions')).json().some((s: any) => s.id === id)).toBe(true);
 
-    // get returns session + empty message list
+    // get returns session + empty turns list (Task 1.4: messages field replaced by turns)
     const got = await get('/api/chat/sessions/' + id);
     expect(got.statusCode).toBe(200);
     expect(got.json().session.id).toBe(id);
-    expect(got.json().messages).toEqual([]);
+    expect(got.json().turns).toEqual([]);
 
     // rename (valid + invalid)
     expect((await patch('/api/chat/sessions/' + id, { title: '  renamed  ' })).json().title).toBe('renamed');
     expect((await patch('/api/chat/sessions/' + id, { title: '' })).statusCode).toBe(400);
 
-    // add a message, then it shows up
+    // add a message, then it shows up in turns[0].messages
     const msg = await post('/api/chat/sessions/' + id + '/messages', { role: 'user', kind: 'text', content: 'hello' });
     expect(msg.statusCode).toBe(200);
-    expect((await get('/api/chat/sessions/' + id)).json().messages.map((m: any) => m.content)).toContain('hello');
+    const allMsgs = (await get('/api/chat/sessions/' + id)).json().turns.flatMap((t: any) => t.messages);
+    expect(allMsgs.map((m: any) => m.content)).toContain('hello');
 
     // delete → subsequent get 404s
     expect((await del('/api/chat/sessions/' + id)).json()).toEqual({ ok: true });

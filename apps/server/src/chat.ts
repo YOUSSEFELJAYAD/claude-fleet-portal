@@ -47,18 +47,12 @@ export function engineSafeState(engine: string, derived: { state?: ChatSessionSt
   return { state, live: false };
 }
 
-/** The chat-control envelope the chat-scoped SSE emits alongside run events (§4). Owned here; the
- *  ChatSessionState literal is from @fleet/shared. */
+/** The chat-control envelope the old run-proxy SSE emitted (kept for test compat with
+ *  fn-chat-stream-strip.test.ts which imports stripHelloEvents from chat.ts). */
 export interface SessionStateEnvelope { kind: 'session_state'; state: ChatSessionState; live: boolean; runId?: string | null; }
 
-/**
- * §4 — chat-scoped SSE. Subscribes to the SESSION (not a run id): proxies whichever run currently
- * backs it, so a kill→resume (run id changes underneath) and a page reload both re-attach cleanly.
- * `mkSse` is server.ts's connection-capped SSE factory (passed in to keep the hijack plumbing there).
- */
 /** Chat-stream frame transform: strip the historical `events` from a run's `hello` snapshot
- *  (the transcript lives in persisted chat_messages; replaying it would duplicate the thread
- *  and render it out of order on reload). All other frames pass through unchanged. */
+ *  (kept exported — fn-chat-stream-strip.test.ts imports it from chat.ts). */
 export function stripHelloEvents(m: unknown): unknown {
   if (m && typeof m === 'object' && (m as any).kind === 'hello') {
     return { ...(m as any), events: [] };
@@ -66,70 +60,9 @@ export function stripHelloEvents(m: unknown): unknown {
   return m;
 }
 
-export function registerChatStreamRoute(
-  app: FastifyInstance,
-  mkSse: (reply: any, req: any) => { send: (obj: unknown) => void; stop: () => void } | null,
-) {
-  app.get('/api/chat/sessions/:id/stream', async (req, reply) => {
-    const id = (req.params as any).id;
-    const session = chatRepo.getSession(id);
-    if (!session) { reply.code(404).send({ error: 'not found' }); return; }
-
-    // Fix 04 — for a CLAUDE session, ensure a held interactive process exists on connect (focus)
-    // BEFORE opening the SSE. This guarantees a backing run to subscribe to even for a brand-new
-    // session (no runId yet), so the FIRST turn streams immediately (sendInput hits the held proc)
-    // instead of only showing up after a reload. Engine sessions stay one-shot (never go live).
-    let ensured: { live: boolean; runId: string | null } | null = null;
-    if (session.engine === 'claude') {
-      try { ensured = await chatLive.ensureLive(session); } catch { ensured = null; }
-    }
-
-    const s = mkSse(reply, req);
-    if (!s) return; // 503 already sent (connection cap)
-    const { send, stop } = s;
-
-    // initial chat-control frame — carry the REAL liveness + backing run id so the client's
-    // agents panel resolves the in-flight run (idle/resumable sessions report their backing run too).
-    const st = engineSafeState(session.engine, deriveSessionState(session));
-    send({
-      kind: 'session_state',
-      state: st.state ?? 'idle',
-      live: ensured?.live ?? st.live ?? false,
-      runId: ensured?.runId ?? session.runId ?? null,
-    } satisfies SessionStateEnvelope);
-
-    // proxy the current backing run, if any (re-resolve per connect so reload re-attaches).
-    // The run's hello snapshot carries its FULL event log = the whole transcript (the run is
-    // reused across turns via --resume) — already persisted as chat_messages. stripHelloEvents
-    // drops that history so the live turn never duplicates the transcript / reorders on reload.
-    let currentRunId = ensured?.runId ?? chatLive.liveRunId(id) ?? session.runId ?? null;
-    let unsub: (() => void) | null = null;
-    if (currentRunId) unsub = registry.subscribeRun(currentRunId, (m) => send(stripHelloEvents(m)));
-
-    // Fix 11 — the backing run id can CHANGE mid-connection: after idle-suspend eviction or an
-    // explicit kill/interrupt, the next turn's ensureLive mints a FRESH held run id. The original
-    // subscription points at the dead run, so the new run's frames would never reach this client
-    // (the thread hangs on "⟳ thinking…"). Listen for that change for THIS session, re-subscribe to
-    // the new run, and announce it via a session_state frame so the client (fix 04) adopts the id.
-    const unsubChange = chatLive.onBackingRunChange((sessionId, newRunId) => {
-      if (sessionId !== id || newRunId === currentRunId) return;
-      unsub?.();
-      currentRunId = newRunId;
-      unsub = registry.subscribeRun(newRunId, (m) => send(stripHelloEvents(m)));
-      send({ kind: 'session_state', state: 'live', live: true, runId: newRunId } satisfies SessionStateEnvelope);
-    });
-
-    // The held process was dropped (idle-evict / kill / run terminal) → the session is no longer
-    // live; tell the open client so the LIVE badge clears to resumable (it self-heals to live on
-    // the next turn's backing-run-change). The backing run id is unchanged here (just suspended).
-    const unsubEvict = chatLive.onSessionEvicted((sessionId) => {
-      if (sessionId !== id) return;
-      send({ kind: 'session_state', state: 'idle', live: false, runId: currentRunId } satisfies SessionStateEnvelope);
-    });
-
-    reply.raw.on('close', () => { unsub?.(); unsubChange(); unsubEvict(); stop(); });
-  });
-}
+// Task 1.4 — re-export the new turn-scoped stream route from chatStream.ts.
+// server.ts imports registerChatStreamRoute from chat.ts; the name is kept stable.
+export { registerChatStreamRoute } from './chatStream.js';
 
 export function registerChatRoutes(app: FastifyInstance) {
   app.get('/api/chat/sessions', async () => chatRepo.listSessions());
@@ -145,7 +78,19 @@ export function registerChatRoutes(app: FastifyInstance) {
     const session = chatRepo.getSession(id);
     if (!session) return reply.code(404).send({ error: 'not found' });
     const safe = engineSafeState(session.engine, deriveSessionState(session));
-    return { session: { ...session, ...safe }, messages: chatRepo.listMessages(id) };
+    // Task 1.4 — return { session, turns } (latest page); Phase 2 client consumes turns not messages.
+    return { session: { ...session, ...safe }, turns: chatRepo.listTurns(id, { limit: 50 }) };
+  });
+
+  // Task 1.4 — cursor-paginated turn history. `before` is a createdAt timestamp (exclusive upper
+  // bound); `limit` caps the page size (default 50). Newest turns first.
+  app.get('/api/chat/sessions/:id/turns', async (req, reply) => {
+    const id = (req.params as any).id;
+    if (!chatRepo.getSession(id)) return reply.code(404).send({ error: 'not found' });
+    const q = req.query as any;
+    const before = q?.before !== undefined ? Number(q.before) : undefined;
+    const limit = q?.limit !== undefined ? Math.min(Number(q.limit) || 50, 200) : 50;
+    return chatRepo.listTurns(id, { before: Number.isFinite(before) ? before : undefined, limit });
   });
 
   app.patch('/api/chat/sessions/:id', async (req, reply) => {
