@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatSession, ChatTurn, ChatAttachment } from '@fleet/shared';
 import { api } from '@/lib/api';
 import { useChatStream, usePendingQuestions } from '@/lib/live';
@@ -36,6 +36,23 @@ export default function ChatPage() {
   }, {});
 
   const effectiveState = liveState ?? session?.state ?? 'idle';
+
+  // Fullscreen: a fixed inset-0 overlay covers the app chrome (in-app fullscreen) AND we
+  // request native Fullscreen on the chat root. Esc/F11 exiting native resyncs the flag.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const toggleFullscreen = useCallback(() => setFullscreen((f) => !f), []);
+  useEffect(() => {
+    try {
+      if (fullscreen && !document.fullscreenElement) rootRef.current?.requestFullscreen?.();
+      else if (!fullscreen && document.fullscreenElement) document.exitFullscreen?.();
+    } catch { /* no user gesture / unsupported — in-app overlay still applies */ }
+  }, [fullscreen]);
+  useEffect(() => {
+    const onFs = () => { if (!document.fullscreenElement) setFullscreen(false); };
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
 
   const refreshSessions = useCallback(async () => { setSessions(await api.chatSessions()); }, []);
   const loadSession = useCallback(async (id: string) => {
@@ -150,8 +167,18 @@ export default function ChatPage() {
 
   // App-shell layout: viewport − 58px sticky header − 48px (main p-6).
   // Two-column: sessions sidebar (20%, min 220px) · chat (80%).
+  // Fullscreen: fixed inset-0 overlay (z above Shell) covers the app chrome.
   return (
-    <div className="flex h-[calc(100vh-106px)] min-h-0 font-sans gap-3">
+    <div
+      ref={rootRef}
+      data-testid="chat-root"
+      data-fullscreen={fullscreen}
+      className={
+        fullscreen
+          ? 'fixed inset-0 z-[60] flex min-h-0 font-sans gap-3 p-3 bg-[#0a0b0e]'
+          : 'flex h-[calc(100vh-106px)] min-h-0 font-sans gap-3'
+      }
+    >
       {/* LEFT — persistent sessions sidebar (search on top, list below). */}
       <aside
         data-testid="chat-sidebar"
@@ -169,11 +196,15 @@ export default function ChatPage() {
 
       {/* RIGHT — chat column (header · thread · composer). */}
       <section className="flex-1 min-w-0 flex flex-col min-h-0 rounded-xl border border-white/[0.08] bg-[#0f1115] overflow-hidden">
-        {session ? (
-          <>
-            <header className="flex-none flex items-center gap-3 px-4 py-2.5 border-b border-white/[0.08]">
-              <span className="text-[14px] font-medium text-ink truncate min-w-0">{session.title}</span>
-              <div className="flex items-center gap-2 ml-auto min-w-0">
+        <header className="flex-none flex items-center gap-3 px-4 py-2.5 border-b border-white/[0.08]">
+          {session ? (
+            <span className="text-[14px] font-medium text-ink truncate min-w-0">{session.title}</span>
+          ) : (
+            <span className="text-[13px] text-faint">Chat</span>
+          )}
+          <div className="flex items-center gap-2 ml-auto min-w-0">
+            {session && (
+              <>
                 {effectiveState === 'idle' && (
                   <Badge label="RESUMABLE" color={chatStateMeta('idle').color} />
                 )}
@@ -187,9 +218,22 @@ export default function ChatPage() {
                   {session.engine} · {session.model}
                   {session.engine !== 'claude' && <span className="text-faint"> · one-shot</span>}
                 </span>
-              </div>
-            </header>
+              </>
+            )}
+            <button
+              type="button"
+              aria-label="Toggle fullscreen"
+              title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              onClick={toggleFullscreen}
+              className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[16px] leading-none text-[#9aa1ab] hover:text-[#4f7fff] hover:bg-white/5 transition-colors"
+            >
+              {fullscreen ? '⤡' : '⤢'}
+            </button>
+          </div>
+        </header>
 
+        {session ? (
+          <>
             {(err || streamError) && (
               <div className="flex-none w-full max-w-[800px] mx-auto px-4 mt-2">
                 <ErrorBanner onRetry={err ? () => setErr(null) : clearStreamError}>{err ?? streamError}</ErrorBanner>
