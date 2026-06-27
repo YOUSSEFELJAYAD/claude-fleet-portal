@@ -13,6 +13,18 @@ describe('chatPrefs (localStorage-backed chat UI prefs)', () => {
     expect(chatPrefs.isPinned('a')).toBe(false);
   });
 
+  it('persists sidebar width', () => {
+    expect(chatPrefs.getWidth()).toBeNull();
+    chatPrefs.setWidth(320);
+    expect(chatPrefs.getWidth()).toBe(320);
+  });
+
+  it('persists the collapsed flag', () => {
+    expect(chatPrefs.getCollapsed()).toBe(false);
+    chatPrefs.setCollapsed(true);
+    expect(chatPrefs.getCollapsed()).toBe(true);
+  });
+
   it('stores and clears per-session drafts', () => {
     expect(chatPrefs.getDraft('s1')).toBe('');
     chatPrefs.setDraft('s1', 'hello');

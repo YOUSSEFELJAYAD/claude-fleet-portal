@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatSession, ChatTurn, ChatAttachment } from '@fleet/shared';
 import { api } from '@/lib/api';
 import { useChatStream, usePendingQuestions } from '@/lib/live';
+import { chatPrefs } from '@/lib/chatPrefs';
 import { ChatSessionList } from '@/components/ChatSessionList';
 import { ChatSearch } from '@/components/ChatSearch';
 import { ChatThread } from '@/components/ChatThread';
@@ -73,6 +74,27 @@ export default function ChatPage() {
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paletteOpen, chatState, activeId]);
+
+  // Sidebar collapse + resize (persisted post-hydration to avoid SSR width/state mismatch).
+  const asideRef = useRef<HTMLElement>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(null);
+  useEffect(() => { setCollapsed(chatPrefs.getCollapsed()); setSidebarWidth(chatPrefs.getWidth()); }, []);
+  function toggleCollapsed() {
+    setCollapsed((c) => { const n = !c; chatPrefs.setCollapsed(n); return n; });
+  }
+  function startResize(e: React.PointerEvent) {
+    e.preventDefault();
+    const left = asideRef.current?.getBoundingClientRect().left ?? 0;
+    const onMove = (ev: PointerEvent) => setSidebarWidth(Math.min(560, Math.max(200, ev.clientX - left)));
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      setSidebarWidth((w) => { if (w) chatPrefs.setWidth(w); return w; });
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
 
   const refreshSessions = useCallback(async () => { setSessions(await api.chatSessions()); }, []);
   const loadSession = useCallback(async (id: string) => {
@@ -209,21 +231,54 @@ export default function ChatPage() {
           : 'flex h-[calc(100vh-106px)] min-h-0 font-sans gap-3'
       }
     >
-      {/* LEFT — persistent sessions sidebar (search on top, list below). */}
+      {/* LEFT — persistent sessions sidebar (collapsible · resizable; search + list). */}
       <aside
+        ref={asideRef}
         data-testid="chat-sidebar"
-        className="w-[20%] min-w-[220px] shrink-0 flex flex-col min-h-0 rounded-xl border border-white/[0.08] bg-[#16181d] overflow-hidden"
+        data-collapsed={collapsed}
+        style={!collapsed && sidebarWidth ? { width: sidebarWidth, minWidth: 200, maxWidth: 560 } : undefined}
+        className={`${collapsed ? 'w-12' : sidebarWidth ? 'shrink-0' : 'w-[20%] min-w-[220px]'} shrink-0 flex flex-col min-h-0 rounded-xl border border-white/[0.08] bg-[#16181d] overflow-hidden`}
       >
-        <div className="px-2 py-2 shrink-0 border-b border-white/[0.06]">
-          <ChatSearch activeId={activeId} onOpenAtTurn={openSessionAtTurn} />
-        </div>
-        <div className="flex-1 min-h-0">
-          <ChatSessionList sessions={sessions} activeId={activeId} previews={previews}
-            onSelect={loadSession} onNew={newSession} onRename={renameSession}
-            onKill={killSession} onResume={resumeSession} onDelete={deleteSession}
-            onDuplicate={duplicateSession} />
-        </div>
+        {collapsed ? (
+          <div className="flex flex-col items-center gap-2 py-2">
+            <button
+              aria-label="Expand sidebar" title="Expand sidebar" onClick={toggleCollapsed}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-[#9aa1ab] hover:text-[#4f7fff] hover:bg-white/5 transition-colors"
+            >»</button>
+            <button
+              aria-label="New session" title="New chat" onClick={newSession}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-[#4f7fff] hover:bg-white/5 transition-colors text-lg leading-none"
+            >+</button>
+          </div>
+        ) : (
+          <>
+            <div className="px-2 py-2 shrink-0 border-b border-white/[0.06] flex items-center gap-1">
+              <button
+                aria-label="Collapse sidebar" title="Collapse sidebar" onClick={toggleCollapsed}
+                className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[#9aa1ab] hover:text-[#4f7fff] hover:bg-white/5 transition-colors"
+              >«</button>
+              <div className="flex-1 min-w-0"><ChatSearch activeId={activeId} onOpenAtTurn={openSessionAtTurn} /></div>
+            </div>
+            <div className="flex-1 min-h-0">
+              <ChatSessionList sessions={sessions} activeId={activeId} previews={previews}
+                onSelect={loadSession} onNew={newSession} onRename={renameSession}
+                onKill={killSession} onResume={resumeSession} onDelete={deleteSession}
+                onDuplicate={duplicateSession} />
+            </div>
+          </>
+        )}
       </aside>
+
+      {/* drag-to-resize divider (hidden while collapsed) */}
+      {!collapsed && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          data-testid="sidebar-resize"
+          onPointerDown={startResize}
+          className="w-1 -mx-1 shrink-0 cursor-col-resize hover:bg-[#4f7fff]/40 rounded transition-colors"
+        />
+      )}
 
       {/* RIGHT — chat column (header · thread · composer). */}
       <section className="flex-1 min-w-0 flex flex-col min-h-0 rounded-xl border border-white/[0.08] bg-[#0f1115] overflow-hidden">

@@ -9,6 +9,8 @@ const KEY = 'fleet:chatPrefs';
 type Prefs = {
   pins?: string[];
   drafts?: Record<string, string>;
+  width?: number;
+  collapsed?: boolean;
 };
 
 function read(): Prefs {
@@ -42,6 +44,20 @@ export const chatPrefs = {
     if (pins.has(id)) pins.delete(id);
     else pins.add(id);
     write({ ...p, pins: [...pins] });
+  },
+
+  getWidth(): number | null {
+    return read().width ?? null;
+  },
+  setWidth(px: number): void {
+    write({ ...read(), width: px });
+  },
+
+  getCollapsed(): boolean {
+    return !!read().collapsed;
+  },
+  setCollapsed(b: boolean): void {
+    write({ ...read(), collapsed: b });
   },
 
   getDraft(id: string): string {
