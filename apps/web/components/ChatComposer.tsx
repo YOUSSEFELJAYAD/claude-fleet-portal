@@ -97,7 +97,7 @@ export function ChatComposer({
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+    ta.style.height = Math.min(ta.scrollHeight, 320) + 'px';
   }, [text]);
 
   const trigger = dismissed ? null : detectTrigger(text, caret);
@@ -247,7 +247,7 @@ export function ChatComposer({
             from ui.tsx — all handlers, aria attrs, and ref are identical. */}
         <textarea
           ref={taRef}
-          rows={1}
+          rows={3}
           value={text}
           disabled={disabled}
           placeholder="Message…  (/ for commands · @ to attach)"

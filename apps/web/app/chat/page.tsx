@@ -149,87 +149,87 @@ export default function ChatPage() {
   }
 
   // App-shell layout: viewport − 58px sticky header − 48px (main p-6).
+  // Two-column: sessions sidebar (20%, min 220px) · chat (80%).
   return (
-    <div className="flex flex-col h-[calc(100vh-106px)] min-h-0 font-sans">
-      {/* TOP BAR — session switcher (left) · search + model/engine + new chat (right).
-          Sessions live on the same level here, not in a left column. */}
-      <header className="flex-none flex items-center gap-3 px-3 py-2 mb-3 rounded-xl border border-white/[0.08] bg-[#16181d]">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="text-[14px] font-medium text-ink shrink-0">Chat</span>
+    <div className="flex h-[calc(100vh-106px)] min-h-0 font-sans gap-3">
+      {/* LEFT — persistent sessions sidebar (search on top, list below). */}
+      <aside
+        data-testid="chat-sidebar"
+        className="w-[20%] min-w-[220px] shrink-0 flex flex-col min-h-0 rounded-xl border border-white/[0.08] bg-[#16181d] overflow-hidden"
+      >
+        <div className="px-2 py-2 shrink-0 border-b border-white/[0.06]">
+          <ChatSearch activeId={activeId} onOpenAtTurn={openSessionAtTurn} />
+        </div>
+        <div className="flex-1 min-h-0">
           <ChatSessionList sessions={sessions} activeId={activeId} previews={previews}
             onSelect={loadSession} onNew={newSession} onRename={renameSession}
             onKill={killSession} onResume={resumeSession} onDelete={deleteSession} />
         </div>
-        <div className="flex items-center gap-3 ml-auto min-w-0">
-          <ChatSearch activeId={activeId} onOpenAtTurn={openSessionAtTurn} />
-          {session && (
-            <div className="flex items-center gap-2 min-w-0">
-              {effectiveState === 'idle' && (
-                <Badge label="RESUMABLE" color={chatStateMeta('idle').color} />
-              )}
-              {(effectiveState === 'live' || live) && (
-                <Badge label="LIVE" color={chatStateMeta('live').color} live />
-              )}
-              <span
-                className="text-[12px] text-dim whitespace-nowrap truncate max-w-[200px]"
-                title={`${session.title} · ${session.cwd}`}
-              >
-                {session.engine} · {session.model}
-                {session.engine !== 'claude' && <span className="text-faint"> · one-shot</span>}
-              </span>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={newSession}
-            className="shrink-0 rounded-lg border border-white/[0.08] bg-[#1b1e26] text-[12px] text-ink px-3 py-1.5 hover:border-[#4f7fff]/60 hover:text-[#4f7fff] transition-colors"
-          >
-            + New chat
-          </button>
-        </div>
-      </header>
+      </aside>
 
-      {session ? (
-        <>
-          {(err || streamError) && (
-            <div className="flex-none w-full max-w-[800px] mx-auto px-4 mb-2">
-              <ErrorBanner onRetry={err ? () => setErr(null) : clearStreamError}>{err ?? streamError}</ErrorBanner>
-            </div>
-          )}
+      {/* RIGHT — chat column (header · thread · composer). */}
+      <section className="flex-1 min-w-0 flex flex-col min-h-0 rounded-xl border border-white/[0.08] bg-[#0f1115] overflow-hidden">
+        {session ? (
+          <>
+            <header className="flex-none flex items-center gap-3 px-4 py-2.5 border-b border-white/[0.08]">
+              <span className="text-[14px] font-medium text-ink truncate min-w-0">{session.title}</span>
+              <div className="flex items-center gap-2 ml-auto min-w-0">
+                {effectiveState === 'idle' && (
+                  <Badge label="RESUMABLE" color={chatStateMeta('idle').color} />
+                )}
+                {(effectiveState === 'live' || live) && (
+                  <Badge label="LIVE" color={chatStateMeta('live').color} live />
+                )}
+                <span
+                  className="text-[12px] text-dim whitespace-nowrap truncate max-w-[240px]"
+                  title={`${session.title} · ${session.cwd}`}
+                >
+                  {session.engine} · {session.model}
+                  {session.engine !== 'claude' && <span className="text-faint"> · one-shot</span>}
+                </span>
+              </div>
+            </header>
 
-          {/* CONVERSATION — centered scroll column (max-w-800), fills remaining height. */}
-          <ChatThread
-            sessionId={activeId}
-            turns={turns}
-            activeTurn={activeTurn}
-            onRetry={handleRetry}
-          />
+            {(err || streamError) && (
+              <div className="flex-none w-full max-w-[800px] mx-auto px-4 mt-2">
+                <ErrorBanner onRetry={err ? () => setErr(null) : clearStreamError}>{err ?? streamError}</ErrorBanner>
+              </div>
+            )}
 
-          {pendingQuestions.length > 0 && (
-            <div className="flex-none w-full max-w-[800px] mx-auto px-4 pb-2 space-y-2">
-              {pendingQuestions.map((q) => (
-                <QuestionCard key={q.id} item={{ kind: 'question', question: q }} onAction={refreshQuestions} />
-              ))}
-            </div>
-          )}
-
-          {/* COMPOSER — docked at the bottom, same centered max-w-800 column. */}
-          <div className="flex-none w-full max-w-[800px] mx-auto px-4 pb-3">
-            <ChatComposer
-              disabled={busy}
-              running={chatState === 'running'}
-              engine={session.engine}
-              cwd={session.cwd}
-              sessionId={session.id}
-              onSend={(message, attachments) => sendTurn(message, attachments)}
-              onCommand={(line) => runCommand(line)}
-              onStop={() => api.chatInterrupt(session.id)}
+            {/* CONVERSATION — centered scroll column (max-w-800), fills remaining height. */}
+            <ChatThread
+              sessionId={activeId}
+              turns={turns}
+              activeTurn={activeTurn}
+              onRetry={handleRetry}
             />
-          </div>
-        </>
-      ) : (
-        <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
-      )}
+
+            {pendingQuestions.length > 0 && (
+              <div className="flex-none w-full max-w-[800px] mx-auto px-4 pb-2 space-y-2">
+                {pendingQuestions.map((q) => (
+                  <QuestionCard key={q.id} item={{ kind: 'question', question: q }} onAction={refreshQuestions} />
+                ))}
+              </div>
+            )}
+
+            {/* COMPOSER — docked at the bottom, same centered max-w-800 column. */}
+            <div className="flex-none w-full max-w-[800px] mx-auto px-4 pb-3">
+              <ChatComposer
+                disabled={busy}
+                running={chatState === 'running'}
+                engine={session.engine}
+                cwd={session.cwd}
+                sessionId={session.id}
+                onSend={(message, attachments) => sendTurn(message, attachments)}
+                onCommand={(line) => runCommand(line)}
+                onStop={() => api.chatInterrupt(session.id)}
+              />
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
+        )}
+      </section>
     </div>
   );
 }
