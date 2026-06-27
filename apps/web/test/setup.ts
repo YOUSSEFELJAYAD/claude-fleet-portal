@@ -68,4 +68,8 @@ export class FakeEventSource {
 (globalThis as any).EventSource = FakeEventSource;
 
 beforeEach(() => FakeEventSource.reset());
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  // chatPrefs persists drafts/pins in localStorage — clear between tests so state never leaks.
+  try { localStorage.clear(); } catch { /* no localStorage in this env */ }
+});
