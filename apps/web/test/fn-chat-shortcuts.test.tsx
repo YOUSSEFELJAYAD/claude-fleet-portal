@@ -8,6 +8,11 @@ const sess = {
   runId: null, state: 'idle', live: false, createdAt: 0, updatedAt: 0,
 };
 
+const aTurn = {
+  id: 't1', sessionId: 's1', status: 'settled', createdAt: 0, settledAt: 0,
+  messages: [{ id: 'm1', sessionId: 's1', role: 'user', kind: 'text', content: 'hi', runId: null, turnId: 't1', createdAt: 0 }],
+};
+
 const { createChatSession, chatInterrupt } = vi.hoisted(() => ({
   createChatSession: vi.fn(async () => ({ id: 'new1', title: 'New chat' })),
   chatInterrupt: vi.fn(async () => ({})),
@@ -23,7 +28,7 @@ vi.mock('@/lib/api', () => ({
       if (p === 'createChatSession') return createChatSession;
       if (p === 'chatInterrupt') return chatInterrupt;
       if (p === 'chatSessions') return vi.fn(async () => [sess]);
-      if (p === 'chatSession') return vi.fn(async () => ({ session: sess, turns: [] }));
+      if (p === 'chatSession') return vi.fn(async () => ({ session: sess, turns: [aTurn] }));
       return vi.fn(async () => []);
     },
   }),
@@ -61,5 +66,20 @@ describe('chat global shortcuts', () => {
     await screen.findByRole('combobox'); // composer renders once the session is active (activeId set)
     fireEvent.keyDown(document.body, { key: 'Escape' });
     await waitFor(() => expect(chatInterrupt).toHaveBeenCalled());
+  });
+
+  it('? opens the keyboard shortcuts overlay', () => {
+    render(<ChatPage />);
+    fireEvent.keyDown(document.body, { key: '?' });
+    expect(screen.getByText(/keyboard shortcuts/i)).toBeTruthy();
+  });
+
+  it('the export button copies the conversation as Markdown', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    render(<ChatPage />);
+    fireEvent.click(await screen.findByText('Sess'));
+    fireEvent.click(await screen.findByLabelText(/export conversation/i));
+    expect(writeText).toHaveBeenCalled();
   });
 });

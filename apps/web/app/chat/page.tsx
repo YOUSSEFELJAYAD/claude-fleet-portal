@@ -4,6 +4,7 @@ import type { ChatSession, ChatTurn, ChatAttachment } from '@fleet/shared';
 import { api } from '@/lib/api';
 import { useChatStream, usePendingQuestions } from '@/lib/live';
 import { chatPrefs } from '@/lib/chatPrefs';
+import { turnsToMarkdown } from '@/lib/chatExport';
 import { ChatSessionList } from '@/components/ChatSessionList';
 import { ChatSearch } from '@/components/ChatSearch';
 import { ChatThread } from '@/components/ChatThread';
@@ -60,12 +61,17 @@ export default function ChatPage() {
   // turn (or closes the palette first). ponytail: Cmd+N may be reserved by the browser for a
   // new window — works in the desktop/Electron build and where the browser yields it.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const mod = e.metaKey || e.ctrlKey;
+      const el = e.target as HTMLElement | null;
+      const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
       if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen((o) => !o); return; }
       if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); void newSession(); return; }
+      if (e.key === '?' && !typing) { e.preventDefault(); setHelpOpen(true); return; }
       if (e.key === 'Escape') {
+        if (helpOpen) { setHelpOpen(false); return; }
         if (paletteOpen) { setPaletteOpen(false); return; }
         if (chatState === 'running' && activeId) void api.chatInterrupt(activeId);
       }
@@ -73,7 +79,12 @@ export default function ChatPage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paletteOpen, chatState, activeId]);
+  }, [paletteOpen, helpOpen, chatState, activeId]);
+
+  function exportMarkdown() {
+    const md = turnsToMarkdown(turns);
+    if (md) navigator.clipboard?.writeText(md).catch(() => {});
+  }
 
   // Sidebar collapse + resize (persisted post-hydration to avoid SSR width/state mismatch).
   const asideRef = useRef<HTMLElement>(null);
@@ -306,6 +317,17 @@ export default function ChatPage() {
                 </span>
               </>
             )}
+            {session && turns.length > 0 && (
+              <button
+                type="button"
+                aria-label="Export conversation as Markdown"
+                title="Export as Markdown"
+                onClick={exportMarkdown}
+                className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[14px] leading-none text-[#9aa1ab] hover:text-[#4f7fff] hover:bg-white/5 transition-colors"
+              >
+                ⤓
+              </button>
+            )}
             <button
               type="button"
               aria-label="Toggle fullscreen"
@@ -367,6 +389,29 @@ export default function ChatPage() {
           onSelect={(id) => loadSession(id)}
           onClose={() => setPaletteOpen(false)}
         />
+      )}
+
+      {helpOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50" onClick={() => setHelpOpen(false)}>
+          <div className="w-[420px] max-w-[90vw] rounded-xl border border-white/[0.1] bg-[#16181d] p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="text-[14px] font-medium text-ink mb-3">Keyboard shortcuts</div>
+            <ul className="space-y-1.5 text-[12px] font-sans text-dim">
+              {([
+                ['⌘/Ctrl + K', 'Switch session'],
+                ['⌘/Ctrl + N', 'New chat'],
+                ['⌘/Ctrl + Enter', 'Send message'],
+                ['Shift + Enter', 'New line'],
+                ['Esc', 'Stop a running turn'],
+                ['?', 'This help'],
+              ] as [string, string][]).map(([k, d]) => (
+                <li key={k} className="flex items-center justify-between gap-4">
+                  <span>{d}</span>
+                  <kbd className="font-mono text-[11px] text-faint border border-white/[0.1] rounded px-1.5 py-0.5">{k}</kbd>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
       )}
     </div>
   );
