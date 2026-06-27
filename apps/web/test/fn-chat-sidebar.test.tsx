@@ -60,4 +60,12 @@ describe('ChatSessionList — filter / pin / duplicate', () => {
     fireEvent.click(screen.getByLabelText(/pin/i));
     expect(screen.getByText('Pinned')).toBeTruthy();
   });
+
+  it('shows a streaming spinner on a running session but not an idle one', () => {
+    const { unmount } = renderList([sess({ id: 'a', state: 'idle' })]);
+    expect(screen.queryByTestId('session-spinner')).toBeNull();
+    unmount();
+    renderList([sess({ id: 'a', state: 'running' })]);
+    expect(screen.getByTestId('session-spinner')).toBeTruthy();
+  });
 });

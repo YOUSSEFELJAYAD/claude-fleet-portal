@@ -216,6 +216,16 @@ export function ChatComposer({
               </button>
             </span>
           ))}
+          {attachments.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setAttachments([])}
+              title="Clear all attachments"
+              className="self-center text-[11px] font-sans text-[#5b626d] hover:text-[#e9e7df] transition-colors"
+            >
+              clear all
+            </button>
+          )}
         </div>
       )}
 

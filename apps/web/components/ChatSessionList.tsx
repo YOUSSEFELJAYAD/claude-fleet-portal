@@ -125,6 +125,13 @@ export function ChatSessionList({
               {/* Title row */}
               <div className="flex items-center gap-2 min-w-0">
                 <Dot color={meta.color} live={meta.live} size={6} />
+                {s.state === 'running' && (
+                  <span
+                    data-testid="session-spinner"
+                    title="streaming" aria-label="streaming"
+                    className="shrink-0 w-3 h-3 rounded-full border-2 border-amber/30 border-t-amber animate-spin"
+                  />
+                )}
                 {editId === s.id ? (
                   <Input
                     autoFocus value={draft}
