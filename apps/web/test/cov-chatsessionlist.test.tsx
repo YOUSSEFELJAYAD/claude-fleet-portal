@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ChatSessionList } from '../components/ChatSessionList';
 import type { ChatSession } from '@fleet/shared';
 
@@ -10,14 +10,15 @@ const base: Omit<ChatSession, 'id' | 'title' | 'state' | 'live' | 'updatedAt'> =
 } as any;
 const sess = (over: Partial<ChatSession>): ChatSession => ({ ...(base as any), id: 'a', title: 'Alpha', updatedAt: Date.now(), ...over });
 
-describe('ChatSessionList', () => {
+// Persistent panel (no popover): rows render directly, no trigger to click open.
+describe('ChatSessionList (persistent panel)', () => {
   const noop = () => {};
   function renderList(sessions: ChatSession[], handlers: Partial<Record<string, any>> = {}) {
     return render(
       <ChatSessionList
         sessions={sessions} activeId={sessions[0]?.id ?? null}
         previews={{ a: 'last assistant line' }}
-        onSelect={noop} onNew={noop} onDelete={noop}
+        onSelect={handlers.onSelect ?? noop} onNew={handlers.onNew ?? noop} onDelete={noop}
         onRename={handlers.onRename ?? noop}
         onKill={handlers.onKill ?? noop}
         onResume={handlers.onResume ?? noop}
@@ -25,18 +26,24 @@ describe('ChatSessionList', () => {
     );
   }
 
-  it('shows the last-message preview and a relative timestamp', () => {
+  it('renders session rows directly, with preview + relative timestamp (no popover)', () => {
     renderList([sess({ state: 'idle', updatedAt: Date.now() - 60_000 })]);
-    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText('Alpha')).toBeTruthy();
     expect(screen.getByText('last assistant line')).toBeTruthy();
     expect(screen.getByText(/ago|now/)).toBeTruthy();
+  });
+
+  it('the New control calls onNew', () => {
+    const onNew = vi.fn();
+    renderList([sess({ state: 'idle' })], { onNew });
+    fireEvent.click(screen.getByText(/new/i));
+    expect(onNew).toHaveBeenCalled();
   });
 
   it('a live session shows a Kill control; an idle session shows Resume', () => {
     const onKill = vi.fn();
     const { rerender } = renderList([sess({ id: 'a', state: 'live', live: true })], { onKill });
-    fireEvent.click(screen.getByRole('button'));
-    fireEvent.click(screen.getByText(/kill/i));
+    fireEvent.click(screen.getByText(/^kill$/i));
     expect(onKill).toHaveBeenCalledWith('a');
 
     const onResume = vi.fn();
@@ -45,14 +52,13 @@ describe('ChatSessionList', () => {
         previews={{}} onSelect={() => {}} onNew={() => {}} onDelete={() => {}}
         onRename={() => {}} onKill={() => {}} onResume={onResume} />,
     );
-    fireEvent.click(screen.getByText(/resume/i));
+    fireEvent.click(screen.getByText(/^resume$/i));
     expect(onResume).toHaveBeenCalledWith('a');
   });
 
-  it('inline rename: editing the active row and pressing Enter calls onRename(id, title) — no window.prompt', () => {
+  it('inline rename: editing the active row and pressing Enter calls onRename(id, title)', () => {
     const onRename = vi.fn();
     renderList([sess({ id: 'a', state: 'idle' })], { onRename });
-    fireEvent.click(screen.getByRole('button'));
     fireEvent.click(screen.getByText(/rename/i));
     const input = screen.getByDisplayValue('Alpha') as HTMLInputElement;
     fireEvent.change(input, { target: { value: 'Renamed' } });
@@ -60,12 +66,8 @@ describe('ChatSessionList', () => {
     expect(onRename).toHaveBeenCalledWith('a', 'Renamed');
   });
 
-  it('renders a status dot region for a killed session', () => {
+  it('a killed session exposes a Resume affordance (kill is not delete)', () => {
     renderList([sess({ id: 'a', state: 'killed' })]);
-    fireEvent.click(screen.getByRole('button'));
-    // killed rows expose a Resume affordance (kill is not delete)
-    // ponytail: use getByRole('option') — getByText('Alpha') is ambiguous after the popover opens
-    // because the trigger button also renders an Alpha span; the option div is the session row
-    expect(within(screen.getByRole('option')).queryByText(/resume/i)).toBeTruthy();
+    expect(screen.getByText(/^resume$/i)).toBeTruthy();
   });
 });

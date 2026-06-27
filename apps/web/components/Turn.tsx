@@ -9,6 +9,7 @@ import { PermissionCard } from './PermissionCard';
 import { SubagentChip } from './SubagentChip';
 import { ChatTable } from './ChatTable';
 import { ErrorBanner } from './ui';
+import { ago } from '@/lib/format';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -56,7 +57,7 @@ function UserBubble({ content }: { content: string }) {
 
 // ── Action row (copy + retry) under settled assistant content ─────────────────
 
-function AssistantActions({ textToCopy, onRetry }: { textToCopy?: string; onRetry?: () => void }) {
+function AssistantActions({ textToCopy, onRetry, createdAt }: { textToCopy?: string; onRetry?: () => void; createdAt?: number }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
@@ -68,7 +69,7 @@ function AssistantActions({ textToCopy, onRetry }: { textToCopy?: string; onRetr
     } catch { /* clipboard unavailable */ }
   }
 
-  if (!textToCopy && !onRetry) return null;
+  if (!textToCopy && !onRetry && !createdAt) return null;
   return (
     <div className="flex items-center gap-0.5 mt-1">
       {textToCopy && (
@@ -93,6 +94,11 @@ function AssistantActions({ textToCopy, onRetry }: { textToCopy?: string; onRetr
           <RetryIcon />
         </button>
       )}
+      {createdAt ? (
+        <span className="ml-1 text-[11px] font-sans text-faint select-none" title={new Date(createdAt).toLocaleString()}>
+          {ago(createdAt)}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -248,7 +254,7 @@ export function Turn({ turn, active, onRetry }: TurnProps) {
         {turn.messages.map((m) => <SettledMsg key={m.id} m={m} />)}
         {hasFailed
           ? <FailedTurnBanner message={turn.error ?? 'turn failed'} onRetry={onRetry} />
-          : <AssistantActions textToCopy={assistantText || undefined} />}
+          : <AssistantActions textToCopy={assistantText || undefined} onRetry={onRetry} createdAt={turn.createdAt} />}
       </div>
     );
   }

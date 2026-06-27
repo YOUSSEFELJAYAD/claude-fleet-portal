@@ -6,6 +6,7 @@ import type { ChatAttachment, CommandDef, RunEngine } from '@fleet/shared';
 import { SlashMenu, ArgMenu } from '@/components/SlashMenu';
 import { MentionMenu } from '@/components/MentionMenu';
 import { api } from '@/lib/api';
+import { chatPrefs } from '@/lib/chatPrefs';
 
 /** What the caret is currently "inside": a `/` command token at input start, or an
  *  `@` mention token. `start` is the index of the trigger char; `query` is the text
@@ -92,12 +93,21 @@ export function ChatComposer({
   // Task 4.1 — resolved arg values for the current slash-arg trigger (null = n/a; [] = no values)
   const [argValues, setArgValues] = useState<{ value: string; label?: string }[] | null>(null);
 
+  // Per-session draft: load this session's saved draft when the session changes. Persistence
+  // happens on explicit edits (onChange/replaceToken) so this load never clobbers a draft.
+  useEffect(() => {
+    setText(sessionId ? chatPrefs.getDraft(sessionId) : '');
+    setCaret(0);
+    setDismissed(false);
+    if (sessionId) taRef.current?.focus(); // autofocus when a session opens
+  }, [sessionId]);
+
   // auto-grow: reset to single-row height then grow to scrollHeight (capped)
   useLayoutEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+    ta.style.height = Math.min(ta.scrollHeight, 320) + 'px';
   }, [text]);
 
   const trigger = dismissed ? null : detectTrigger(text, caret);
@@ -141,6 +151,7 @@ export function ChatComposer({
     setAttachments([]);
     setCaret(0);
     setDismissed(false);
+    if (sessionId) chatPrefs.clearDraft(sessionId);
   }
 
   function submit() {
@@ -160,6 +171,7 @@ export function ChatComposer({
     const after = text.slice(caret);
     const next = before + insert + after;
     setText(next);
+    if (sessionId) chatPrefs.setDraft(sessionId, next);
     const pos = (before + insert).length;
     setCaret(pos);
     requestAnimationFrame(() => {
@@ -204,6 +216,16 @@ export function ChatComposer({
               </button>
             </span>
           ))}
+          {attachments.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setAttachments([])}
+              title="Clear all attachments"
+              className="self-center text-[11px] font-sans text-[#5b626d] hover:text-[#e9e7df] transition-colors"
+            >
+              clear all
+            </button>
+          )}
         </div>
       )}
 
@@ -247,7 +269,7 @@ export function ChatComposer({
             from ui.tsx — all handlers, aria attrs, and ref are identical. */}
         <textarea
           ref={taRef}
-          rows={1}
+          rows={3}
           value={text}
           disabled={disabled}
           placeholder="Message…  (/ for commands · @ to attach)"
@@ -262,12 +284,19 @@ export function ChatComposer({
           onChange={(e) => {
             setText(e.target.value);
             setCaret(e.target.selectionStart ?? e.target.value.length);
+            if (sessionId) chatPrefs.setDraft(sessionId, e.target.value);
             // a new keystroke clears an Escape/click-outside dismissal (§fix09)
             setDismissed(false);
           }}
           onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onKeyDown={(e) => {
+            // Cmd/Ctrl+Enter force-submits even when a `/` or `@` menu is open.
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              submit();
+              return;
+            }
             // Enter while a `/` or `@` trigger menu is open must NEVER submit — the menu
             // owns Enter (it picks the active row + stopPropagation). Only submit when closed.
             if (e.key === 'Enter' && !e.shiftKey && !menuOpen) {
@@ -276,17 +305,30 @@ export function ChatComposer({
             }
           }}
           className="w-full bg-transparent resize-none overflow-auto outline-none text-[#e9e7df] font-sans text-sm placeholder:text-[#5b626d] leading-relaxed disabled:opacity-50"
-          style={{ maxHeight: 200 }}
+          style={{ maxHeight: 320 }}
         />
       </div>
 
       {/* bottom tool row: attach · engine hint · send/stop */}
       <div className="flex items-center justify-between mt-2">
         <div className="flex items-center gap-1.5">
-          {/* ponytail: '+' is a visual placeholder; file-pick wiring lives outside this file */}
+          {/* '+' inserts an `@` token → opens the MentionMenu file picker (a leading space first
+              when needed so `@` starts its own token, which is what detectTrigger requires). */}
           <button
             type="button"
             title="Attach file"
+            onClick={() => {
+              const needsSpace = text.length > 0 && !/\s$/.test(text);
+              const next = text + (needsSpace ? ' @' : '@');
+              setText(next);
+              if (sessionId) chatPrefs.setDraft(sessionId, next);
+              setCaret(next.length);
+              setDismissed(false);
+              requestAnimationFrame(() => {
+                const ta = taRef.current;
+                if (ta) { ta.focus(); ta.setSelectionRange(next.length, next.length); }
+              });
+            }}
             className="w-7 h-7 rounded-full flex items-center justify-center text-[#9aa1ab] hover:text-[#e9e7df] hover:bg-white/5 transition-colors text-lg leading-none select-none"
           >
             +

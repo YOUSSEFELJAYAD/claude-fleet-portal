@@ -20,13 +20,32 @@ export function ChatThread({
   onRetry: (turn: ChatTurn) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   // ponytail: prepended holds older pages loaded on demand; page owns the initial page.
   const [prepended, setPrepended] = useState<ChatTurn[]>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  // scroll-to-bottom affordance: pinned = within 120px of the bottom (same threshold the
+  // auto-scroll effect uses). When not pinned, surface a jump-to-bottom button; count turns
+  // that arrive while scrolled up so the button can read "↓ N new".
+  const [pinned, setPinned] = useState(true);
+  const [newCount, setNewCount] = useState(0);
+  const prevLenRef = useRef(0);
+  function onScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const isPinned = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    setPinned(isPinned);
+    if (isPinned) setNewCount(0);
+  }
+  function scrollToBottom() {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    setNewCount(0);
+  }
 
-  // Reset when session changes so old session's pagination doesn't bleed.
-  useEffect(() => { setPrepended([]); setHasMore(true); }, [sessionId]);
+  // Reset when session changes so old session's pagination/scroll state doesn't bleed.
+  useEffect(() => { setPrepended([]); setHasMore(true); setPinned(true); setNewCount(0); }, [sessionId]);
 
   // Auto-scroll to bottom when the list grows (within 120px of bottom → keep pinned).
   useEffect(() => {
@@ -64,6 +83,17 @@ export function ChatThread({
   const dedupPrepended = prepended.filter((t) => !existingIds.has(t.id));
   const allTurns = [...dedupPrepended, ...turns];
 
+  // count turns that arrive while the user is scrolled up (drives the "↓ N new" pill).
+  // The delta MUST stay inside the functional updater and read prevLenRef lazily — do NOT hoist
+  // it to `const delta = len - prevLenRef.current`. On a session switch the reset effect's
+  // setNewCount(0) queues this updater so it runs after `prevLenRef.current = len` (delta 0);
+  // an eager hoisted delta would reintroduce a phantom "↓ N new" on every switch.
+  useEffect(() => {
+    const len = allTurns.length;
+    if (len > prevLenRef.current && !pinned) setNewCount((n) => n + (len - prevLenRef.current));
+    prevLenRef.current = len;
+  }, [allTurns.length, pinned]);
+
   // C1/CV1: suppress the active card once its turnId has landed in settled history.
   const historyIds = existingIds;
   const showActive = activeTurn != null && !historyIds.has(activeTurn.turnId);
@@ -71,7 +101,12 @@ export function ChatThread({
   // Centered conversation column (max-w-800, mx-auto): the scroll container itself,
   // sans font, comfortable padding, clear gaps between turns.
   return (
-    <div className="flex-1 overflow-auto w-full max-w-[800px] mx-auto px-4 py-6 font-sans">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      data-testid="chat-scroll"
+      className="flex-1 overflow-auto w-full max-w-[800px] mx-auto px-4 py-6 font-sans relative"
+    >
       {allTurns.length > 0 && hasMore && (
         <div className="flex justify-center mb-6">
           <button
@@ -106,6 +141,19 @@ export function ChatThread({
           >
             stop
           </Btn>
+        </div>
+      )}
+      {!pinned && (
+        <div className="sticky bottom-2 flex justify-end pr-1 pointer-events-none">
+          <button
+            type="button"
+            data-testid="scroll-to-bottom"
+            onClick={scrollToBottom}
+            title="Scroll to bottom"
+            className="pointer-events-auto h-8 px-3 rounded-full bg-[#16181d] border border-white/[0.12] text-ink hover:text-[#4f7fff] shadow-lg flex items-center justify-center gap-1 text-[12px] font-sans transition-colors"
+          >
+            ↓{newCount > 0 ? ` ${newCount} new` : ''}
+          </button>
         </div>
       )}
       <div ref={endRef} />
