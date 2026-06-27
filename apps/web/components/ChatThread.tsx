@@ -26,19 +26,26 @@ export function ChatThread({
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   // scroll-to-bottom affordance: pinned = within 120px of the bottom (same threshold the
-  // auto-scroll effect uses). When not pinned, surface a jump-to-bottom button.
+  // auto-scroll effect uses). When not pinned, surface a jump-to-bottom button; count turns
+  // that arrive while scrolled up so the button can read "↓ N new".
   const [pinned, setPinned] = useState(true);
+  const [newCount, setNewCount] = useState(0);
+  const prevLenRef = useRef(0);
   function onScroll() {
     const el = scrollRef.current;
-    if (el) setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 120);
+    if (!el) return;
+    const isPinned = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    setPinned(isPinned);
+    if (isPinned) setNewCount(0);
   }
   function scrollToBottom() {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
+    setNewCount(0);
   }
 
   // Reset when session changes so old session's pagination/scroll state doesn't bleed.
-  useEffect(() => { setPrepended([]); setHasMore(true); setPinned(true); }, [sessionId]);
+  useEffect(() => { setPrepended([]); setHasMore(true); setPinned(true); setNewCount(0); }, [sessionId]);
 
   // Auto-scroll to bottom when the list grows (within 120px of bottom → keep pinned).
   useEffect(() => {
@@ -75,6 +82,13 @@ export function ChatThread({
   const existingIds = new Set(turns.map((t) => t.id));
   const dedupPrepended = prepended.filter((t) => !existingIds.has(t.id));
   const allTurns = [...dedupPrepended, ...turns];
+
+  // count turns that arrive while the user is scrolled up (drives the "↓ N new" pill)
+  useEffect(() => {
+    const len = allTurns.length;
+    if (len > prevLenRef.current && !pinned) setNewCount((n) => n + (len - prevLenRef.current));
+    prevLenRef.current = len;
+  }, [allTurns.length, pinned]);
 
   // C1/CV1: suppress the active card once its turnId has landed in settled history.
   const historyIds = existingIds;
@@ -132,9 +146,9 @@ export function ChatThread({
             data-testid="scroll-to-bottom"
             onClick={scrollToBottom}
             title="Scroll to bottom"
-            className="pointer-events-auto w-8 h-8 rounded-full bg-[#16181d] border border-white/[0.12] text-ink hover:text-[#4f7fff] shadow-lg flex items-center justify-center transition-colors"
+            className="pointer-events-auto h-8 px-3 rounded-full bg-[#16181d] border border-white/[0.12] text-ink hover:text-[#4f7fff] shadow-lg flex items-center justify-center gap-1 text-[12px] font-sans transition-colors"
           >
-            ↓
+            ↓{newCount > 0 ? ` ${newCount} new` : ''}
           </button>
         </div>
       )}

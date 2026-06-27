@@ -47,4 +47,17 @@ describe('ChatThread — scroll to bottom', () => {
     fireEvent.click(screen.getByTestId('scroll-to-bottom'));
     expect(sc.scrollTop).toBe(1000);
   });
+
+  it('shows "N new" when turns arrive while scrolled up', () => {
+    const t1 = turn({ id: 't1', messages: [msg({ role: 'assistant', kind: 'text', content: 'a' })] });
+    const t2 = turn({ id: 't2', messages: [msg({ role: 'assistant', kind: 'text', content: 'b' })] });
+    const { container, rerender } = render(<ChatThread sessionId="s1" turns={[t1]} activeTurn={null} onRetry={noop} />);
+    const sc = container.querySelector('[data-testid="chat-scroll"]') as HTMLElement;
+    Object.defineProperty(sc, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(sc, 'clientHeight', { value: 300, configurable: true });
+    Object.defineProperty(sc, 'scrollTop', { value: 0, writable: true, configurable: true });
+    fireEvent.scroll(sc); // not pinned
+    rerender(<ChatThread sessionId="s1" turns={[t1, t2]} activeTurn={null} onRetry={noop} />);
+    expect(screen.getByTestId('scroll-to-bottom').textContent).toMatch(/1 new/);
+  });
 });
