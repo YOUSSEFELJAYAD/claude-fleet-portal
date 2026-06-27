@@ -51,7 +51,7 @@ const components: Components = {
     const m = /language-(\w[\w+-]*)/.exec(className || '');
     const isFence = !!m || text.includes('\n');
     if (isFence) {
-      return <ShikiCode code={text.replace(/\n$/, '')} lang={m ? m[1] : 'text'} className="my-2" />;
+      return <ShikiCode code={text.replace(/\n$/, '')} lang={m ? m[1] : 'text'} className="my-2" copyable />;
     }
     return (
       <code className="font-mono text-[12px] px-1 py-0.5 bg-white/[0.06] text-amber rounded-sm" {...props}>
