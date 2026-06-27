@@ -99,6 +99,7 @@ export function ChatComposer({
     setText(sessionId ? chatPrefs.getDraft(sessionId) : '');
     setCaret(0);
     setDismissed(false);
+    if (sessionId) taRef.current?.focus(); // autofocus when a session opens
   }, [sessionId]);
 
   // auto-grow: reset to single-row height then grow to scrollHeight (capped)

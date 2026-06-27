@@ -7,6 +7,7 @@ import { ChatSessionList } from '@/components/ChatSessionList';
 import { ChatSearch } from '@/components/ChatSearch';
 import { ChatThread } from '@/components/ChatThread';
 import { ChatComposer } from '@/components/ChatComposer';
+import { ChatPalette } from '@/components/ChatPalette';
 import { ErrorBanner, Badge } from '@/components/ui';
 import { QuestionCard } from '@/components/QuestionCard';
 import { chatStateMeta } from '@/lib/chatState';
@@ -53,6 +54,25 @@ export default function ChatPage() {
     document.addEventListener('fullscreenchange', onFs);
     return () => document.removeEventListener('fullscreenchange', onFs);
   }, []);
+
+  // Global shortcuts: Cmd/Ctrl+K session switcher · Cmd/Ctrl+N new chat · Esc stops a running
+  // turn (or closes the palette first). ponytail: Cmd+N may be reserved by the browser for a
+  // new window — works in the desktop/Electron build and where the browser yields it.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen((o) => !o); return; }
+      if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); void newSession(); return; }
+      if (e.key === 'Escape') {
+        if (paletteOpen) { setPaletteOpen(false); return; }
+        if (chatState === 'running' && activeId) void api.chatInterrupt(activeId);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paletteOpen, chatState, activeId]);
 
   const refreshSessions = useCallback(async () => { setSessions(await api.chatSessions()); }, []);
   const loadSession = useCallback(async (id: string) => {
@@ -285,6 +305,14 @@ export default function ChatPage() {
           <div className="flex-1 grid place-items-center text-[13px] text-faint">Select or create a session</div>
         )}
       </section>
+
+      {paletteOpen && (
+        <ChatPalette
+          sessions={sessions}
+          onSelect={(id) => loadSession(id)}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
     </div>
   );
 }
