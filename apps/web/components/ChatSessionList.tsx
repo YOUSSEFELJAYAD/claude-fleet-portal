@@ -89,7 +89,7 @@ export function ChatSessionList({
       </div>
 
       {/* Sessions */}
-      <div className="flex-1 min-h-0 overflow-auto">
+      <div className="flex-1 min-h-0 overflow-auto" role="listbox" aria-label="Sessions">
         {visible.map((s) => {
           const meta = chatStateMeta(s.state ?? 'idle');
           const isActive = s.id === activeId;

@@ -37,8 +37,8 @@ export function ChatThread({
     if (el) el.scrollTop = el.scrollHeight;
   }
 
-  // Reset when session changes so old session's pagination doesn't bleed.
-  useEffect(() => { setPrepended([]); setHasMore(true); }, [sessionId]);
+  // Reset when session changes so old session's pagination/scroll state doesn't bleed.
+  useEffect(() => { setPrepended([]); setHasMore(true); setPinned(true); }, [sessionId]);
 
   // Auto-scroll to bottom when the list grows (within 120px of bottom → keep pinned).
   useEffect(() => {

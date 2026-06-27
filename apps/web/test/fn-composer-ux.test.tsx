@@ -48,4 +48,10 @@ describe('ChatComposer — UX', () => {
     fireEvent.click(screen.getByTitle(/attach/i));
     expect((screen.getByRole('combobox') as HTMLTextAreaElement).value).toContain('@');
   });
+
+  it('the textarea may grow up to 320px (taller composer, spec C2)', () => {
+    render(<ChatComposer {...props} sessionId="s1" />);
+    // inline max-height must match the JS auto-grow cap, else CSS clamps growth at the old 200px
+    expect((screen.getByRole('combobox') as HTMLTextAreaElement).style.maxHeight).toBe('320px');
+  });
 });

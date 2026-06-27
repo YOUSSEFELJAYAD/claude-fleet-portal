@@ -44,10 +44,10 @@ export default function ChatPage() {
   const [fullscreen, setFullscreen] = useState(false);
   const toggleFullscreen = useCallback(() => setFullscreen((f) => !f), []);
   useEffect(() => {
-    try {
-      if (fullscreen && !document.fullscreenElement) rootRef.current?.requestFullscreen?.();
-      else if (!fullscreen && document.fullscreenElement) document.exitFullscreen?.();
-    } catch { /* no user gesture / unsupported — in-app overlay still applies */ }
+    // requestFullscreen/exitFullscreen return Promises — swallow rejection (no user gesture /
+    // unsupported); the in-app overlay already applied via the `fullscreen` state either way.
+    if (fullscreen && !document.fullscreenElement) rootRef.current?.requestFullscreen?.().catch(() => {});
+    else if (!fullscreen && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
   }, [fullscreen]);
   useEffect(() => {
     const onFs = () => { if (!document.fullscreenElement) setFullscreen(false); };

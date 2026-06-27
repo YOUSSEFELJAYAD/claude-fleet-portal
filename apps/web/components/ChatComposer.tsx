@@ -295,7 +295,7 @@ export function ChatComposer({
             }
           }}
           className="w-full bg-transparent resize-none overflow-auto outline-none text-[#e9e7df] font-sans text-sm placeholder:text-[#5b626d] leading-relaxed disabled:opacity-50"
-          style={{ maxHeight: 200 }}
+          style={{ maxHeight: 320 }}
         />
       </div>
 
