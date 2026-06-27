@@ -157,7 +157,10 @@ export const chatRepo = {
       engine: req.engine ?? 'claude',
       model: req.model ?? 'claude-opus-4-8',
       effort: req.effort ?? 'high',
-      permission_mode: req.permissionMode ?? 'default',
+      // Chat runs in the user's real cwd and is meant to be unblocked: default to
+      // bypassPermissions (all tools, no prompt). humanGate (ask_human) stays as the
+      // non-blocking backstop; the blocking PreToolUse hook is not forced on chat.
+      permission_mode: req.permissionMode ?? 'bypassPermissions',
       // Resolve a relative/empty cwd (e.g. the web's default '.') to an ABSOLUTE path: the
       // /api/skills + /api/subagents catalog routes (isSafeCwd) reject relative paths, which
       // otherwise leaves the `/`-command menu empty (verified finding). An absolute cwd is also
