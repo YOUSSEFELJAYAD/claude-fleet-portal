@@ -47,4 +47,17 @@ describe('ChatSessionList — filter / pin / duplicate', () => {
     fireEvent.click(screen.getByText(/duplicate/i));
     expect(onDuplicate).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }));
   });
+
+  it('groups sessions into Today and Earlier by updatedAt', () => {
+    const old = Date.now() - 5 * 24 * 3600 * 1000;
+    renderList([sess({ id: 'a', title: 'Recent', updatedAt: Date.now() }), sess({ id: 'b', title: 'Old', updatedAt: old })]);
+    expect(screen.getByText('Today')).toBeTruthy();
+    expect(screen.getByText('Earlier')).toBeTruthy();
+  });
+
+  it('a pinned session appears under a Pinned header', () => {
+    renderList([sess({ id: 'a', title: 'Alpha', updatedAt: Date.now() })]);
+    fireEvent.click(screen.getByLabelText(/pin/i));
+    expect(screen.getByText('Pinned')).toBeTruthy();
+  });
 });

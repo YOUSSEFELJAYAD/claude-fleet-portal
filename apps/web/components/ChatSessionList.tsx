@@ -48,11 +48,19 @@ export function ChatSessionList({
     setPins(chatPrefs.getPins());
   }
 
-  // filter by title, then pinned-first (Array.sort is stable → original order within groups)
-  const visible = useMemo(() => {
+  // filter by title, then group: Pinned · Today · Earlier (sections with no rows are dropped).
+  const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = q ? sessions.filter((s) => s.title.toLowerCase().includes(q)) : sessions;
-    return [...filtered].sort((a, b) => (pins.has(b.id) ? 1 : 0) - (pins.has(a.id) ? 1 : 0));
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const todayMs = startOfToday.getTime();
+    const pinned = filtered.filter((s) => pins.has(s.id));
+    const rest = filtered.filter((s) => !pins.has(s.id));
+    return [
+      { label: 'Pinned', items: pinned },
+      { label: 'Today', items: rest.filter((s) => (s.updatedAt ?? 0) >= todayMs) },
+      { label: 'Earlier', items: rest.filter((s) => (s.updatedAt ?? 0) < todayMs) },
+    ].filter((g) => g.items.length > 0);
   }, [sessions, query, pins]);
 
   function startRename(s: ChatSession, e: React.MouseEvent) {
@@ -88,9 +96,12 @@ export function ChatSessionList({
         />
       </div>
 
-      {/* Sessions */}
+      {/* Sessions — grouped: Pinned · Today · Earlier */}
       <div className="flex-1 min-h-0 overflow-auto" role="listbox" aria-label="Sessions">
-        {visible.map((s) => {
+        {groups.map((g) => (
+          <div key={g.label}>
+            <div className="px-3 pt-2 pb-1 text-[10px] font-sans uppercase tracking-wide text-faint select-none">{g.label}</div>
+            {g.items.map((s) => {
           const meta = chatStateMeta(s.state ?? 'idle');
           const isActive = s.id === activeId;
           /** Engine sessions (codex/opencode) are one-shot and never hold a live process. */
@@ -197,7 +208,9 @@ export function ChatSessionList({
               </div>
             </div>
           );
-        })}
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );
