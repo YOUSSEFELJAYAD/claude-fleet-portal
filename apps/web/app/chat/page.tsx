@@ -121,6 +121,16 @@ export default function ChatPage() {
       if (id === activeId) { setActiveId(null); setSession(null); setTurns([]); }
     } catch (e: any) { setErr(e.message); }
   }
+  async function duplicateSession(s: ChatSession) {
+    setErr(null);
+    try {
+      const dup = await api.createChatSession({
+        title: `${s.title} (copy)`, cwd: s.cwd, model: s.model, engine: s.engine,
+        effort: s.effort, permissionMode: s.permissionMode, allowedTools: s.allowedTools, skills: s.skills,
+      });
+      await refreshSessions(); await loadSession(dup.id);
+    } catch (e: any) { setErr(e.message); }
+  }
 
   async function sendTurn(message: string, attachments: ChatAttachment[] = []) {
     if (!activeId) return;
@@ -190,7 +200,8 @@ export default function ChatPage() {
         <div className="flex-1 min-h-0">
           <ChatSessionList sessions={sessions} activeId={activeId} previews={previews}
             onSelect={loadSession} onNew={newSession} onRename={renameSession}
-            onKill={killSession} onResume={resumeSession} onDelete={deleteSession} />
+            onKill={killSession} onResume={resumeSession} onDelete={deleteSession}
+            onDuplicate={duplicateSession} />
         </div>
       </aside>
 

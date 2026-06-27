@@ -1,9 +1,10 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { ChatSession } from '@fleet/shared';
 import { Badge, Dot, Input } from '@/components/ui';
 import { chatStateMeta } from '@/lib/chatState';
 import { ago } from '@/lib/format';
+import { chatPrefs } from '@/lib/chatPrefs';
 
 const AMBER = '#ffb000';
 // ponytail: blue accent; not in tailwind config — inline until a token lands
@@ -11,11 +12,12 @@ const BLUE = '#4f7fff';
 
 /**
  * Persistent left-rail session list (was a header popover pre-v0.7.1). Always-visible
- * vertical panel: a "+ New" header, then one row per session. Row markup (dot, title,
- * preview, meta, engine badge, hover actions) is unchanged from the popover version.
+ * vertical panel: a "+ New" + filter header, then one row per session (pinned-first).
+ * Row markup (dot, title, preview, meta, engine badge, hover actions) extends the
+ * popover version with a pin star and a duplicate action.
  */
 export function ChatSessionList({
-  sessions, activeId, previews = {}, onSelect, onNew, onRename, onKill, onResume, onDelete,
+  sessions, activeId, previews = {}, onSelect, onNew, onRename, onKill, onResume, onDelete, onDuplicate,
 }: {
   sessions: ChatSession[];
   activeId: string | null;
@@ -27,11 +29,31 @@ export function ChatSessionList({
   onKill: (id: string) => void;
   onResume: (id: string) => void;
   onDelete: (id: string) => void;
+  /** clone a session (same cwd/model/engine) into a fresh one. */
+  onDuplicate?: (s: ChatSession) => void;
 }) {
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [query, setQuery] = useState('');
+  // Load pins post-hydration (not in the initializer) — localStorage is absent during SSR,
+  // and seeding from it in useState would reorder the list on the client and mismatch hydration.
+  const [pins, setPins] = useState<Set<string>>(new Set());
+  useEffect(() => { setPins(chatPrefs.getPins()); }, []);
 
   useEffect(() => { setEditId(null); }, [activeId]);
+
+  function togglePin(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    chatPrefs.togglePin(id);
+    setPins(chatPrefs.getPins());
+  }
+
+  // filter by title, then pinned-first (Array.sort is stable → original order within groups)
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = q ? sessions.filter((s) => s.title.toLowerCase().includes(q)) : sessions;
+    return [...filtered].sort((a, b) => (pins.has(b.id) ? 1 : 0) - (pins.has(a.id) ? 1 : 0));
+  }, [sessions, query, pins]);
 
   function startRename(s: ChatSession, e: React.MouseEvent) {
     e.stopPropagation();
@@ -45,8 +67,8 @@ export function ChatSessionList({
 
   return (
     <div className="flex flex-col h-full min-h-0" data-testid="chat-session-list">
-      {/* + New session */}
-      <div className="px-2 py-2 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+      {/* + New session + filter */}
+      <div className="px-2 py-2 shrink-0 space-y-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <button
           onClick={onNew}
           className="flex items-center gap-2 w-full text-left text-[12px] font-sans px-2 py-1.5 rounded-lg hover:bg-white/[0.06] transition-colors"
@@ -57,11 +79,18 @@ export function ChatSessionList({
           </svg>
           New session
         </button>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter sessions…"
+          aria-label="Filter sessions"
+          className="w-full bg-white/[0.04] border border-white/[0.06] rounded-lg px-2 py-1 text-[12px] font-sans text-ink placeholder:text-[#5b626d] outline-none focus:border-[#4f7fff]/50"
+        />
       </div>
 
       {/* Sessions */}
       <div className="flex-1 min-h-0 overflow-auto">
-        {sessions.map((s) => {
+        {visible.map((s) => {
           const meta = chatStateMeta(s.state ?? 'idle');
           const isActive = s.id === activeId;
           /** Engine sessions (codex/opencode) are one-shot and never hold a live process. */
@@ -101,6 +130,15 @@ export function ChatSessionList({
                 {isActive && (
                   <span className="text-[10px] font-sans shrink-0" style={{ color: BLUE }}>active</span>
                 )}
+                <button
+                  aria-label={pins.has(s.id) ? 'Unpin session' : 'Pin session'}
+                  title={pins.has(s.id) ? 'Unpin' : 'Pin'}
+                  onClick={(e) => togglePin(s.id, e)}
+                  className={`shrink-0 text-[12px] leading-none transition-colors ${pins.has(s.id) ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                  style={{ color: pins.has(s.id) ? AMBER : '#5b626d' }}
+                >
+                  {pins.has(s.id) ? '★' : '☆'}
+                </button>
               </div>
 
               {/* Preview */}
@@ -131,6 +169,12 @@ export function ChatSessionList({
                     className="text-[10px] font-sans px-2 py-0.5 rounded-md hover:bg-white/[0.08] transition-colors text-dim"
                     onClick={(e) => startRename(s, e)}
                   >rename</button>
+                )}
+                {onDuplicate && (
+                  <button
+                    className="text-[10px] font-sans px-2 py-0.5 rounded-md hover:bg-white/[0.08] transition-colors text-dim"
+                    onClick={(e) => { e.stopPropagation(); onDuplicate(s); }}
+                  >duplicate</button>
                 )}
                 {/* Kill is only relevant when a live process exists; resume only when idle/killed.
                     Both are meaningless for one-shot engines (spec §12, D8). */}
