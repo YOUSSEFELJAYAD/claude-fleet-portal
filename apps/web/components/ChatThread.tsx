@@ -20,10 +20,22 @@ export function ChatThread({
   onRetry: (turn: ChatTurn) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   // ponytail: prepended holds older pages loaded on demand; page owns the initial page.
   const [prepended, setPrepended] = useState<ChatTurn[]>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  // scroll-to-bottom affordance: pinned = within 120px of the bottom (same threshold the
+  // auto-scroll effect uses). When not pinned, surface a jump-to-bottom button.
+  const [pinned, setPinned] = useState(true);
+  function onScroll() {
+    const el = scrollRef.current;
+    if (el) setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 120);
+  }
+  function scrollToBottom() {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }
 
   // Reset when session changes so old session's pagination doesn't bleed.
   useEffect(() => { setPrepended([]); setHasMore(true); }, [sessionId]);
@@ -71,7 +83,12 @@ export function ChatThread({
   // Centered conversation column (max-w-800, mx-auto): the scroll container itself,
   // sans font, comfortable padding, clear gaps between turns.
   return (
-    <div className="flex-1 overflow-auto w-full max-w-[800px] mx-auto px-4 py-6 font-sans">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      data-testid="chat-scroll"
+      className="flex-1 overflow-auto w-full max-w-[800px] mx-auto px-4 py-6 font-sans relative"
+    >
       {allTurns.length > 0 && hasMore && (
         <div className="flex justify-center mb-6">
           <button
@@ -106,6 +123,19 @@ export function ChatThread({
           >
             stop
           </Btn>
+        </div>
+      )}
+      {!pinned && (
+        <div className="sticky bottom-2 flex justify-end pr-1 pointer-events-none">
+          <button
+            type="button"
+            data-testid="scroll-to-bottom"
+            onClick={scrollToBottom}
+            title="Scroll to bottom"
+            className="pointer-events-auto w-8 h-8 rounded-full bg-[#16181d] border border-white/[0.12] text-ink hover:text-[#4f7fff] shadow-lg flex items-center justify-center transition-colors"
+          >
+            ↓
+          </button>
         </div>
       )}
       <div ref={endRef} />
