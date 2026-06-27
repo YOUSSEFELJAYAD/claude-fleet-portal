@@ -52,6 +52,8 @@ export function ChatSessionList({
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = q ? sessions.filter((s) => s.title.toLowerCase().includes(q)) : sessions;
+    // ponytail: "today" boundary is computed per memo-eval; a tab left open past midnight keeps
+    // a session under Today until sessions/query/pins change. Cosmetic; re-bucket on next deps tick.
     const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
     const todayMs = startOfToday.getTime();
     const pinned = filtered.filter((s) => pins.has(s.id));

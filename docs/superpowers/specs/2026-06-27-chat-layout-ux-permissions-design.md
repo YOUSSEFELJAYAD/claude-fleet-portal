@@ -113,10 +113,14 @@ permission_mode: req.permissionMode ?? 'bypassPermissions',  // was: ?? 'default
 
 (16 listed — "~15"; trims to 15 if any proves redundant during build.)
 
-### Deferred (~6, follow-up)
-Today/Earlier session grouping · running-spinner on session row · clear-all
-attachments/text buttons · large-paste→attach offer · `?` shortcuts overlay ·
-export conversation as Markdown.
+### Deferred → since built (second pass)
+Collapsible + drag-resizable sidebar · Pinned/Today/Earlier grouping · "↓ N new"
+counter · copy-code-block · `?` shortcuts overlay · Markdown export — all
+implemented after the initial core+strong-15 pass.
+
+### Still deferred (low value)
+Running-spinner on session row · clear-all attachments/text buttons ·
+large-paste→attach offer.
 
 ---
 

@@ -101,10 +101,12 @@ export default function ChatPage() {
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp); // touch/gesture interruption also ends the drag
       setSidebarWidth((w) => { if (w) chatPrefs.setWidth(w); return w; });
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }
 
   const refreshSessions = useCallback(async () => { setSessions(await api.chatSessions()); }, []);

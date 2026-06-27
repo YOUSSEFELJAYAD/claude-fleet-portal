@@ -83,7 +83,11 @@ export function ChatThread({
   const dedupPrepended = prepended.filter((t) => !existingIds.has(t.id));
   const allTurns = [...dedupPrepended, ...turns];
 
-  // count turns that arrive while the user is scrolled up (drives the "↓ N new" pill)
+  // count turns that arrive while the user is scrolled up (drives the "↓ N new" pill).
+  // The delta MUST stay inside the functional updater and read prevLenRef lazily — do NOT hoist
+  // it to `const delta = len - prevLenRef.current`. On a session switch the reset effect's
+  // setNewCount(0) queues this updater so it runs after `prevLenRef.current = len` (delta 0);
+  // an eager hoisted delta would reintroduce a phantom "↓ N new" on every switch.
   useEffect(() => {
     const len = allTurns.length;
     if (len > prevLenRef.current && !pinned) setNewCount((n) => n + (len - prevLenRef.current));
